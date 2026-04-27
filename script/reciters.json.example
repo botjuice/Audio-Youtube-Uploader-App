@@ -1,0 +1,15 @@
+{
+  "ReciterFolderName": {
+    "name_ar": "اسم القارئ",
+    "playlist_id": "PLxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "playlist_enabled": true
+  },
+
+  "_notes": {
+    "auto-fill": "You don't need to write this file by hand. Drop a reciter's audio folder next to script/, launch the GUI, and it'll prompt you for the Arabic name and save it here.",
+    "outer key": "Must exactly match the audio folder name (no spaces stripped — the script auto-derives the filename prefix from this).",
+    "name_ar": "Arabic name used in every video title for this reciter.",
+    "playlist_id": "From the playlist URL: youtube.com/playlist?list=PLxxxx — also editable via GUI Playlists button.",
+    "playlist_enabled": "Set false to keep the ID on file but stop adding new uploads to it. Defaults to true."
+  }
+}

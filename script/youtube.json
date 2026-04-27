@@ -1,0 +1,10 @@
+{
+  "client_secret_file": "client_secret.json",
+
+  "daily_limit": 6,
+  "privacy": "public",
+  "category_id": "22",
+  "made_for_kids": false,
+  "tags": [],
+  "description": ""
+}

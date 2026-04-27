@@ -1,0 +1,14 @@
+{
+  "prayers": {
+    "Fajr":     { "playlist_id": "", "enabled": false },
+    "Dhuhr":    { "playlist_id": "", "enabled": false },
+    "Asr":      { "playlist_id": "", "enabled": false },
+    "Maghrib":  { "playlist_id": "", "enabled": false },
+    "Isha":     { "playlist_id": "", "enabled": false },
+    "Taraweeh": { "playlist_id": "", "enabled": false },
+    "Tahajjud": { "playlist_id": "", "enabled": false },
+    "Qiyam":    { "playlist_id": "", "enabled": false },
+    "Witr":     { "playlist_id": "", "enabled": false }
+  },
+  "surahs": {}
+}
