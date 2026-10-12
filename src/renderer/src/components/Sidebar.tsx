@@ -1,5 +1,5 @@
 import { clsx } from 'clsx'
-import { useEffect, useState } from 'react'
+import { useSyncExternalStore } from 'react'
 import { Activity, ListMusic, Settings as SettingsIcon, Users, LibraryBig, MonitorPlay, Gauge, Moon, Film, Sun } from 'lucide-react'
 import { IconButton } from './ui'
 import { useStore, type Page } from '@/store'
@@ -83,10 +83,9 @@ function HealthRow({ icon, ok, label, onClick, neutral }: { icon: React.ReactNod
   )
 }
 
-/** Tracks the effective colour scheme (follows nativeTheme set by the main process). */
+/** Effective colour scheme (follows nativeTheme set by the main process). One shared MediaQueryList, subscribed via useSyncExternalStore. */
+const darkMq = window.matchMedia('(prefers-color-scheme: dark)')
+const subscribeDark = (cb: () => void) => { darkMq.addEventListener('change', cb); return () => darkMq.removeEventListener('change', cb) }
 function useIsDark(): boolean {
-  const mq = window.matchMedia('(prefers-color-scheme: dark)')
-  const [dark, setDark] = useState(mq.matches)
-  useEffect(() => { const h = () => setDark(mq.matches); mq.addEventListener('change', h); return () => mq.removeEventListener('change', h) }, [mq])
-  return dark
+  return useSyncExternalStore(subscribeDark, () => darkMq.matches)
 }
