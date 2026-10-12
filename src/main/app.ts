@@ -12,6 +12,7 @@ import { activity } from './log'
 import { Pipeline } from './pipeline'
 import { openLibraryStore, secrets, settings, type LibraryStore } from './store'
 import { Watcher } from './watcher'
+import { updater } from './updater'
 
 type Listener = (channel: string, payload: unknown) => void
 
@@ -34,9 +35,21 @@ class YoosyApp {
     activity.on('entry', (e) => this.broadcast('evt:activity', e))
     this.pipeline.on('progress', (p) => this.broadcast('evt:progress', p))
     this.pipeline.on('changed', () => void this.rescan())
+    this.pipeline.on('done', () => updater.maybeAutoInstall())
+    updater.on('state', (s) => this.broadcast('evt:update', s))
+    updater.start({
+      isBusy: () => this.pipeline.busy,
+      isWindowVisible: () => BrowserWindow.getAllWindows().some((w) => !w.isDestroyed() && w.isVisible() && !w.isMinimized()),
+      autoCheck: () => this.settings.updates.autoCheck,
+      autoInstall: () => this.settings.updates.autoInstallWhenIdle,
+      prepareForRestart: async () => { this.watcher.stop(); this.pushHealth() },
+    })
     if (this.settings.libraryPath) await this.openLibrary(this.settings.libraryPath)
     void this.verifyYouTube()
   }
+
+  /** Called by the window on hide — a hidden, idle app may self-update. */
+  onWindowHidden(): void { updater.maybeAutoInstall() }
 
   // ── settings ───────────────────────────────────────────────────────────────
   async setSettings(patch: Partial<Settings>): Promise<Settings> {
@@ -45,6 +58,7 @@ class YoosyApp {
       ...prev, ...patch,
       upload: { ...prev.upload, ...(patch.upload ?? {}) },
       watcher: { ...prev.watcher, ...(patch.watcher ?? {}) },
+      updates: { ...prev.updates, ...(patch.updates ?? {}) },
     })
     nativeTheme.themeSource = this.settings.theme
     if (patch.libraryPath !== undefined && patch.libraryPath !== prev.libraryPath) {
@@ -339,7 +353,7 @@ class YoosyApp {
   }
 
   private async watcherTick(): Promise<void> {
-    if (this.pipeline.busy || !this.store || !this.settings.libraryPath) return
+    if (this.pipeline.busy || updater.installing || !this.store || !this.settings.libraryPath) return
     await this.rescan()
     const ready = this.snapshot.records.filter((r) => (r.status === 'ready' || r.status === 'encoded') && !r.skipped).map((r) => r.id)
     if (ready.length === 0) return
@@ -353,6 +367,7 @@ class YoosyApp {
     const q = normaliseQuota(this.store?.quota.get())
     const limit = this.settings.upload.dailyLimit
     return {
+      app: { version: app.getVersion(), platform: process.platform },
       library: { path: this.settings.libraryPath, reciters: this.snapshot.reciters.length, records: this.snapshot.records.length },
       youtube: { connected: !!this.channelTitle, channel: this.channelTitle, error: this.youtubeError, hasClientSecret: await this.hasClientSecret() },
       ffmpeg: { ok: await ffmpegAvailable(), path: ffmpegPath() },

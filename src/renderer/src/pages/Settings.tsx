@@ -1,4 +1,4 @@
-import { CheckCircle2, ExternalLink, FolderOpen, KeyRound, LogOut, Plus, Search, Trash2, Unplug } from 'lucide-react'
+import { CheckCircle2, ExternalLink, FolderOpen, KeyRound, LogOut, Plus, RefreshCw, Search, Trash2, Unplug } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { Privacy, ThemeMode } from '@shared/types'
 import type { SurahEntry } from '@shared/api'
@@ -119,6 +119,7 @@ export default function Settings() {
         </Card>
 
         <SurahEditor />
+        <UpdatesCard />
       </div>
     </div>
   )
@@ -169,5 +170,38 @@ function SurahRow({ s, onChanged }: { s: SurahEntry; onChanged: () => void }) {
       {s.source === 'user' && <Badge tone="info">custom</Badge>}
       <Button size="sm" variant="ghost" onClick={() => void call('surah', () => window.api.deleteSurah(s.key).then(onChanged))} title="Delete"><Trash2 size={13} /></Button>
     </li>
+  )
+}
+
+function UpdatesCard() {
+  const settings = useStore((s) => s.settings)!
+  const health = useStore((s) => s.health)
+  const u = useStore((s) => s.update)
+  const save = useStore((s) => s.saveSettings)
+  const call = useStore((s) => s.call)
+  const checking = useBusy('chk') || u?.status === 'checking'
+  const status =
+    !u ? '' :
+    u.status === 'up-to-date' ? `Up to date${u.checkedAt ? ` · checked ${new Date(u.checkedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}${u.deferred ? ` · ${u.deferred}` : ''}` :
+    u.status === 'available' ? `v${u.latest} available` :
+    u.status === 'downloading' ? `Downloading v${u.latest}… ${u.percent}%` :
+    u.status === 'ready' ? `v${u.latest} downloaded — ${u.deferred ?? 'restart to apply'}` :
+    u.status === 'installing' ? 'Installing…' :
+    u.status === 'error' ? `Problem: ${u.error}` : 'Checking…'
+  return (
+    <Card title={`About · Yoosy Joosy v${health?.app.version ?? '…'}`} subtitle={status}
+      actions={<Button size="sm" disabled={checking} onClick={() => void call('chk', async () => { const r = await window.api.checkForUpdates(); if (r.status === 'up-to-date') useStore.getState().notify('success', 'You have the latest version') })}>{checking ? <Spinner /> : <RefreshCw size={13} />} Check now</Button>}>
+      <div className="space-y-3">
+        <Field inline label="Check for updates automatically" hint="On launch and every 6 hours. Downloads happen in the background.">
+          <Switch checked={settings.updates.autoCheck} onChange={(v) => void save({ updates: { ...settings.updates, autoCheck: v } })} />
+        </Field>
+        <Field inline label="Install when idle" hint="Only while the window is hidden and nothing is uploading — an upload in progress is never interrupted. With the window open you'll always be asked first.">
+          <Switch checked={settings.updates.autoInstallWhenIdle} onChange={(v) => void save({ updates: { ...settings.updates, autoInstallWhenIdle: v } })} />
+        </Field>
+        <div className="text-xs text-muted">
+          Releases: <Lnk href="https://github.com/botjuice/Audio-Youtube-Uploader-App/releases">github.com/botjuice/Audio-Youtube-Uploader-App</Lnk>
+        </div>
+      </div>
+    </Card>
   )
 }

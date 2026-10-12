@@ -1,6 +1,6 @@
 import type {
   ActivityEntry, Health, LibraryRecord, Playlist, PlaylistRule, Privacy, Progress,
-  ReciterInfo, ReciterPatch, RecordPatch, Settings,
+  ReciterInfo, ReciterPatch, RecordPatch, Settings, UpdateState,
 } from './types'
 
 export interface LibrarySnapshot {
@@ -47,6 +47,11 @@ export interface Api {
   // pipeline
   startUpload(ids: string[]): Promise<void>
   cancelUpload(): Promise<void>
+  // updates
+  getUpdateState(): Promise<UpdateState>
+  checkForUpdates(): Promise<UpdateState>
+  downloadUpdate(): Promise<UpdateState>
+  installUpdate(): Promise<void>
   // misc
   getHealth(): Promise<Health>
   getActivity(): Promise<ActivityEntry[]>
@@ -58,4 +63,5 @@ export interface Api {
   on(event: 'activity', cb: (e: ActivityEntry) => void): () => void
   on(event: 'health', cb: (h: Health) => void): () => void
   on(event: 'settings', cb: (s: Settings) => void): () => void
+  on(event: 'update', cb: (u: UpdateState) => void): () => void
 }

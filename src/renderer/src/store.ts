@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ActivityEntry, Health, Progress, Settings } from '@shared/types'
+import type { ActivityEntry, Health, Progress, Settings, UpdateState } from '@shared/types'
 import type { LibrarySnapshot } from '@shared/api'
 
 export type Page = 'library' | 'playlists' | 'reciters' | 'settings' | 'activity'
@@ -13,6 +13,7 @@ interface State {
   health: Health | null
   progress: Progress | null
   activity: ActivityEntry[]
+  update: UpdateState | null
   selectedId: string | null
   toasts: Toast[]
   busy: Record<string, boolean>
@@ -33,7 +34,7 @@ export const errText = (e: unknown): string =>
 
 export const useStore = create<State>((set, get) => ({
   booted: false, page: 'library', settings: null, library: EMPTY, health: null, progress: null,
-  activity: [], selectedId: null, toasts: [], busy: {},
+  activity: [], update: null, selectedId: null, toasts: [], busy: {},
 
   setPage: (page) => set({ page }),
   select: (selectedId) => set({ selectedId }),
@@ -49,12 +50,13 @@ export const useStore = create<State>((set, get) => ({
     api.on('library', (library) => set({ library }))
     api.on('health', (health) => set({ health }))
     api.on('settings', (settings) => set({ settings }))
+    api.on('update', (update) => set({ update }))
     api.on('progress', (progress) => set({ progress }))
     api.on('activity', (e) => set((s) => ({ activity: [...s.activity.slice(-499), e] })))
-    const [settings, library, health, activity] = await Promise.all([
-      api.getSettings(), api.getLibrary(), api.getHealth(), api.getActivity(),
+    const [settings, library, health, activity, update] = await Promise.all([
+      api.getSettings(), api.getLibrary(), api.getHealth(), api.getActivity(), api.getUpdateState(),
     ])
-    set({ settings, library, health, activity, booted: true })
+    set({ settings, library, health, activity, update, booted: true })
   },
 
   call: async (key, fn, opts) => {

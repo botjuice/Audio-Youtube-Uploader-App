@@ -3,6 +3,7 @@ import { Activity, ListMusic, Settings as SettingsIcon, Users, LibraryBig, Monit
 import { useStore, type Page } from '@/store'
 import { fmtUntil } from '@/lib/format'
 import { ProgressBar } from './ui'
+import { UpdateBanner } from './UpdateBanner'
 
 const NAV: { id: Page; label: string; icon: typeof LibraryBig }[] = [
   { id: 'library', label: 'Library', icon: LibraryBig },
@@ -43,6 +44,7 @@ export function Sidebar() {
       </nav>
 
       <div className="mt-auto no-drag p-3 space-y-2 text-xs">
+        <UpdateBanner />
         <HealthRow icon={<MonitorPlay size={13} />} ok={!!health?.youtube.connected}
           label={health?.youtube.connected ? health.youtube.channel ?? 'Connected' : health?.youtube.error ? 'Google: needs attention' : 'Google: not connected'}
           onClick={() => setPage('settings')} />

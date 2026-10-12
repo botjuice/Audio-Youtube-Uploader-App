@@ -97,9 +97,29 @@ export interface Settings {
     startOnLogin: boolean
     closeToTray: boolean
   }
+  updates: {
+    autoCheck: boolean          // look for new versions on launch and every 6 h
+    autoInstallWhenIdle: boolean // install + relaunch by itself only when the window is hidden and nothing is uploading
+  }
+}
+
+export type UpdateStatus = 'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'ready' | 'installing' | 'error'
+
+export interface UpdateState {
+  status: UpdateStatus
+  current: string
+  latest: string | null
+  notes: string | null
+  releaseUrl: string | null
+  percent: number
+  error: string | null
+  /** Why a ready update hasn't been applied yet (shown to the user). */
+  deferred: string | null
+  checkedAt: string | null
 }
 
 export interface Health {
+  app: { version: string; platform: string }
   library: { path: string | null; reciters: number; records: number }
   youtube: { connected: boolean; channel: string | null; error: string | null; hasClientSecret: boolean }
   ffmpeg: { ok: boolean; path: string | null }

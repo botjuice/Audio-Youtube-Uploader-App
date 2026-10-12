@@ -34,6 +34,7 @@ function createWindow(): BrowserWindow {
     if (s.watcher.enabled && s.watcher.closeToTray) { e.preventDefault(); w.hide(); return }
     if (isMac) { e.preventDefault(); w.hide() }
   })
+  w.on('hide', () => yoosy.onWindowHidden())
   w.webContents.setWindowOpenHandler(({ url }) => { void shell.openExternal(url); return { action: 'deny' } })
   if (process.env['ELECTRON_RENDERER_URL']) void w.loadURL(process.env['ELECTRON_RENDERER_URL'])
   else void w.loadFile(join(here, '../renderer/index.html'))

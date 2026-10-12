@@ -35,6 +35,24 @@ FFmpeg is bundled — nothing else to install.
 Turn on **Settings → Auto-upload new files** and the app watches the folder, uploads
 new recordings within the daily limit, and can start hidden when you log in.
 
+## Updates
+
+The app checks GitHub Releases 30 s after launch and every 6 hours, downloads new
+versions in the background and verifies them (SHA-512). It **never restarts during
+an upload**: with the window open you get a "Restart now" card in the sidebar; when the
+app is hidden in the tray and idle it updates itself (toggle in Settings → About).
+Existing users on 2.0.x must install 2.1.0 by hand once; after that it's automatic.
+
+Shipping an update is one command from the repo:
+
+```bash
+npm run release -- patch     # or minor / major / 2.3.4
+```
+
+It bumps the version, runs typecheck + tests, commits, tags `vX.Y.Z`, pushes, and
+GitHub Actions publishes the Windows/macOS installers plus the update feed
+(`latest.yml`, `latest-mac.yml`). Users pick it up within 6 hours.
+
 ## What the Library tells you
 
 Every recording has a status and, when it isn't uploading, the exact reason:
@@ -84,7 +102,7 @@ npm run dist:mac   # or dist:win — installers in dist/
 Stack: Electron 44 · React 19 · TypeScript · Vite 7 · Tailwind 4 · `google-auth-library` · `ffmpeg-static`.
 Core logic (`src/core`) is dependency-free and unit-tested; `src/main` is the Node side (scanner, encoder, YouTube, watcher); `src/renderer` is the UI.
 
-Releases are built by GitHub Actions on every `v*` tag (`.github/workflows/release.yml`).
+Releases are built by GitHub Actions on every `v*` tag (`.github/workflows/release.yml`); use `npm run release` rather than tagging by hand so the version in `package.json` always matches the tag.
 
 ## License
 

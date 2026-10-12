@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain } from 'electron'
 import type { Api } from '@shared/api'
 import { activity } from './log'
 import { yoosy } from './app'
+import { updater } from './updater'
 
 type Handlers = { [K in Exclude<keyof Api, 'on'>]: (win: BrowserWindow | null, ...args: Parameters<Api[K]>) => ReturnType<Api[K]> }
 
@@ -33,6 +34,10 @@ export function registerIpc(): void {
     syncWithYouTube: () => yoosy.syncWithYouTube(),
     startUpload: (_w, ids) => yoosy.startUpload(ids),
     cancelUpload: async () => yoosy.cancelUpload(),
+    getUpdateState: async () => updater.state,
+    checkForUpdates: () => updater.check(),
+    downloadUpdate: () => updater.download(),
+    installUpdate: () => updater.install(),
     getHealth: () => yoosy.getHealth(),
     getActivity: async () => activity.entries(),
     openExternal: (_w, url) => yoosy.openExternal(url),

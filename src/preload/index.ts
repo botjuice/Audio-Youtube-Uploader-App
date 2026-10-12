@@ -6,6 +6,7 @@ const methods = [
   'listSurahs', 'setSurah', 'deleteSurah', 'setRules',
   'setClientSecretFromFile', 'setClientSecret', 'connectYouTube', 'disconnectYouTube',
   'refreshPlaylists', 'createPlaylist', 'syncWithYouTube', 'startUpload', 'cancelUpload',
+  'getUpdateState', 'checkForUpdates', 'downloadUpdate', 'installUpdate',
   'getHealth', 'getActivity', 'openExternal', 'showInFolder',
 ] as const
 

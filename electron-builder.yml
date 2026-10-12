@@ -12,18 +12,23 @@ asarUnpack:
 mac:
   category: public.app-category.video
   target: [dmg, zip]
-  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+  artifactName: yoosy-joosy-${version}-mac-${arch}.${ext}
   hardenedRuntime: false
   gatekeeperAssess: false
 win:
   target: [nsis]
-  artifactName: ${productName}-${version}-win-${arch}.${ext}
+  artifactName: yoosy-joosy-${version}-win-${arch}.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   perMachine: false
 linux:
   target: [AppImage]
+  artifactName: yoosy-joosy-${version}-linux-${arch}.${ext}
   category: AudioVideo
 npmRebuild: false
-publish: null
+publish:
+  provider: github
+  owner: botjuice
+  repo: Audio-Youtube-Uploader-App
+  releaseType: release

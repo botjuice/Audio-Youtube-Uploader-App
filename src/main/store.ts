@@ -17,6 +17,7 @@ export const DEFAULT_SETTINGS: Settings = {
     madeForKids: false,
   },
   watcher: { enabled: false, intervalMinutes: 30, startOnLogin: false, closeToTray: true },
+  updates: { autoCheck: true, autoInstallWhenIdle: true },
 }
 
 export interface RecordState {
