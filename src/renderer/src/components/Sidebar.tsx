@@ -1,5 +1,7 @@
 import { clsx } from 'clsx'
-import { Activity, ListMusic, Settings as SettingsIcon, Users, LibraryBig, MonitorPlay, Gauge, Moon, Film } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Activity, ListMusic, Settings as SettingsIcon, Users, LibraryBig, MonitorPlay, Gauge, Moon, Film, Sun } from 'lucide-react'
+import { IconButton } from './ui'
 import { useStore, type Page } from '@/store'
 import { fmtUntil } from '@/lib/format'
 import { ProgressBar } from './ui'
@@ -19,6 +21,9 @@ export function Sidebar() {
   const health = useStore((s) => s.health)
   const isMac = window.platform === 'darwin'
   const attention = useStore((s) => s.library.records.filter((r) => r.status === 'fix' || r.status === 'error').length)
+  const saveSettings = useStore((s) => s.saveSettings)
+  const isDark = useIsDark()
+  const toggleTheme = () => void saveSettings({ theme: isDark ? 'light' : 'dark' })
 
   return (
     <aside className={clsx('drag flex w-56 shrink-0 flex-col border-r border-border bg-surface/60', isMac ? 'pt-11' : 'pt-3')}>
@@ -26,7 +31,10 @@ export function Sidebar() {
         <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-indigo-500 to-sky-400 flex items-center justify-center">
           <Film size={14} className="text-white" />
         </div>
-        <div className="font-semibold tracking-tight">Yoosy Joosy</div>
+        <div className="font-semibold tracking-tight flex-1">Yoosy Joosy</div>
+        <IconButton label={isDark ? 'Switch to light mode' : 'Switch to dark mode'} onClick={toggleTheme} className="h-7 w-7">
+          {isDark ? <Sun size={15} /> : <Moon size={15} />}
+        </IconButton>
       </div>
 
       <nav className="no-drag px-2 space-y-0.5">
@@ -73,4 +81,12 @@ function HealthRow({ icon, ok, label, onClick, neutral }: { icon: React.ReactNod
       <span className="truncate">{label}</span>
     </button>
   )
+}
+
+/** Tracks the effective colour scheme (follows nativeTheme set by the main process). */
+function useIsDark(): boolean {
+  const mq = window.matchMedia('(prefers-color-scheme: dark)')
+  const [dark, setDark] = useState(mq.matches)
+  useEffect(() => { const h = () => setDark(mq.matches); mq.addEventListener('change', h); return () => mq.removeEventListener('change', h) }, [mq])
+  return dark
 }

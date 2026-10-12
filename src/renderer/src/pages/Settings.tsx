@@ -68,6 +68,18 @@ export default function Settings() {
           {health && <div className="text-xs text-muted mt-1">{health.library.reciters} reciter{health.library.reciters === 1 ? '' : 's'} · {health.library.records} recording{health.library.records === 1 ? '' : 's'}</div>}
         </Card>
 
+        <Card title="Appearance">
+          <div className="inline-flex rounded-lg border border-border bg-surface-2/40 p-0.5">
+            {(['system', 'light', 'dark'] as ThemeMode[]).map((m) => (
+              <button key={m} onClick={() => void save({ theme: m })}
+                className={`h-8 px-4 rounded-md text-[13px] capitalize transition-colors ${settings.theme === m ? 'bg-surface shadow-xs font-medium' : 'text-muted hover:text-text'}`}>
+                {m === 'system' ? 'Match system' : m}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-muted mt-2">The sun/moon button in the sidebar switches between light and dark instantly.</p>
+        </Card>
+
         <Card title="Automatic uploads" subtitle="Watch the library for new recordings and upload them without opening the app">
           <div className="space-y-3">
             <Field inline label="Auto-upload new files" hint="Polls on a schedule and reacts to files being dropped in">
@@ -104,11 +116,6 @@ export default function Settings() {
             </Field>
             <Field label="Tags" hint="Comma-separated">
               <Input value={tags} onChange={(e) => setTags(e.target.value)} onBlur={() => void save({ upload: { ...settings.upload, tags: tags.split(',').map((t) => t.trim()).filter(Boolean) } })} />
-            </Field>
-            <Field label="Appearance">
-              <Select value={settings.theme} onChange={(e) => void save({ theme: e.target.value as ThemeMode })} className="w-full">
-                <option value="system">Match system</option><option value="light">Light</option><option value="dark">Dark</option>
-              </Select>
             </Field>
             <div className="col-span-2">
               <Field label="Description">
