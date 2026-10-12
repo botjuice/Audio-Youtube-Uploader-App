@@ -1,6 +1,6 @@
 {
   "name": "yoosy-joosy",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "description": "Audio → video → YouTube pipeline for Quran recitation recordings",
   "main": "./out/main/index.js",
   "scripts": {
