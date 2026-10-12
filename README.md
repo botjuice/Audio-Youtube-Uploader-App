@@ -1,4 +1,4 @@
-# Yoosy Joosy
+# YouTube Quran Uploader
 
 Desktop app (Windows · macOS) that turns a folder of Quran-recitation audio into
 YouTube videos — rendered with the reciter's photo, titled in Arabic, sorted into
@@ -17,11 +17,11 @@ Recordings/
 ## Download
 
 Grab the installer for your OS from **[Releases](../../releases/latest)**:
-`Yoosy Joosy-x.y.z-win-x64.exe` or `Yoosy Joosy-x.y.z-mac-arm64.dmg` / `-x64.dmg`.
+`YouTube Quran Uploader-x.y.z-win-x64.exe` or `YouTube Quran Uploader-x.y.z-mac-arm64.dmg` / `-x64.dmg`.
 FFmpeg is bundled — nothing else to install.
 
 > macOS: the app isn't notarised. First launch: right-click → **Open**, or run
-> `xattr -dr com.apple.quarantine "/Applications/Yoosy Joosy.app"`.
+> `xattr -dr com.apple.quarantine "/Applications/YouTube Quran Uploader.app"`.
 > Windows: SmartScreen may warn on first run → **More info → Run anyway**.
 
 ## First run (≈10 minutes, once)

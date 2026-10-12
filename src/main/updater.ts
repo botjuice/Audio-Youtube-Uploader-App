@@ -182,7 +182,7 @@ export class Updater extends EventEmitter {
     const dir = resolve(bundle, '..'); const name = basename(bundle)
     try {
       for (const entry of await fs.readdir(dir)) {
-        if (entry.startsWith(name + '.old')) await fs.rm(join(dir, entry), { recursive: true, force: true }).catch(() => {})
+        if (entry.startsWith(name + '.old') || /\.app\.old(-\d+)?$/.test(entry)) await fs.rm(join(dir, entry), { recursive: true, force: true }).catch(() => {})
       }
     } catch { /* ignore */ }
   }
@@ -195,7 +195,7 @@ export class Updater extends EventEmitter {
   }
 
   private async installMac(zip: string): Promise<void> {
-    const bundle = resolve(app.getPath('exe'), '..', '..', '..')         // …/Yoosy Joosy.app
+    const bundle = resolve(app.getPath('exe'), '..', '..', '..')         // …/YouTube Quran Uploader.app
     if (!bundle.endsWith('.app')) throw new Error(`Unexpected app location: ${bundle}`)
     const tmp = await fs.mkdtemp(join(app.getPath('temp'), 'yj-update-'))
     await execFileP('ditto', ['-x', '-k', zip, tmp])
@@ -203,6 +203,18 @@ export class Updater extends EventEmitter {
     if (!extracted) throw new Error('Downloaded archive did not contain an app bundle')
     const fresh = join(tmp, extracted)
     const old = `${bundle}.old-${Date.now()}`   // unique: a stale .old from a previous update can never collide
+    if (extracted !== basename(bundle)) {
+      // App was renamed between versions: install under the new name, retire the old bundle, launch the new one.
+      const target = join(resolve(bundle, '..'), extracted)
+      await fs.rm(target, { recursive: true, force: true }).catch(() => {})
+      await execFileP('ditto', [fresh, target])
+      await execFileP('xattr', ['-dr', 'com.apple.quarantine', target]).catch(() => {})
+      await fs.rename(bundle, old).catch(() => {})
+      await fs.rm(tmp, { recursive: true, force: true }).catch(() => {})
+      spawn('open', ['-n', target], { detached: true, stdio: 'ignore' }).unref()
+      setTimeout(() => app.exit(0), 800)
+      return
+    }
     try {
       await fs.rename(bundle, old)                       // the running process keeps its open files; safe
     } catch (e) {

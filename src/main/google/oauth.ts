@@ -59,7 +59,7 @@ function listenForCode(timeoutMs = 5 * 60_000): Promise<{ port: number; code: Pr
         const c = url.searchParams.get('code')
         res.setHeader('Content-Type', 'text/html; charset=utf-8')
         if (c) {
-          res.end('<!doctype html><body style="font-family:system-ui;padding:40px;text-align:center"><h2>✓ Connected to Yoosy Joosy</h2><p>You can close this tab and return to the app.</p></body>')
+          res.end('<!doctype html><body style="font-family:system-ui;padding:40px;text-align:center"><h2>✓ Connected to YouTube Quran Uploader</h2><p>You can close this tab and return to the app.</p></body>')
           clearTimeout(timer); server.close(); resolve(c)
         } else {
           res.statusCode = 400

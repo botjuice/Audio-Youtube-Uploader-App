@@ -1,5 +1,5 @@
 appId: com.umoandco.yoosyjoosy
-productName: Yoosy Joosy
+productName: YouTube Quran Uploader
 directories:
   buildResources: resources
   output: dist
@@ -12,19 +12,19 @@ asarUnpack:
 mac:
   category: public.app-category.video
   target: [dmg, zip]
-  artifactName: yoosy-joosy-${version}-mac-${arch}.${ext}
+  artifactName: youtube-quran-uploader-${version}-mac-${arch}.${ext}
   hardenedRuntime: false
   gatekeeperAssess: false
 win:
   target: [nsis]
-  artifactName: yoosy-joosy-${version}-win-${arch}.${ext}
+  artifactName: youtube-quran-uploader-${version}-win-${arch}.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   perMachine: false
 linux:
   target: [AppImage]
-  artifactName: yoosy-joosy-${version}-linux-${arch}.${ext}
+  artifactName: youtube-quran-uploader-${version}-linux-${arch}.${ext}
   category: AudioVideo
 npmRebuild: false
 publish:

@@ -1,3 +1,4 @@
+import './identity'
 import { app, BrowserWindow, Menu, Tray, nativeImage, nativeTheme, shell } from 'electron'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
@@ -50,11 +51,11 @@ function showWindow(): void {
 function buildTray(): void {
   const icon = nativeImage.createFromPath(join(here, '../../resources', isMac ? 'trayTemplate.png' : 'tray.png'))
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon)
-  tray.setToolTip('Yoosy Joosy')
+  tray.setToolTip('YouTube Quran Uploader')
   const refresh = () => {
     const w = yoosy.settings.watcher
     tray?.setContextMenu(Menu.buildFromTemplate([
-      { label: 'Open Yoosy Joosy', click: showWindow },
+      { label: 'Open YouTube Quran Uploader', click: showWindow },
       { type: 'separator' },
       { label: 'Auto-upload new files', type: 'checkbox', checked: w.enabled,
         click: (item) => void yoosy.setSettings({ watcher: { ...yoosy.settings.watcher, enabled: item.checked } }) },
@@ -78,7 +79,7 @@ void app.whenReady().then(async () => {
   buildTray()
   win = createWindow()
   if (process.argv.includes('--hidden')) win.hide()
-  activity.info(`Yoosy Joosy ${app.getVersion()} started`)
+  activity.info(`YouTube Quran Uploader ${app.getVersion()} started`)
 })
 
 app.on('activate', showWindow)

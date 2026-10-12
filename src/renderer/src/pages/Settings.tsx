@@ -51,7 +51,7 @@ export default function Settings() {
             <details className="rounded-lg border border-border bg-surface-2/40 p-3">
               <summary className="cursor-pointer font-medium">How to get an OAuth client (one-time, ~5 minutes)</summary>
               <ol className="mt-2 space-y-2 list-decimal pl-5 text-muted">
-                <li><Lnk href={LINKS.project}>Create a Google Cloud project</Lnk> — any name, e.g. “Yoosy Joosy”.</li>
+                <li><Lnk href={LINKS.project}>Create a Google Cloud project</Lnk> — any name, e.g. “YouTube Quran Uploader”.</li>
                 <li><Lnk href={LINKS.api}>Enable the YouTube Data API v3</Lnk> in that project.</li>
                 <li><Lnk href={LINKS.consent}>Set up the OAuth consent screen</Lnk>: audience <b>External</b>, add your own Gmail as a test user.
                   <div className="mt-1 rounded bg-warn/10 text-warn px-2 py-1">Important: while the app is in <b>Testing</b>, Google expires your sign-in every 7 days. Click <b>Publish app</b> on that page once — you don't need verification for personal use; the sign-in screen will just show an “unverified app” warning you click through once.</div></li>
@@ -196,7 +196,7 @@ function UpdatesCard() {
     u.status === 'installing' ? 'Installing…' :
     u.status === 'error' ? `Problem: ${u.error}` : 'Checking…'
   return (
-    <Card title={`About · Yoosy Joosy v${health?.app.version ?? '…'}`} subtitle={status}
+    <Card title={`About · YouTube Quran Uploader v${health?.app.version ?? '…'}`} subtitle={status}
       actions={<Button size="sm" disabled={checking} onClick={() => void call('chk', async () => { const r = await window.api.checkForUpdates(); if (r.status === 'up-to-date') useStore.getState().notify('success', 'You have the latest version') })}>{checking ? <Spinner /> : <RefreshCw size={13} />} Check now</Button>}>
       <div className="space-y-3">
         <Field inline label="Check for updates automatically" hint="On launch and every 6 hours. Downloads happen in the background.">

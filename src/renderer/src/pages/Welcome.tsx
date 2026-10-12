@@ -10,7 +10,7 @@ export default function Welcome() {
       <div className="no-drag w-full max-w-md rounded-2xl border border-border bg-surface p-8 shadow-xl text-center space-y-5">
         <div className="mx-auto h-12 w-12 rounded-xl bg-gradient-to-br from-indigo-500 to-sky-400 flex items-center justify-center"><Film size={22} className="text-white" /></div>
         <div>
-          <h1 className="text-lg font-semibold">Welcome to Yoosy Joosy</h1>
+          <h1 className="text-lg font-semibold">Welcome to YouTube Quran Uploader</h1>
           <p className="text-sm text-muted mt-1">Choose the folder that holds your reciter folders. Each reciter folder should contain one photo and their audio recordings.</p>
         </div>
         <pre className="text-left text-[11px] leading-5 rounded-lg bg-surface-2 p-3 text-muted">{`Recordings/            ← choose this

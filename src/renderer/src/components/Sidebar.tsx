@@ -31,7 +31,7 @@ export function Sidebar() {
         <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-indigo-500 to-sky-400 flex items-center justify-center">
           <Film size={14} className="text-white" />
         </div>
-        <div className="font-semibold tracking-tight flex-1">Yoosy Joosy</div>
+        <div className="font-semibold tracking-tight flex-1">YouTube Quran Uploader</div>
         <IconButton label={isDark ? 'Switch to light mode' : 'Switch to dark mode'} onClick={toggleTheme} className="h-7 w-7">
           {isDark ? <Sun size={15} /> : <Moon size={15} />}
         </IconButton>
