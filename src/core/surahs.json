@@ -1,0 +1,523 @@
+{
+  "fatihah": "الفاتحة",
+  "fatiha": "الفاتحة",
+  "alfatihah": "الفاتحة",
+  "alfatiha": "الفاتحة",
+  "faatiha": "الفاتحة",
+  "fateha": "الفاتحة",
+
+  "baqarah": "البقرة",
+  "baqara": "البقرة",
+  "baqaara": "البقرة",
+  "albaqarah": "البقرة",
+  "albaqara": "البقرة",
+  "bakara": "البقرة",
+
+  "imran": "آل عمران",
+  "alimran": "آل عمران",
+  "aleimran": "آل عمران",
+  "aaleimran": "آل عمران",
+  "aalimran": "آل عمران",
+  "aleimraan": "آل عمران",
+  "3imran": "آل عمران",
+  "al3imran": "آل عمران",
+
+  "nisa": "النساء",
+  "nisaa": "النساء",
+  "alnisa": "النساء",
+  "alnisaa": "النساء",
+  "annisa": "النساء",
+  "annisaa": "النساء",
+  "nesa": "النساء",
+  "nesaa": "النساء",
+
+  "maidah": "المائدة",
+  "maaidah": "المائدة",
+  "maida": "المائدة",
+  "almaidah": "المائدة",
+  "almaaidah": "المائدة",
+  "almaida": "المائدة",
+  "maedah": "المائدة",
+
+  "anam": "الأنعام",
+  "anaam": "الأنعام",
+  "alanam": "الأنعام",
+  "alanaam": "الأنعام",
+
+  "araf": "الأعراف",
+  "aaraf": "الأعراف",
+  "alaraf": "الأعراف",
+  "alaaraf": "الأعراف",
+
+  "anfal": "الأنفال",
+  "anfaal": "الأنفال",
+  "alanfal": "الأنفال",
+  "alanfaal": "الأنفال",
+
+  "tawbah": "التوبة",
+  "tawba": "التوبة",
+  "attawbah": "التوبة",
+  "attawba": "التوبة",
+  "touba": "التوبة",
+  "towbah": "التوبة",
+
+  "yunus": "يونس",
+  "younus": "يونس",
+  "yoonus": "يونس",
+  "younes": "يونس",
+
+  "hud": "هود",
+  "hood": "هود",
+
+  "yusuf": "يوسف",
+  "yousef": "يوسف",
+  "yousuf": "يوسف",
+  "yoosuf": "يوسف",
+
+  "rad": "الرعد",
+  "raad": "الرعد",
+  "alrad": "الرعد",
+  "alraad": "الرعد",
+
+  "ibrahim": "إبراهيم",
+  "ibraheem": "إبراهيم",
+  "ibraaheem": "إبراهيم",
+
+  "hijr": "الحجر",
+  "alhijr": "الحجر",
+  "hijir": "الحجر",
+  "7ijr": "الحجر",
+
+  "nahl": "النحل",
+  "annahl": "النحل",
+  "na7l": "النحل",
+
+  "isra": "الإسراء",
+  "israa": "الإسراء",
+  "alisra": "الإسراء",
+  "alisraa": "الإسراء",
+  "esra": "الإسراء",
+
+  "kahf": "الكهف",
+  "alkahf": "الكهف",
+
+  "maryam": "مريم",
+  "mariam": "مريم",
+  "maryem": "مريم",
+
+  "taha": "طه",
+
+  "anbiya": "الأنبياء",
+  "anbiyaa": "الأنبياء",
+  "alanbiya": "الأنبياء",
+  "alanbiyaa": "الأنبياء",
+  "anbia": "الأنبياء",
+
+  "hajj": "الحج",
+  "alhajj": "الحج",
+  "haj": "الحج",
+  "7ajj": "الحج",
+
+  "muminoon": "المؤمنون",
+  "muminun": "المؤمنون",
+  "mumenoon": "المؤمنون",
+  "mominoon": "المؤمنون",
+  "almuminoon": "المؤمنون",
+  "almuminun": "المؤمنون",
+
+  "nur": "النور",
+  "annur": "النور",
+  "annoor": "النور",
+  "noor": "النور",
+  "alnoor": "النور",
+
+  "furqan": "الفرقان",
+  "alfurqan": "الفرقان",
+  "alforqan": "الفرقان",
+  "forqan": "الفرقان",
+
+  "shuara": "الشعراء",
+  "shuaraa": "الشعراء",
+  "ashuara": "الشعراء",
+  "shu3araa": "الشعراء",
+
+  "naml": "النمل",
+  "annaml": "النمل",
+
+  "qasas": "القصص",
+  "alqasas": "القصص",
+  "qesas": "القصص",
+
+  "ankabut": "العنكبوت",
+  "alankabut": "العنكبوت",
+  "ankaboot": "العنكبوت",
+
+  "rum": "الروم",
+  "arrum": "الروم",
+  "room": "الروم",
+  "arroom": "الروم",
+
+  "luqman": "لقمان",
+  "lokman": "لقمان",
+  "loqman": "لقمان",
+
+  "sajdah": "السجدة",
+  "assajdah": "السجدة",
+  "sajda": "السجدة",
+
+  "ahzab": "الأحزاب",
+  "alahzab": "الأحزاب",
+  "ahzaab": "الأحزاب",
+
+  "saba": "سبأ",
+  "sabaa": "سبأ",
+
+  "fatir": "فاطر",
+  "faatir": "فاطر",
+
+  "yasin": "يس",
+  "yaseen": "يس",
+  "yassen": "يس",
+  "yaasin": "يس",
+
+  "saffat": "الصافات",
+  "assaffat": "الصافات",
+  "saffaat": "الصافات",
+
+  "sad": "ص",
+  "saad": "ص",
+
+  "zumar": "الزمر",
+  "azzumar": "الزمر",
+  "alzumar": "الزمر",
+
+  "ghafir": "غافر",
+  "ghafeer": "غافر",
+
+  "fussilat": "فصلت",
+  "fussulat": "فصلت",
+
+  "shura": "الشورى",
+  "ashshura": "الشورى",
+  "alshoura": "الشورى",
+  "shoura": "الشورى",
+
+  "zukhruf": "الزخرف",
+  "azzukhruf": "الزخرف",
+  "alzukhruf": "الزخرف",
+
+  "dukhan": "الدخان",
+  "addukhan": "الدخان",
+  "dokhan": "الدخان",
+
+  "jathiyah": "الجاثية",
+  "aljathiyah": "الجاثية",
+  "jathiya": "الجاثية",
+  "jathiyya": "الجاثية",
+
+  "ahqaf": "الأحقاف",
+  "alahqaf": "الأحقاف",
+  "ahqaaf": "الأحقاف",
+
+  "muhammad": "محمد",
+  "mohammed": "محمد",
+  "mohamad": "محمد",
+
+  "fath": "الفتح",
+  "alfath": "الفتح",
+  "fatah": "الفتح",
+
+  "hujurat": "الحجرات",
+  "alhujurat": "الحجرات",
+  "hujarat": "الحجرات",
+  "hujuraat": "الحجرات",
+  "7ujurat": "الحجرات",
+
+  "qaf": "ق",
+  "qaaf": "ق",
+
+  "dhariyat": "الذاريات",
+  "athariyat": "الذاريات",
+  "thariat": "الذاريات",
+  "thariyat": "الذاريات",
+  "zariyat": "الذاريات",
+  "dhariyaat": "الذاريات",
+
+  "tur": "الطور",
+  "attur": "الطور",
+  "toor": "الطور",
+
+  "najm": "النجم",
+  "annajm": "النجم",
+
+  "qamar": "القمر",
+  "alqamar": "القمر",
+
+  "rahman": "الرحمن",
+  "arrahman": "الرحمن",
+  "alrahman": "الرحمن",
+  "ra7man": "الرحمن",
+
+  "waqiah": "الواقعة",
+  "alwaqiah": "الواقعة",
+  "waqi3ah": "الواقعة",
+  "waaqi3a": "الواقعة",
+
+  "hadid": "الحديد",
+  "alhadid": "الحديد",
+  "hadeed": "الحديد",
+  "7adid": "الحديد",
+
+  "mujadilah": "المجادلة",
+  "almujadilah": "المجادلة",
+  "mujadila": "المجادلة",
+
+  "hashr": "الحشر",
+  "alhashr": "الحشر",
+  "thashr": "الحشر",
+  "7ashr": "الحشر",
+
+  "mumtahanah": "الممتحنة",
+  "almumtahanah": "الممتحنة",
+  "mumtahana": "الممتحنة",
+
+  "saff": "الصف",
+  "assaff": "الصف",
+
+  "jumuah": "الجمعة",
+  "aljumuah": "الجمعة",
+  "jummuah": "الجمعة",
+  "jomaa": "الجمعة",
+  "juma": "الجمعة",
+
+  "munafiqoon": "المنافقون",
+  "munafiqun": "المنافقون",
+  "almunafiqoon": "المنافقون",
+  "munafiqeen": "المنافقون",
+  "monafiqoon": "المنافقون",
+
+  "taghabun": "التغابن",
+  "attaghabun": "التغابن",
+  "taghaabun": "التغابن",
+
+  "talaq": "الطلاق",
+  "attalaq": "الطلاق",
+
+  "tahrim": "التحريم",
+  "attahrim": "التحريم",
+  "tahreem": "التحريم",
+
+  "mulk": "الملك",
+  "almulk": "الملك",
+  "molk": "الملك",
+
+  "qalam": "القلم",
+  "alqalam": "القلم",
+
+  "haqqah": "الحاقة",
+  "alhaqqah": "الحاقة",
+
+  "maarij": "المعارج",
+  "almaarij": "المعارج",
+  "ma3arij": "المعارج",
+
+  "nuh": "نوح",
+  "nooh": "نوح",
+  "noo7": "نوح",
+
+  "jinn": "الجن",
+  "aljinn": "الجن",
+  "jin": "الجن",
+
+  "muzzammil": "المزمل",
+  "almuzzammil": "المزمل",
+  "muzzamil": "المزمل",
+  "almuzzamil": "المزمل",
+  "muzammil": "المزمل",
+
+  "muddaththir": "المدثر",
+  "almuddaththir": "المدثر",
+  "mudassir": "المدثر",
+
+  "qiyamah": "القيامة",
+  "alqiyamah": "القيامة",
+  "qiyama": "القيامة",
+  "alqiyama": "القيامة",
+
+  "insan": "الإنسان",
+  "alinsan": "الإنسان",
+  "insaan": "الإنسان",
+  "dahr": "الإنسان",
+
+  "mursalat": "المرسلات",
+  "almursalat": "المرسلات",
+  "mursalaat": "المرسلات",
+
+  "naba": "النبأ",
+  "annaba": "النبأ",
+  "3amma": "النبأ",
+  "amma": "النبأ",
+  "3ma": "النبأ",
+  "3am": "النبأ",
+
+  "naziat": "النازعات",
+  "annaziat": "النازعات",
+  "nazi3at": "النازعات",
+  "nazi3aat": "النازعات",
+  "naziaat": "النازعات",
+
+  "abasa": "عبس",
+  "3abasa": "عبس",
+
+  "takwir": "التكوير",
+  "attakwir": "التكوير",
+
+  "infitar": "الانفطار",
+  "alinfitar": "الانفطار",
+
+  "mutaffifin": "المطففين",
+  "almutaffifin": "المطففين",
+  "tatfif": "المطففين",
+
+  "inshiqaq": "الانشقاق",
+  "alinshiqaq": "الانشقاق",
+
+  "buruj": "البروج",
+  "alburuj": "البروج",
+  "brooj": "البروج",
+
+  "tariq": "الطارق",
+  "attariq": "الطارق",
+  "taareq": "الطارق",
+
+  "ala": "الأعلى",
+  "alala": "الأعلى",
+  "sabih": "الأعلى",
+  "sabbih": "الأعلى",
+  "sabbihi": "الأعلى",
+  "a3la": "الأعلى",
+  "aala": "الأعلى",
+
+  "ghashiyah": "الغاشية",
+  "alghashiyah": "الغاشية",
+  "ghashiya": "الغاشية",
+
+  "fajr": "الفجر",
+  "alfajr": "الفجر",
+
+  "balad": "البلد",
+  "albalad": "البلد",
+
+  "shams": "الشمس",
+  "ashshams": "الشمس",
+  "alshams": "الشمس",
+
+  "layl": "الليل",
+  "allayl": "الليل",
+  "lail": "الليل",
+  "leil": "الليل",
+
+  "duha": "الضحى",
+  "adduha": "الضحى",
+  "dhoha": "الضحى",
+  "do7a": "الضحى",
+
+  "sharh": "الشرح",
+  "ashsharh": "الشرح",
+  "inshirah": "الشرح",
+  "alinshirah": "الشرح",
+
+  "tin": "التين",
+  "attin": "التين",
+  "teen": "التين",
+
+  "alaq": "العلق",
+  "alalaq": "العلق",
+  "3alaq": "العلق",
+  "ikra": "العلق",
+  "iqra": "العلق",
+
+  "qadr": "القدر",
+  "alqadr": "القدر",
+  "qadar": "القدر",
+
+  "bayyinah": "البينة",
+  "albayyinah": "البينة",
+  "bayinah": "البينة",
+
+  "zalzalah": "الزلزلة",
+  "azzalzalah": "الزلزلة",
+  "zulzilah": "الزلزلة",
+  "zulzilat": "الزلزلة",
+  "zilzal": "الزلزلة",
+  "zelzala": "الزلزلة",
+
+  "adiyat": "العاديات",
+  "aladiyat": "العاديات",
+  "3adiyat": "العاديات",
+  "adiyaat": "العاديات",
+  "3adiyaat": "العاديات",
+
+  "qariah": "القارعة",
+  "alqariah": "القارعة",
+  "qari3a": "القارعة",
+
+  "takathur": "التكاثر",
+  "attakathur": "التكاثر",
+  "takaathur": "التكاثر",
+
+  "asr": "العصر",
+  "alasr": "العصر",
+  "3asr": "العصر",
+
+  "humazah": "الهمزة",
+  "alhumazah": "الهمزة",
+  "humaza": "الهمزة",
+
+  "fil": "الفيل",
+  "alfil": "الفيل",
+  "feel": "الفيل",
+
+  "quraysh": "قريش",
+  "quraish": "قريش",
+  "koraish": "قريش",
+  "kureysh": "قريش",
+
+  "maun": "الماعون",
+  "almaun": "الماعون",
+  "maoon": "الماعون",
+
+  "kawthar": "الكوثر",
+  "alkawthar": "الكوثر",
+  "kowthar": "الكوثر",
+  "kawther": "الكوثر",
+  "kausar": "الكوثر",
+
+  "kafiroon": "الكافرون",
+  "kafirun": "الكافرون",
+  "alkafiroon": "الكافرون",
+  "kafiroun": "الكافرون",
+  "kaferoon": "الكافرون",
+
+  "nasr": "النصر",
+  "annasr": "النصر",
+  "alnasr": "النصر",
+
+  "masad": "المسد",
+  "almasad": "المسد",
+  "lahab": "المسد",
+  "allahab": "المسد",
+  "tabbat": "المسد",
+
+  "ikhlas": "الإخلاص",
+  "alikhlas": "الإخلاص",
+  "qulhuwa": "الإخلاص",
+
+  "falaq": "الفلق",
+  "alfalaq": "الفلق",
+  "falak": "الفلق",
+
+  "nas": "الناس",
+  "annas": "الناس",
+  "alnas": "الناس"
+}

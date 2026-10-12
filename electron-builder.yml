@@ -1,0 +1,29 @@
+appId: com.umoandco.yoosyjoosy
+productName: Yoosy Joosy
+directories:
+  buildResources: resources
+  output: dist
+files:
+  - out/**
+  - package.json
+  - '!**/*.map'
+asarUnpack:
+  - node_modules/ffmpeg-static/**
+mac:
+  category: public.app-category.video
+  target: [dmg, zip]
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+  hardenedRuntime: false
+  gatekeeperAssess: false
+win:
+  target: [nsis]
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+linux:
+  target: [AppImage]
+  category: AudioVideo
+npmRebuild: false
+publish: null
