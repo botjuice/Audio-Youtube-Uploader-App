@@ -43,6 +43,7 @@ export class Updater extends EventEmitter {
 
   start(deps: UpdaterDeps): void {
     this.deps = deps
+    void this.sweepOldBundles()
     if (!app.isPackaged) { this.set({ status: 'up-to-date', deferred: 'Updates are disabled in development builds' }); return }
     setTimeout(() => void this.autoCycle(), FIRST_CHECK_MS)
     this.timer = setInterval(() => void this.autoCycle(), CHECK_EVERY_MS)
@@ -174,6 +175,18 @@ export class Updater extends EventEmitter {
     }
   }
 
+  /** Remove "<App>.app.old-*" bundles left by earlier macOS updates. Best-effort. */
+  private async sweepOldBundles(): Promise<void> {
+    if (process.platform !== 'darwin' || !app.isPackaged) return
+    const bundle = resolve(app.getPath('exe'), '..', '..', '..')
+    const dir = resolve(bundle, '..'); const name = basename(bundle)
+    try {
+      for (const entry of await fs.readdir(dir)) {
+        if (entry.startsWith(name + '.old')) await fs.rm(join(dir, entry), { recursive: true, force: true }).catch(() => {})
+      }
+    } catch { /* ignore */ }
+  }
+
   private async installWindows(installer: string): Promise<void> {
     // electron-builder NSIS: silent reinstall over the existing directory, then start the app.
     const child = spawn(installer, ['/S', '--updated', '--force-run'], { detached: true, stdio: 'ignore', windowsHide: true })
@@ -189,8 +202,7 @@ export class Updater extends EventEmitter {
     const extracted = (await fs.readdir(tmp)).find((n) => n.endsWith('.app'))
     if (!extracted) throw new Error('Downloaded archive did not contain an app bundle')
     const fresh = join(tmp, extracted)
-    const old = `${bundle}.old`
-    await fs.rm(old, { recursive: true, force: true })
+    const old = `${bundle}.old-${Date.now()}`   // unique: a stale .old from a previous update can never collide
     try {
       await fs.rename(bundle, old)                       // the running process keeps its open files; safe
     } catch (e) {
@@ -203,6 +215,8 @@ export class Updater extends EventEmitter {
       throw e
     }
     await execFileP('xattr', ['-dr', 'com.apple.quarantine', bundle]).catch(() => {})
+    // The running process still holds the old app.asar open, so this often can't finish now;
+    // sweepOldBundles() removes whatever is left on the next launch.
     await fs.rm(old, { recursive: true, force: true }).catch(() => {})
     await fs.rm(tmp, { recursive: true, force: true }).catch(() => {})
     app.relaunch()
