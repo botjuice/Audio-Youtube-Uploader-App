@@ -57,6 +57,7 @@ class YoosyApp {
       }
       this.syncWatcher()
     }
+    this.broadcast('evt:settings', this.settings)
     this.pushHealth()
     return this.settings
   }

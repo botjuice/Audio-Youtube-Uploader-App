@@ -48,6 +48,7 @@ export const useStore = create<State>((set, get) => ({
     const api = window.api
     api.on('library', (library) => set({ library }))
     api.on('health', (health) => set({ health }))
+    api.on('settings', (settings) => set({ settings }))
     api.on('progress', (progress) => set({ progress }))
     api.on('activity', (e) => set((s) => ({ activity: [...s.activity.slice(-499), e] })))
     const [settings, library, health, activity] = await Promise.all([

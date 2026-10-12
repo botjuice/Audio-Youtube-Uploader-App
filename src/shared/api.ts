@@ -57,4 +57,5 @@ export interface Api {
   on(event: 'progress', cb: (p: Progress | null) => void): () => void
   on(event: 'activity', cb: (e: ActivityEntry) => void): () => void
   on(event: 'health', cb: (h: Health) => void): () => void
+  on(event: 'settings', cb: (s: Settings) => void): () => void
 }
