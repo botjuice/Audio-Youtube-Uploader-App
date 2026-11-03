@@ -1,12 +1,13 @@
 import type {
-  ActivityEntry, Health, LibraryRecord, Playlist, PlaylistRule, Privacy, Progress,
-  ReciterInfo, ReciterPatch, RecordPatch, Settings, UpdateState,
+  ActivityEntry, Health, KeywordDef, LibraryRecord, NewReciter, Playlist, PlaylistRule, Privacy, Progress,
+  ReciterInfo, ReciterPatch, RecordPatch, Settings, TokenValidation, UpdateState,
 } from './types'
 
 export interface LibrarySnapshot {
   reciters: ReciterInfo[]
   records: LibraryRecord[]
   rules: PlaylistRule[]
+  keywords: KeywordDef[]
   playlists: Playlist[]          // cached channel playlists (may be stale until refreshed)
 }
 
@@ -30,12 +31,15 @@ export interface Api {
   markUploaded(id: string, videoId?: string): Promise<void>
   markNotUploaded(id: string): Promise<void>
   patchReciter(folder: string, patch: ReciterPatch): Promise<void>
+  addReciter(input: NewReciter): Promise<{ folder: string; moved: number }>
+  validateToken(kind: 'keyword' | 'reciter', value: string): Promise<TokenValidation>
   // surahs
   listSurahs(): Promise<SurahEntry[]>
   setSurah(key: string, arabic: string): Promise<void>
   deleteSurah(key: string): Promise<void>
-  // rules
+  // rules & keywords
   setRules(rules: PlaylistRule[]): Promise<void>
+  setKeywords(keywords: KeywordDef[]): Promise<void>
   // youtube
   setClientSecretFromFile(): Promise<boolean>               // opens a file dialog
   setClientSecret(clientId: string, clientSecret: string): Promise<void>

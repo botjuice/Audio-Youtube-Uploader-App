@@ -1,6 +1,6 @@
 import { safeStorage } from 'electron'
 import { promises as fs } from 'node:fs'
-import type { LastError, Playlist, PlaylistOverrides, PlaylistRule, Settings } from '@shared/types'
+import type { KeywordDef, LastError, Playlist, PlaylistOverrides, PlaylistRule, Settings } from '@shared/types'
 import type { QuotaState } from '@core/quota'
 import { JsonFile, readJson } from './jsonfile'
 import { secretFile, settingsFile, stateFile, tokenFile } from './paths'
@@ -30,8 +30,10 @@ export interface RecordState {
 
 export interface ReciterState {
   nameAr?: string | null
-  prefixOverride?: string | null
+  aliases?: string[]
   imageOverride?: string | null
+  /** v2.0–2.2 field; migrated into aliases on load */
+  prefixOverride?: string | null
 }
 
 /** User layer over the shipped surah dictionary. `null` = user deleted a default. */
@@ -40,7 +42,7 @@ export type SurahUserLayer = Record<string, string | null>
 export interface LibraryStore {
   records: JsonFile<Record<string, RecordState>>
   reciters: JsonFile<Record<string, ReciterState>>
-  rules: JsonFile<{ rules: PlaylistRule[] }>
+  rules: JsonFile<{ rules: PlaylistRule[]; keywords: KeywordDef[] }>
   surahs: JsonFile<SurahUserLayer>
   quota: JsonFile<QuotaState>
   playlists: JsonFile<{ items: Playlist[]; fetchedAt: string | null }>
@@ -50,7 +52,7 @@ export async function openLibraryStore(library: string): Promise<LibraryStore> {
   const s: LibraryStore = {
     records: new JsonFile(stateFile(library, 'records.json'), () => ({})),
     reciters: new JsonFile(stateFile(library, 'reciters.json'), () => ({})),
-    rules: new JsonFile(stateFile(library, 'rules.json'), () => ({ rules: [] })),
+    rules: new JsonFile(stateFile(library, 'rules.json'), () => ({ rules: [], keywords: [] })),
     surahs: new JsonFile(stateFile(library, 'surahs.json'), () => ({})),
     quota: new JsonFile(stateFile(library, 'quota.json'), () => ({ day: '', uploads: 0 })),
     playlists: new JsonFile(stateFile(library, 'playlists.json'), () => ({ items: [], fetchedAt: null })),

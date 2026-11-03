@@ -5,11 +5,14 @@ export type Tone = 'ok' | 'warn' | 'err' | 'info' | 'accent' | 'muted'
 export const STATUS_META: Record<RecordStatus, { label: string; tone: Tone }> = {
   ready:    { label: 'Ready',       tone: 'ok' },
   encoded:  { label: 'Rendered',    tone: 'info' },
-  fix:      { label: 'Fixable',     tone: 'warn' },
   error:    { label: 'Needs you',   tone: 'err' },
   skipped:  { label: 'Skipped',     tone: 'muted' },
   uploaded: { label: 'Uploaded',    tone: 'accent' },
 }
+
+/** Badge for a record: fixable errors get their own softer label. */
+export const statusMeta = (r: LibraryRecord) =>
+  r.status === 'error' && r.fixable ? { label: 'Fixable', tone: 'warn' as Tone } : STATUS_META[r.status]
 
 export const isUploadable = (r: LibraryRecord) => (r.status === 'ready' || r.status === 'encoded') && !r.skipped
 

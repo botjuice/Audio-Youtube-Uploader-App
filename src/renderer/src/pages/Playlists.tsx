@@ -1,13 +1,13 @@
-import { Plus, RefreshCw, Trash2, ListMusic } from 'lucide-react'
+import { Plus, RefreshCw, Trash2, ListMusic, Tag } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { PlaylistRule, Privacy, RuleMatch } from '@shared/types'
+import type { KeywordDef, PlaylistRule, Privacy, RuleMatch, TokenValidation } from '@shared/types'
 import { PRAYERS } from '@core/prayers'
 import { DEFAULT_SURAHS } from '@core/surahs'
 import { matchesRule } from '@core/rules'
-import { Badge, Button, Card, Empty, IconButton, Input, Select, Spinner, Switch } from '@/components/ui'
+import { Badge, Button, Card, Chip, Empty, IconButton, Input, Select, Spinner, Switch } from '@/components/ui'
 import { useBusy, useStore } from '@/store'
 
-const MATCH_LABEL: Record<RuleMatch, string> = { reciter: 'Reciter is', prayer: 'Prayer is', surah: 'Surah includes', keyword: 'Filename contains' }
+const MATCH_LABEL: Record<RuleMatch, string> = { reciter: 'Reciter is', prayer: 'Prayer is', surah: 'Surah includes' }
 const SURAH_KEYS = Object.keys(DEFAULT_SURAHS).sort()
 
 export default function Playlists() {
@@ -29,12 +29,12 @@ export default function Playlists() {
     saveTimer.current = setTimeout(() => { dirty.current = false; void call('rules', () => window.api.setRules(next)) }, 500)
   }
   const patch = (id: string, p: Partial<PlaylistRule>) => update(rules.map((r) => (r.id === id ? { ...r, ...p } : r)))
-  const add = () => update([...rules, { id: crypto.randomUUID(), match: 'keyword', value: '', playlistId: library.playlists[0]?.id ?? '', enabled: true }])
+  const add = () => update([...rules, { id: crypto.randomUUID(), match: 'prayer', value: '', playlistId: library.playlists[0]?.id ?? '', enabled: true }])
   const remove = (id: string) => update(rules.filter((r) => r.id !== id))
 
   const counts = useMemo(() => {
     const m = new Map<string, number>()
-    for (const rule of rules) m.set(rule.id, library.records.filter((r) => matchesRule({ ...rule, enabled: true }, { reciterFolder: r.reciterFolder, stem: r.stem, parsed: r.parsed })).length)
+    for (const rule of rules) m.set(rule.id, library.records.filter((r) => matchesRule({ ...rule, enabled: true }, { reciter: r.reciterKey, tokens: r.tokens })).length)
     return m
   }, [rules, library.records])
 
@@ -81,7 +81,7 @@ export default function Playlists() {
           actions={<Button size="sm" onClick={add}><Plus size={14} /> Add rule</Button>}>
           {rules.length === 0 ? (
             <Empty icon={<ListMusic size={28} />} title="No rules yet"
-              hint={<>Examples: <i>Reciter is AbdullahAlMousa</i> → his playlist · <i>Prayer is Taraweeh</i> → Taraweeh playlist · <i>Surah includes Baqarah</i> → Baqarah playlist · <i>Filename contains Olayan</i> → a keyword playlist.</>}
+              hint={<>Examples: <i>Reciter is AbdullahAlMousa</i> → his playlist · <i>Prayer is Taraweeh</i> → Taraweeh playlist · <i>Surah includes Baqarah</i> → Baqarah playlist. For anything else, use a keyword below.</>}
               action={<Button variant="primary" size="sm" onClick={add}><Plus size={14} /> Add your first rule</Button>} />
           ) : (
             <div className="space-y-2">
@@ -105,6 +105,7 @@ export default function Playlists() {
           )}
           <datalist id="surah-keys">{SURAH_KEYS.map((k) => <option key={k} value={k} />)}</datalist>
         </Card>
+        <div className="col-start-2"><KeywordsCard /></div>
       </div>
     </div>
   )
@@ -118,7 +119,58 @@ function ValueInput({ rule, onChange, reciters }: { rule: PlaylistRule; onChange
       return <Select value={rule.value} onChange={(e) => onChange(e.target.value)}><option value="">choose prayer…</option>{PRAYERS.map((p) => <option key={p} value={p}>{p}</option>)}</Select>
     case 'surah':
       return <Input list="surah-keys" value={rule.value} onChange={(e) => onChange(e.target.value)} placeholder="e.g. baqarah" />
-    case 'keyword':
-      return <Input value={rule.value} onChange={(e) => onChange(e.target.value)} placeholder="text anywhere in the filename" />
   }
+}
+
+function KeywordsCard() {
+  const library = useStore((s) => s.library)
+  const call = useStore((s) => s.call)
+  const [draft, setDraft] = useState('')
+  const [check, setCheck] = useState<TokenValidation | null>(null)
+  useEffect(() => {
+    if (!draft.trim()) { setCheck(null); return }
+    let live = true
+    const t = setTimeout(() => void window.api.validateToken('keyword', draft).then((v) => { if (live) setCheck(v) }), 250)
+    return () => { live = false; clearTimeout(t) }
+  }, [draft])
+  const save = (next: KeywordDef[]) => void call('keywords', () => window.api.setKeywords(next))
+  const add = () => { if (!check?.ok) return; save([...library.keywords, { name: draft.trim(), playlistIds: [] }]); setDraft('') }
+  const matchCount = (name: string) => library.records.filter((r) => r.tokens.keywords.some((k) => k.toLowerCase() === name.toLowerCase())).length
+  const draftHits = draft.trim() ? library.records.filter((r) => r.tokens.leftovers.some((l) => l.toLowerCase() === draft.trim().toLowerCase())).length : 0
+
+  return (
+    <Card title="Keywords" subtitle="Any word in a filename that isn't a date, prayer, reciter or surah. A recording can carry several; each adds its playlists.">
+      <div className="flex gap-2 items-start">
+        <div className="flex-1">
+          <Input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="e.g. Final, Outside, Ramadan" onKeyDown={(e) => { if (e.key === 'Enter') add() }} />
+          {check?.error && <div className="text-xs text-err mt-1">{check.error}</div>}
+          {check?.ok && check.warning && <div className="text-xs text-warn mt-1">{check.warning}</div>}
+          {check?.ok && draftHits > 0 && <div className="text-xs text-ok mt-1">Will fix {draftHits} recording{draftHits === 1 ? '' : 's'} currently flagged for this word</div>}
+        </div>
+        <Button variant="primary" onClick={add} disabled={!check?.ok}><Plus size={14} /> Add</Button>
+      </div>
+      {library.keywords.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {library.keywords.map((k) => (
+            <div key={k.name} className="rounded-lg border border-border bg-surface-2/40 p-2">
+              <div className="flex items-center gap-2">
+                <Badge tone="warn"><Tag size={10} /> {k.name}</Badge>
+                <span className="text-xs text-muted">{matchCount(k.name)} recording{matchCount(k.name) === 1 ? '' : 's'}</span>
+                <IconButton label="Delete keyword" className="ml-auto h-7 w-7" onClick={() => save(library.keywords.filter((x) => x.name !== k.name))}><Trash2 size={13} /></IconButton>
+              </div>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {library.playlists.length === 0 && <span className="text-xs text-muted">Load playlists (Refresh) to assign.</span>}
+                {library.playlists.map((p) => (
+                  <Chip key={p.id} active={k.playlistIds.includes(p.id)}
+                    onClick={() => save(library.keywords.map((x) => x.name === k.name ? { ...x, playlistIds: x.playlistIds.includes(p.id) ? x.playlistIds.filter((id) => id !== p.id) : [...x.playlistIds, p.id] } : x))}>
+                    {p.title}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  )
 }

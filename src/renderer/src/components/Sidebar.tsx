@@ -20,7 +20,7 @@ export function Sidebar() {
   const setPage = useStore((s) => s.setPage)
   const health = useStore((s) => s.health)
   const isMac = window.platform === 'darwin'
-  const attention = useStore((s) => s.library.records.filter((r) => r.status === 'fix' || r.status === 'error').length)
+  const attention = useStore((s) => s.library.records.filter((r) => r.status === 'error').length)
   const saveSettings = useStore((s) => s.saveSettings)
   const isDark = useIsDark()
   const toggleTheme = () => void saveSettings({ theme: isDark ? 'light' : 'dark' })

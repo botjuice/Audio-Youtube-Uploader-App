@@ -51,3 +51,19 @@ Google gives each project 10,000 API units per day; one upload costs 1,600, a pl
 | macOS: "app is damaged / can't be opened" | Unsigned build. `xattr -dr com.apple.quarantine "/Applications/YouTube Quran Uploader.app"` |
 | Windows SmartScreen warning | Unsigned build. More info → Run anyway. |
 | Auto-upload didn't pick up a new file | It waits for the file to finish copying (4 s of no changes), then uploads ~20 s later or at the next scheduled check. Check Activity for the reason if it was skipped. |
+
+---
+
+## Reciters, keywords and filing
+
+- **Reciters → Add a reciter** creates the folder and immediately moves every recording whose
+  name contains that reciter into it. From then on, any new file naming that reciter — dropped
+  at the library root or into another folder — is filed automatically on the next scan.
+  Add *other spellings* (aliases) to a reciter if your filenames use several.
+- **Playlists → Keywords** registers words the parser should recognise (e.g. `Final`,
+  `Outside`). Each keyword can feed any number of playlists; a recording can carry any number
+  of keywords. Adding one is refused if it would collide with a prayer, a surah spelling or a
+  reciter name, and warned if it overlaps another keyword.
+- **Unrecognised fragments** in a filename make the recording *Needs attention*. In the detail
+  panel you can **Rename** (removes the fragment) or teach the app: surah spelling, keyword, or
+  reciter. "Fix N filenames" in the action bar removes fragments in bulk after confirmation.

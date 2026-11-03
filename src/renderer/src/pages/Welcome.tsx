@@ -16,7 +16,7 @@ export default function Welcome() {
         <pre className="text-left text-[11px] leading-5 rounded-lg bg-surface-2 p-3 text-muted">{`Recordings/            ← choose this
 ├── Abdullah Al Mousa/
 │   ├── photo.jpg
-│   └── AbdullahAlMousaIshaMulk-01.03.2025.mp3
+│   └── IshaMulk-01.03.2025.mp3     ← prayer · surah · date, any order
 └── Another Reciter/
     └── …`}</pre>
         <Button variant="primary" size="lg" className="w-full" disabled={busy} onClick={() => void call('lib', () => window.api.chooseLibrary())}>

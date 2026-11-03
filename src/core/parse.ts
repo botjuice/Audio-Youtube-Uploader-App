@@ -1,13 +1,40 @@
-import type { Parsed, ParseReason } from '@shared/types'
-import { PRAYERS_ALTERNATION, canonicalPrayer } from './prayers'
-import { DEFAULT_SURAHS, isKnownSurah, type SurahDict } from './surahs'
+import type { Parsed, ParseReason, Tokens } from '@shared/types'
+import { PRAYERS, canonicalPrayer } from './prayers'
+import { DEFAULT_SURAHS, surahKey, type SurahDict } from './surahs'
 
-const FILENAME_RE = new RegExp(
-  `^(${PRAYERS_ALTERNATION})(.+?)-(\\d{1,2}\\.\\d{1,2}\\.\\d{4})$`, 'i')
-const PRAYER_ANYWHERE_RE = new RegExp(`(${PRAYERS_ALTERNATION})`, 'i')
-const DATE_LOOSE_RE = /\d{1,2}\.\d{1,2}\.\d{4}$/
-const DATE_DIRTY_RE = /\w+\.\w+\.\d{4}$/      // e.g. 14x.12.2024
+/** Everything the tokenizer may attribute. Build with buildVocabulary(). */
+export interface Vocabulary {
+  /** reciter key → every normalised spelling that identifies it (key itself + aliases) */
+  reciters: Record<string, string[]>
+  surahs: SurahDict
+  /** canonical keyword names (as registered) */
+  keywords: string[]
+}
 
+export const EMPTY_VOCAB: Vocabulary = { reciters: {}, surahs: DEFAULT_SURAHS, keywords: [] }
+
+/** Folder name → reciter key: lowercase, alphanumerics only. */
+export const reciterKey = (name: string) => surahKey(name)
+/** @deprecated kept for callers that still want "folder name without spaces" */
+export const prefixFromFolder = (folder: string) => folder.replace(/\s+/g, '')
+
+export function buildVocabulary(
+  reciters: { folder: string; aliases?: string[] }[],
+  surahs: SurahDict = DEFAULT_SURAHS,
+  keywords: string[] = [],
+): Vocabulary {
+  const r: Record<string, string[]> = {}
+  for (const { folder, aliases = [] } of reciters) {
+    const key = reciterKey(folder)
+    if (!key) continue
+    r[key] = [...new Set([key, ...aliases.map(surahKey).filter(Boolean)])]
+  }
+  return { reciters: r, surahs, keywords: keywords.filter((k) => k.trim()) }
+}
+
+// ── Dates ────────────────────────────────────────────────────────────────────
+
+const DATE_RE = /(\d{1,2})[a-z]{0,2}\.(\d{1,2})[a-z]{0,2}\.(\d{4})(?!\d)/gi
 const pad2 = (s: string) => String(Number.parseInt(s, 10)).padStart(2, '0')
 
 /** '5.1.2025' → '05.01.2025' */
@@ -16,174 +43,189 @@ export function normaliseDate(raw: string): string {
   return `${pad2(d)}.${pad2(m)}.${y}`
 }
 
-/** '14x.12.2024' → '14.12.2024'; null if unrecoverable. */
+/** '14x.12.2024' → '14.12.2024'; null if it is not a date at all. */
 export function cleanDateStr(raw: string): string | null {
   const parts = raw.split('.')
   if (parts.length !== 3) return null
-  const cleaned = parts.map((p) => p.replace(/\D/g, ''))
-  const [d, m, y] = cleaned
+  const [d, m, y] = parts.map((p) => p.replace(/\D/g, ''))
   if (!d || !m || !y || y.length !== 4) return null
+  const dd = Number(d), mm = Number(m)
+  if (dd < 1 || dd > 31 || mm < 1 || mm > 12) return null
   return `${pad2(d)}.${pad2(m)}.${y}`
 }
 
-/** Derive the filename prefix from a folder name: spaces removed. */
-export function prefixFromFolder(folder: string): string {
-  return folder.replace(/\s+/g, '')
+// ── Tokenizer ────────────────────────────────────────────────────────────────
+
+const SEPARATORS = new Set(['•', '-', '_', '#', ' ', '.', ',', '(', ')', '[', ']', '+', '~', '!', "'", '"'])
+const isSep = (c: string) => SEPARATORS.has(c)
+const isUpper = (c: string) => c !== c.toLowerCase() && c === c.toUpperCase()
+const isLower = (c: string) => c !== c.toUpperCase() && c === c.toLowerCase()
+const isDigit = (c: string) => c >= '0' && c <= '9'
+
+interface Span { start: number; end: number }
+type Kind = 'prayer' | 'reciter' | 'surah' | 'keyword'
+interface Candidate { kind: Kind; len: number; value: string }
+const PRECEDENCE: Record<Kind, number> = { prayer: 0, reciter: 1, surah: 2, keyword: 3 }
+
+export interface Tokenized extends Tokens {
+  /** original-index spans of leftovers and of the (first) date — used to build a fixed filename */
+  leftoverSpans: Span[]
+  dateSpan: Span | null
 }
 
-export function stripPrefix(stem: string, prefix: string): string | null {
-  return stem.toLowerCase().startsWith(prefix.toLowerCase()) ? stem.slice(prefix.length) : null
+/** Word boundary inside glued text: separator/digit edge or a camelCase edge. */
+function isBoundary(text: string, pos: number): boolean {
+  if (pos === 0) return true
+  const prev = text[pos - 1]!, cur = text[pos]!, next = text[pos + 1]
+  if (isDigit(prev) !== isDigit(cur)) return true
+  if (isUpper(cur) && isLower(prev)) return true
+  if (isUpper(cur) && next !== undefined && isLower(next)) return true
+  if (isLower(cur) && isUpper(prev)) return true
+  return false
 }
 
-export function parseStem(stem: string, prefix: string): Parsed | null {
-  const rest = stripPrefix(stem, prefix)
-  if (rest === null) return null
-  const m = FILENAME_RE.exec(rest)
-  if (!m) return null
-  const prayer = canonicalPrayer(m[1]!)
-  if (!prayer) return null
-  return {
-    prayer,
-    surahs: m[2]!.split('•').filter(Boolean),
-    date: normaliseDate(m[3]!),
+export function tokenize(stem: string, vocab: Vocabulary = EMPTY_VOCAB): Tokenized {
+  const out: Tokenized = {
+    date: null, dateDirty: false, prayer: null, reciter: null,
+    surahs: [], keywords: [], leftovers: [], leftoverSpans: [], dateSpan: null,
   }
-}
-
-export function buildStem(prefix: string, prayer: string, surahs: string[], date: string): string {
-  return `${prefix}${prayer}${surahs.join('•')}-${date}`
-}
-
-// ── Surah-name analysis ──────────────────────────────────────────────────────
-
-const isUpper = (c: string) => c === c.toUpperCase() && c !== c.toLowerCase()
-const isLower = (c: string) => c === c.toLowerCase() && c !== c.toUpperCase()
-const isAllUpper = (s: string) => s === s.toUpperCase() && s !== s.toLowerCase()
-
-/**
- * 'FINALmuminoon' → ['FINAL','Muminoon'] · 'OUTSIDENahl' → ['OUTSIDE','Nahl']
- * 'OlayanNisaa' → ['Olayan','Nisaa'] · 'THashr' → ['T','Hashr']
- */
-export function stripLeadingDescriptor(surah: string, dict: SurahDict = DEFAULT_SURAHS): [string, string] | null {
-  // Strategy 1: ALLCAPS run followed by lowercase → strip the whole caps run
-  const m = /^([A-Z]{2,})([a-z].+)$/.exec(surah)
-  if (m) {
-    const remainder = m[2]![0]!.toUpperCase() + m[2]!.slice(1)
-    if (isKnownSurah(remainder, dict)) return [m[1]!, remainder]
+  const claimed: Span[] = []
+  const addLeftover = (start: number, end: number) => {
+    const text = stem.slice(start, end)
+    if (!text.replace(/[\s•\-_#.,()[\]+~!'"]/g, '')) return
+    out.leftovers.push(text); out.leftoverSpans.push({ start, end })
   }
-  // Strategy 2: scan for an uppercase-led suffix that is a known surah, never cutting through a caps run
-  for (let i = 1; i < surah.length; i++) {
-    const candidate = surah.slice(i)
-    const prefix = surah.slice(0, i)
-    if (isUpper(candidate[0]!) && (isLower(prefix[prefix.length - 1]!) || isAllUpper(prefix))) {
-      if (isKnownSurah(candidate, dict)) return [prefix, candidate]
+
+  // 1. dates — first one wins, extra ones are leftovers
+  for (const m of stem.matchAll(DATE_RE)) {
+    const span = { start: m.index!, end: m.index! + m[0].length }
+    const clean = cleanDateStr(m[0])
+    if (!out.date && clean) {
+      out.date = clean; out.dateDirty = /[a-z]/i.test(m[0]) || clean !== normaliseDateSafe(m[0]); out.dateSpan = span
+    } else addLeftover(span.start, span.end)
+    claimed.push(span)
+  }
+
+  // 2. split the rest into segments on separators (tokens never cross an explicit separator)
+  const segments: { start: number; text: string }[] = []
+  let cur = ''; let curStart = -1
+  const flush = () => { if (cur) segments.push({ start: curStart, text: cur }); cur = ''; curStart = -1 }
+  for (let i = 0; i < stem.length; i++) {
+    if (claimed.some((s) => i >= s.start && i < s.end)) { flush(); continue }
+    const c = stem[i]!
+    if (isSep(c)) { flush(); continue }
+    if (!cur) curStart = i
+    cur += c
+  }
+  flush()
+
+  // 3. longest-match tokenization within each segment
+  const surahKeys = Object.keys(vocab.surahs).sort((a, b) => b.length - a.length)
+  const keywordEntries = vocab.keywords.map((k) => ({ key: surahKey(k), name: k })).filter((k) => k.key).sort((a, b) => b.key.length - a.key.length)
+  const reciterEntries = Object.entries(vocab.reciters).flatMap(([key, toks]) => toks.map((t) => ({ tok: t, key }))).sort((a, b) => b.tok.length - a.tok.length)
+
+  for (const seg of segments) {
+    const text = seg.text, lower = text.toLowerCase()
+    let pos = 0, leftStart: number | null = null
+    const best = (p: number): Candidate | null => {
+      const cands: Candidate[] = []
+      if (!out.prayer) for (const pr of PRAYERS) if (lower.startsWith(pr.toLowerCase(), p)) cands.push({ kind: 'prayer', len: pr.length, value: pr })
+      for (const r of reciterEntries) if (lower.startsWith(r.tok, p)) { cands.push({ kind: 'reciter', len: r.tok.length, value: r.key }); break }
+      for (const k of surahKeys) if (lower.startsWith(k, p)) { cands.push({ kind: 'surah', len: k.length, value: text.slice(p, p + k.length) }); break }
+      for (const k of keywordEntries) if (lower.startsWith(k.key, p)) { cands.push({ kind: 'keyword', len: k.key.length, value: k.name }); break }
+      if (!cands.length) return null
+      cands.sort((a, b) => b.len - a.len || PRECEDENCE[a.kind] - PRECEDENCE[b.kind])
+      return cands[0]!
     }
-  }
-  return null
-}
-
-/** 'ShamsLayl' → ['Shams','Layl'] · 'GhafirFiroun' → ['Ghafir','Firoun'] */
-export function splitMissingSeparator(surah: string, dict: SurahDict = DEFAULT_SURAHS): [string, string] | null {
-  for (let len = surah.length - 1; len > 1; len--) {
-    const candidate = surah.slice(0, len)
-    if (isKnownSurah(candidate, dict)) {
-      const rest = surah.slice(len)
-      if (rest) return [candidate, rest]
+    while (pos < text.length) {
+      const c = best(pos)
+      const accept = c && (leftStart === null || isBoundary(text, pos))
+      if (accept && c) {
+        if (leftStart !== null) { addLeftover(seg.start + leftStart, seg.start + pos); leftStart = null }
+        switch (c.kind) {
+          case 'prayer': out.prayer = canonicalPrayer(c.value); break
+          case 'reciter': if (out.reciter === null) out.reciter = c.value; else addLeftover(seg.start + pos, seg.start + pos + c.len); break
+          case 'surah': out.surahs.push(c.value); break
+          case 'keyword': if (!out.keywords.includes(c.value)) out.keywords.push(c.value); break
+        }
+        pos += c.len
+      } else {
+        if (leftStart === null) leftStart = pos
+        pos++
+      }
     }
+    if (leftStart !== null) addLeftover(seg.start + leftStart, seg.start + text.length)
   }
-  return null
+  // keep leftovers in filename order
+  const order = out.leftoverSpans.map((s, i) => [s.start, i] as const).sort((a, b) => a[0] - b[0]).map(([, i]) => i)
+  out.leftovers = order.map((i) => out.leftovers[i]!); out.leftoverSpans = order.map((i) => out.leftoverSpans[i]!)
+  return out
 }
 
-export interface SurahAnalysis { clean: string[] | null; issue: string | null }
-
-export function analyseSurah(surah: string, dict: SurahDict = DEFAULT_SURAHS): SurahAnalysis {
-  if (isKnownSurah(surah, dict)) return { clean: [surah], issue: null }
-
-  // Two surahs merged without '•' — check FIRST so 'Shams' in 'ShamsLayl' is a surah, not a descriptor
-  const split = splitMissingSeparator(surah, dict)
-  if (split) {
-    const [first, rest] = split
-    if (isKnownSurah(rest, dict)) {
-      return { clean: [first, rest], issue: `'${surah}' — two surahs without '•', split into '${first}•${rest}'` }
-    }
-    return { clean: [first], issue: `'${surah}' — trailing descriptor '${rest}' removed` }
-  }
-
-  const stripped = stripLeadingDescriptor(surah, dict)
-  if (stripped) {
-    const [desc, real] = stripped
-    return { clean: [real], issue: `'${surah}' — leading descriptor '${desc}' removed` }
-  }
-
-  return { clean: null, issue: `'${surah}' is not a recognised surah — add it as an alias or rename` }
+function normaliseDateSafe(raw: string): string | null {
+  try { return normaliseDate(raw) } catch { return null }
 }
 
-// ── Full diagnosis of one filename stem ──────────────────────────────────────
+// ── Fix suggestion ───────────────────────────────────────────────────────────
+
+/** Rebuild the stem with leftovers removed and a dirty date cleaned; collapses separator runs. */
+export function buildFixedStem(stem: string, t: Tokenized): string {
+  const cuts = [...t.leftoverSpans].sort((a, b) => a.start - b.start)
+  let out = ''; let i = 0; let capNext = false
+  const dateSpan = t.dateSpan
+  while (i < stem.length) {
+    const cut = cuts.find((s) => s.start === i)
+    // when a fragment is cut from inside glued text, re-capitalise the word that follows ("FINALmuminoon" → "Muminoon")
+    if (cut) { capNext = out.length > 0 && /[A-Za-z]$/.test(out); i = cut.end; continue }
+    if (dateSpan && i === dateSpan.start && t.date) { out += t.date; i = dateSpan.end; capNext = false; continue }
+    const ch = stem[i]!
+    out += capNext && /[a-z]/.test(ch) ? ch.toUpperCase() : ch
+    capNext = false; i++
+  }
+  // collapse runs of separators: prefer '-', else the first in the run; trim at ends
+  out = out.replace(/[•\-_#\s.,()[\]+~!'"]{2,}/g, (run) => (run.includes('-') ? '-' : run[0]!))
+  // but never collapse the dots inside the date
+  if (t.date) out = out.replace(t.date.replace(/\./g, '-'), t.date)
+  return out.replace(/^[•\-_#\s.,()[\]+~!'"]+|[•\-_#\s.,()[\]+~!'"]+$/g, '')
+}
+
+// ── Diagnosis ────────────────────────────────────────────────────────────────
 
 export interface Diagnosis {
-  status: 'ready' | 'fix' | 'error'
+  status: 'ready' | 'error'
   reason: ParseReason | null
   message: string | null
-  /** Suggested replacement stem (without extension) when auto-fixable. */
+  /** stem with leftovers removed / date cleaned, or null if nothing to fix */
   suggestion: string | null
+  /** true when applying `suggestion` alone makes the file Ready */
+  fixable: boolean
+  tokens: Tokens
   parsed: Parsed | null
 }
 
-const ok = (parsed: Parsed): Diagnosis => ({ status: 'ready', reason: null, message: null, suggestion: null, parsed })
-const fix = (reason: ParseReason, message: string, suggestion: string | null, parsed: Parsed | null = null): Diagnosis =>
-  ({ status: suggestion ? 'fix' : 'error', reason, message, suggestion, parsed })
+export function diagnoseStem(stem: string, vocab: Vocabulary = EMPTY_VOCAB): Diagnosis {
+  const t = tokenize(stem, vocab)
+  const problems: { reason: ParseReason; text: string }[] = []
+  if (!t.date) problems.push({ reason: 'NO_DATE', text: 'no date (expected DD.MM.YYYY)' })
+  if (!t.prayer) problems.push({ reason: 'NO_PRAYER', text: `no prayer name (one of ${PRAYERS.join(', ')})` })
+  if (t.surahs.length === 0) problems.push({ reason: 'NO_SURAH', text: 'no recognised surah' })
+  if (t.leftovers.length) problems.push({ reason: 'LEFTOVER', text: `unrecognised: ${t.leftovers.map((l) => `“${l}”`).join(', ')}` })
 
-export function diagnoseStem(stem: string, prefix: string, dict: SurahDict = DEFAULT_SURAHS): Diagnosis {
-  const rest = stripPrefix(stem, prefix)
-  if (rest === null) {
-    return fix('PREFIX_MISMATCH', `Filename must start with '${prefix}' (the folder name without spaces)`, null)
+  // Only offer a rename that keeps a surah — never suggest stripping the one word that might be the surah.
+  const hasFix = (t.leftovers.length > 0 && t.surahs.length > 0) || t.dateDirty
+  const suggestion = hasFix ? buildFixedStem(stem, t) : null
+  const tokens: Tokens = { date: t.date, dateDirty: t.dateDirty, prayer: t.prayer, reciter: t.reciter, surahs: t.surahs, keywords: t.keywords, leftovers: t.leftovers }
+
+  if (problems.length === 0 && !t.dateDirty) {
+    return { status: 'ready', reason: null, message: null, suggestion: null, fixable: false, tokens,
+      parsed: { date: t.date!, prayer: t.prayer!, reciter: t.reciter, surahs: t.surahs, keywords: t.keywords } }
   }
-
-  const prayerMatch = PRAYER_ANYWHERE_RE.exec(rest)
-  if (!prayerMatch) {
-    const dirty = DATE_DIRTY_RE.exec(rest)
-    const hint = dirty && cleanDateStr(dirty[0]) ? ` (date would be cleaned to ${cleanDateStr(dirty[0])})` : ''
-    return fix('NO_PRAYER', `No prayer name found in '${rest}'${hint}. Add one of: ${PRAYERS_ALTERNATION.replaceAll('|', ', ')}`, null)
+  const onlyFixable = problems.every((p) => p.reason === 'LEFTOVER')
+  const message = problems.length ? problems.map((p) => p.text).join(' · ') : 'date needs cleaning'
+  return {
+    status: 'error',
+    reason: problems[0]?.reason ?? 'NO_DATE',
+    message: message.charAt(0).toUpperCase() + message.slice(1),
+    suggestion, fixable: hasFix && onlyFixable, tokens, parsed: null,
   }
-
-  const prayer = canonicalPrayer(prayerMatch[1]!)!
-  if (prayerMatch.index !== 0) {
-    const before = rest.slice(0, prayerMatch.index)
-    const dateM = DATE_LOOSE_RE.exec(rest) ?? DATE_DIRTY_RE.exec(rest)
-    let suggestion: string | null = null
-    if (dateM) {
-      const date = cleanDateStr(dateM[0]) ?? dateM[0]
-      suggestion = `${prefix}${prayer}${before.replace(/-+$/, '')}-${date}`
-    }
-    return fix('PRAYER_ORDER', `Prayer '${prayer}' comes after the surah '${before}' — order is reversed`, suggestion)
-  }
-
-  const parsed = parseStem(stem, prefix)
-  if (!parsed) {
-    const dateM = DATE_DIRTY_RE.exec(rest)
-    let suggestion: string | null = null
-    if (dateM) {
-      const fixed = cleanDateStr(dateM[0])
-      const dash = rest.lastIndexOf('-')
-      if (fixed && dash > prayerMatch[0].length) {
-        const surahPart = rest.slice(prayerMatch[0].length, dash)
-        suggestion = `${prefix}${prayer}${surahPart}-${fixed}`
-      }
-    }
-    return fix('BAD_DATE', `Date is missing or malformed in '${rest}' — expected DD.MM.YYYY at the end`, suggestion)
-  }
-
-  const allClean: string[] = []
-  const issues: string[] = []
-  let unresolved = false
-  let needsRename = false
-  for (const s of parsed.surahs) {
-    const { clean, issue } = analyseSurah(s, dict)
-    if (clean === null) { unresolved = true; needsRename = true; issues.push(issue!); allClean.push(s) }
-    else if (issue) { needsRename = true; issues.push(issue); allClean.push(...clean) }
-    else allClean.push(...clean)
-  }
-
-  if (!needsRename) return ok(parsed)
-  if (unresolved) return fix('UNKNOWN_SURAH', issues.join('; '), null, parsed)
-  return fix('SURAH_FIXABLE', issues.join('; '), buildStem(prefix, parsed.prayer, allClean, parsed.date), parsed)
 }

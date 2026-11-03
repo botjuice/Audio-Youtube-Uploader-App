@@ -1,30 +1,44 @@
 /** Types shared by main, preload and renderer. Keep this file dependency-free. */
 
-export interface Parsed {
-  prayer: string      // canonical, e.g. "Isha"
-  surahs: string[]    // as written in the filename, e.g. ["Ahzab", "Munafiqoon"]
-  date: string        // normalised DD.MM.YYYY
+/** Everything the tokenizer could attribute in a filename. Fields are null/empty when absent. */
+export interface Tokens {
+  date: string | null         // normalised DD.MM.YYYY
+  dateDirty: boolean          // date had junk characters (e.g. 14x.12.2024) that a fix would clean
+  prayer: string | null       // canonical, e.g. "Isha"
+  reciter: string | null      // reciter key (folder name normalised) found in the name
+  surahs: string[]            // as written in the filename, e.g. ["Ahzab", "Munafiqoon"]
+  keywords: string[]          // registered keyword names found
+  leftovers: string[]         // fragments nothing could claim
 }
 
-export type ParseReason =
-  | 'PREFIX_MISMATCH' | 'NO_PRAYER' | 'PRAYER_ORDER' | 'BAD_DATE'
-  | 'UNKNOWN_SURAH' | 'SURAH_FIXABLE'
+/** A fully valid parse: date, prayer and at least one surah, nothing left over. */
+export interface Parsed {
+  date: string
+  prayer: string
+  reciter: string | null
+  surahs: string[]
+  keywords: string[]
+}
+
+export type ParseReason = 'NO_DATE' | 'NO_PRAYER' | 'NO_SURAH' | 'LEFTOVER'
 
 export type ReasonCode =
   | ParseReason
+  | 'NO_RECITER' | 'FILE_CONFLICT' | 'WRONG_FOLDER'
   | 'NO_RECITER_NAME' | 'NO_IMAGE' | 'ZERO_BYTES' | 'UNREADABLE'
   | 'ENCODED_NOT_UPLOADED' | 'MARKER_CORRUPT' | 'LAST_ERROR'
   | 'SKIPPED' | 'UPLOADED'
 
-export type RecordStatus = 'ready' | 'fix' | 'error' | 'skipped' | 'encoded' | 'uploaded'
+export type RecordStatus = 'ready' | 'error' | 'skipped' | 'encoded' | 'uploaded'
 
 export type PipelineStage = 'encode' | 'upload' | 'playlist'
 
 export interface LastError { stage: PipelineStage; message: string; at: string }
 
 export interface LibraryRecord {
-  id: string                 // "<reciterFolder>/<fileName>" — stable across sessions
+  id: string                 // "<reciterFolder>/<fileName>" — stable across sessions ("" folder = library root)
   reciterFolder: string
+  reciterKey: string | null  // effective reciter (from the name, else the folder)
   fileName: string
   stem: string
   ext: string
@@ -32,7 +46,9 @@ export interface LibraryRecord {
   status: RecordStatus
   reason: ReasonCode | null
   message: string | null     // human explanation of reason
-  suggestion: string | null  // suggested new fileName (with ext) when auto-fixable
+  suggestion: string | null  // suggested new fileName (with ext): leftovers removed / date cleaned
+  fixable: boolean           // suggestion alone would make it Ready
+  tokens: Tokens
   parsed: Parsed | null
   title: string | null       // effective title: override ?? generated
   titleOverride: string | null
@@ -48,9 +64,9 @@ export interface LibraryRecord {
 
 export interface ReciterInfo {
   folder: string
+  key: string                // folder name normalised (lowercase, alphanumerics) — what filenames are matched against
   nameAr: string | null
-  prefix: string             // effective prefix used for parsing
-  prefixOverride: string | null
+  aliases: string[]          // extra spellings that also identify this reciter in filenames
   imagePath: string | null   // effective image
   imageOverride: string | null
   images: string[]           // all images found in the folder
@@ -58,7 +74,14 @@ export interface ReciterInfo {
   uploaded: number
 }
 
-export type RuleMatch = 'reciter' | 'prayer' | 'surah' | 'keyword'
+export type RuleMatch = 'reciter' | 'prayer' | 'surah'
+
+/** A free-form tag recognised in filenames; routes to zero or more playlists. */
+export interface KeywordDef { name: string; playlistIds: string[] }
+
+export interface TokenValidation { ok: boolean; key: string; error?: string; warning?: string }
+
+export interface NewReciter { name: string; nameAr: string; playlistId?: string }
 
 export interface PlaylistRule {
   id: string
@@ -143,7 +166,7 @@ export interface Progress {
 
 export interface ReciterPatch {
   nameAr?: string | null
-  prefixOverride?: string | null
+  aliases?: string[]
   imageOverride?: string | null
 }
 

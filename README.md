@@ -61,8 +61,8 @@ Every recording has a status and, when it isn't uploading, the exact reason:
 |---|---|
 | **Ready** | Parses cleanly, title generated, photo found — will upload |
 | **Rendered** | MP4 already produced, upload pending |
-| **Fixable** | Filename typo with a one-click suggestion (`FINALmuminoon` → `Muminoon`, `ShamsLayl` → `Shams•Layl`, `14x.12.2024` → `14.12.2024`, reversed prayer/surah order) |
-| **Needs you** | No prayer name · unknown surah (add the spelling in Settings) · reciter has no Arabic name · no photo · file empty/unreadable · wrong prefix |
+| **Fixable** | Unrecognised fragment or dirty date with a one-click rename (`FINALmuminoon` → `Muminoon`, `14x.12.2024` → `14.12.2024`) |
+| **Needs you** | No date / prayer / surah · unknown fragment (teach it as surah, keyword or reciter) · reciter has no Arabic name · no photo · file empty/unreadable · not in any reciter folder |
 | **Skipped** | You excluded it |
 | **Uploaded** | Marker present (from this app, a manual mark, or **Sync with YouTube** matching the title on your channel) |
 
@@ -72,12 +72,24 @@ Failed attempts keep their error message on the row until the next success.
 
 ## Filename format
 
-`{ReciterFolderName}{Prayer}{Surah}•{Surah}-{DD.MM.YYYY}.{m4a|mp3|wav|…}`
+The app reads names as a **vocabulary**, not a fixed pattern. Any order, separators optional:
 
-- Prefix = folder name with spaces removed (override per reciter if needed)
-- Prayer ∈ Fajr, Dhuhr, Asr, Maghrib, Isha, Taraweeh, Qiyam, Tahajjud, Witr (any case)
-- Several surahs separated by `•`; 700+ transliteration spellings understood, add your own
-- Day/month may be 1 or 2 digits
+| Part | Recognised as | Examples |
+|---|---|---|
+| Date | `D.M.YYYY` (junk tolerated: `14x.12.2024`) | `01.03.2025`, `1.3.2025` |
+| Prayer | one of Fajr · Dhuhr · Asr · Maghrib · Isha · Taraweeh · Qiyam · Tahajjud · Witr | `Isha`, `fajr` |
+| Reciter | any reciter folder name or alias (optional — the folder is the default) | `AbdullahAlMousa`, `Mousa` |
+| Surah | 400+ spellings; several surahs may be glued or `•`-separated | `Ahzab•Munafiqoon`, `ShamsLayl` |
+| Keyword | anything you register in **Playlists → Keywords** | `Final`, `Outside`, `#ramadan` |
+
+`IshaMulk-01.03.2025.m4a` inside a reciter folder is enough. Whatever is left over is shown
+as *Needs attention* with a one-click **Remove**, or you can tell the app it's a surah
+spelling, a keyword, or a reciter — it learns instead of deleting.
+
+**Auto-filing:** a recording whose name contains a reciter is moved into that reciter's
+folder on every scan (sidecars and state travel with it, never overwrites). Drop files at
+the library root or in the wrong folder and they sort themselves.
+
 
 ## Where things live
 

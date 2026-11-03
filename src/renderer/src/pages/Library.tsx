@@ -3,7 +3,7 @@ import { ArrowUpFromLine, CloudDownload, RefreshCw, Search, Sparkles, X, Filter 
 import { Fragment, useMemo, useState } from 'react'
 import type { LibraryRecord, RecordStatus } from '@shared/types'
 import { Badge, Button, Checkbox, Empty, IconButton, Input, ProgressBar, Select, Spinner } from '@/components/ui'
-import { STATUS_META, fmtUntil, isUploadable } from '@/lib/format'
+import { statusMeta, fmtUntil, isUploadable } from '@/lib/format'
 import { useBusy, useStore } from '@/store'
 import { RecordDetail } from './RecordDetail'
 
@@ -28,7 +28,7 @@ export default function Library() {
     const needle = q.trim().toLowerCase()
     return library.records.filter((r) => {
       if (reciter !== 'all' && r.reciterFolder !== reciter) return false
-      if (status === 'attention' ? !(r.status === 'fix' || r.status === 'error') : status !== 'all' && r.status !== status) return false
+      if (status === 'attention' ? r.status !== 'error' : status !== 'all' && r.status !== status) return false
       if (needle && !(r.fileName.toLowerCase().includes(needle) || (r.title ?? '').toLowerCase().includes(needle))) return false
       return true
     })
@@ -37,7 +37,8 @@ export default function Library() {
   const all = library.records
   const uploadable = all.filter(isUploadable)
   const selectedUploadable = uploadable.filter((r) => r.selected)
-  const fixable = all.filter((r) => r.status === 'fix').length
+  const fixableRecs = all.filter((r) => r.fixable)
+  const fixable = fixableRecs.length
   const uploadIds = (selectedUploadable.length ? selectedUploadable : uploadable).map((r) => r.id)
   const visibleUploadable = rows.filter(isUploadable)
   const allVisibleChecked = visibleUploadable.length > 0 && visibleUploadable.every((r) => r.selected)
@@ -53,7 +54,7 @@ export default function Library() {
 
   const counts = {
     ready: uploadable.length,
-    attention: all.filter((r) => r.status === 'fix' || r.status === 'error').length,
+    attention: all.filter((r) => r.status === 'error').length,
     uploaded: all.filter((r) => r.status === 'uploaded').length,
   }
 
@@ -63,10 +64,15 @@ export default function Library() {
     const r = await window.api.syncWithYouTube()
     notify('success', `Sync: ${r.matched} newly matched · ${r.alreadyMarked} already marked · ${r.scannedVideos} channel videos checked`)
   })
-  const fixAll = () => call('fixAll', async () => {
-    const n = await window.api.applyAllFixes()
-    notify(n ? 'success' : 'info', n ? `Renamed ${n} file${n === 1 ? '' : 's'}` : 'Nothing to fix')
-  })
+  const fixAll = () => {
+    const preview = fixableRecs.slice(0, 8).map((r) => `• ${r.fileName}\n    → ${r.suggestion}`).join('\n')
+    const more = fixableRecs.length > 8 ? `\n…and ${fixableRecs.length - 8} more` : ''
+    if (!window.confirm(`Rename ${fixableRecs.length} file${fixableRecs.length === 1 ? '' : 's'}, removing the unrecognised parts?\n\n${preview}${more}`)) return
+    void call('fixAll', async () => {
+      const n = await window.api.applyAllFixes()
+      notify(n ? 'success' : 'info', n ? `Renamed ${n} file${n === 1 ? '' : 's'}` : 'Nothing to fix')
+    })
+  }
 
   return (
     <div className="flex h-full min-h-0">
@@ -117,7 +123,7 @@ export default function Library() {
               {rows.map((r, i) => (
                 <Fragment key={r.id}>
                   {reciter === 'all' && (i === 0 || rows[i - 1]!.reciterFolder !== r.reciterFolder) && (
-                    <div className="px-3 pt-3 pb-1 text-[11px] font-semibold text-muted">{r.reciterFolder}</div>
+                    <div className="px-3 pt-3 pb-1 text-[11px] font-semibold text-muted">{r.reciterFolder || 'Library root (not in a reciter folder)'}</div>
                   )}
                   <Row r={r} active={selectedId === r.id} onSelect={() => select(r.id)} progress={progress?.recordId === r.id ? progress.percent : null}
                     onCheck={(v) => call('sel', () => window.api.patchRecord(r.id, { selected: v }))} />
@@ -136,7 +142,7 @@ export default function Library() {
           </div>
           <div className="ml-auto flex items-center gap-2">
             {fixable > 0 && (
-              <Button variant="subtle" onClick={fixAll} disabled={fixing}>{fixing ? <Spinner /> : <Sparkles size={14} />} Fix {fixable} filename{fixable === 1 ? '' : 's'}</Button>
+              <Button variant="subtle" onClick={fixAll} disabled={fixing} title="Removes the unrecognised parts from these filenames (asks first)">{fixing ? <Spinner /> : <Sparkles size={14} />} Fix {fixable} filename{fixable === 1 ? '' : 's'}</Button>
             )}
             {uploading ? (
               <Button variant="danger" onClick={() => void window.api.cancelUpload()}><X size={14} /> Stop after this one</Button>
@@ -156,7 +162,7 @@ export default function Library() {
 }
 
 function Row({ r, active, onSelect, onCheck, progress }: { r: LibraryRecord; active: boolean; onSelect: () => void; onCheck: (v: boolean) => void; progress: number | null }) {
-  const meta = STATUS_META[r.status]
+  const meta = statusMeta(r)
   const warn = r.status !== 'uploaded' && r.lastError
   return (
     <div onClick={onSelect}

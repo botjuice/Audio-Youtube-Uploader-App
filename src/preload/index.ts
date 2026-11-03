@@ -2,8 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 const methods = [
   'getSettings', 'setSettings', 'chooseLibrary', 'getLibrary', 'rescan', 'patchRecord', 'patchRecords',
-  'renameRecord', 'applyFix', 'applyAllFixes', 'markUploaded', 'markNotUploaded', 'patchReciter',
-  'listSurahs', 'setSurah', 'deleteSurah', 'setRules',
+  'renameRecord', 'applyFix', 'applyAllFixes', 'markUploaded', 'markNotUploaded', 'patchReciter', 'addReciter', 'validateToken',
+  'listSurahs', 'setSurah', 'deleteSurah', 'setRules', 'setKeywords',
   'setClientSecretFromFile', 'setClientSecret', 'connectYouTube', 'disconnectYouTube',
   'refreshPlaylists', 'createPlaylist', 'syncWithYouTube', 'startUpload', 'cancelUpload',
   'getUpdateState', 'checkForUpdates', 'downloadUpdate', 'installUpdate',

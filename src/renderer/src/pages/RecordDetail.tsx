@@ -1,9 +1,9 @@
 import { clsx } from 'clsx'
-import { Check, ExternalLink, FolderOpen, Pencil, RotateCcw, Sparkles, X, Plus, CircleSlash, CircleCheck } from 'lucide-react'
+import { Check, ExternalLink, FolderOpen, Pencil, RotateCcw, Sparkles, X, Plus, CircleSlash, CircleCheck, Tag, BookOpen, UserPlus } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { LibraryRecord } from '@shared/types'
-import { Badge, Button, Chip, IconButton, Input, Select } from '@/components/ui'
-import { STATUS_META, fmtBytes, fmtRel, parseVideoId } from '@/lib/format'
+import { Badge, Button, Chip, IconButton, Input, Modal, Select } from '@/components/ui'
+import { statusMeta, fmtBytes, fmtRel, parseVideoId } from '@/lib/format'
 import { useStore } from '@/store'
 
 export function RecordDetail({ record: r, onClose }: { record: LibraryRecord; onClose: () => void }) {
@@ -20,10 +20,11 @@ export function RecordDetail({ record: r, onClose }: { record: LibraryRecord; on
   const [markOpen, setMarkOpen] = useState(false)
   const [markId, setMarkId] = useState('')
   const [addPl, setAddPl] = useState('')
+  const [leftoverAction, setLeftoverAction] = useState<{ word: string; kind: 'surah' | 'keyword' | 'reciter' } | null>(null)
 
   useEffect(() => { setName(r.fileName); setEditingName(false); setTitle(r.titleOverride ?? ''); setEditingTitle(false); setMarkOpen(false); setMarkId('') }, [r.id, r.fileName, r.titleOverride])
 
-  const meta = STATUS_META[r.status]
+  const meta = statusMeta(r)
   const plName = (id: string) => library.playlists.find((p) => p.id === id)?.title ?? id
   const candidates = [...new Set([...r.playlists.auto, ...r.playlists.final])]
   const addable = library.playlists.filter((p) => !r.playlists.final.includes(p.id))
@@ -55,13 +56,31 @@ export function RecordDetail({ record: r, onClose }: { record: LibraryRecord; on
       <div className="flex-1 overflow-auto p-4 space-y-5">
         {/* why */}
         {(r.message || r.lastError) && (
-          <section className={clsx('rounded-lg border p-3 text-xs space-y-2', r.status === 'error' ? 'border-err/30 bg-err/6' : r.status === 'fix' ? 'border-warn/30 bg-warn/6' : 'border-border bg-surface')}>
+          <section className={clsx('rounded-lg border p-3 text-xs space-y-2', r.status === 'error' && !r.fixable ? 'border-err/30 bg-err/6' : r.fixable ? 'border-warn/30 bg-warn/6' : 'border-border bg-surface')}>
             {r.message && <div>{r.message}</div>}
             {r.lastError && r.reason !== 'LAST_ERROR' && <div className="text-muted">Last attempt ({r.lastError.stage}, {fmtRel(r.lastError.at)}): {r.lastError.message}</div>}
             {r.suggestion && (
-              <div className="flex items-center gap-2 pt-1">
-                <code className="flex-1 truncate rounded bg-surface-2 px-1.5 py-1 text-[11px]">{r.suggestion}</code>
-                <Button size="sm" variant="primary" onClick={applyFix}><Sparkles size={12} /> Apply</Button>
+              <div className="pt-1 space-y-1">
+                <div className="text-[11px] text-muted">{r.tokens.leftovers.length ? 'Remove the unrecognised part(s)' : 'Clean the date'} →</div>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 truncate rounded bg-surface-2 px-1.5 py-1 text-[11px]">{r.suggestion}</code>
+                  <Button size="sm" variant="primary" onClick={applyFix}><Sparkles size={12} /> Rename</Button>
+                </div>
+              </div>
+            )}
+            {r.tokens.leftovers.length > 0 && (
+              <div className="pt-1">
+                <div className="text-[11px] text-muted mb-1">…or teach the app what these mean:</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {r.tokens.leftovers.map((w, i) => (
+                    <span key={i} className="inline-flex items-center rounded-full border border-err/40 bg-err/8 pl-2 text-xs">
+                      <span className="font-mono">{w}</span>
+                      <button className="ml-1 px-1.5 h-6 hover:text-accent" title="Add as surah spelling" onClick={() => setLeftoverAction({ word: w, kind: 'surah' })}><BookOpen size={12} /></button>
+                      <button className="px-1.5 h-6 hover:text-accent" title="Add as keyword → playlist" onClick={() => setLeftoverAction({ word: w, kind: 'keyword' })}><Tag size={12} /></button>
+                      <button className="px-1.5 h-6 pr-2 hover:text-accent" title="Add as reciter (creates folder)" onClick={() => setLeftoverAction({ word: w, kind: 'reciter' })}><UserPlus size={12} /></button>
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
           </section>
@@ -75,11 +94,13 @@ export function RecordDetail({ record: r, onClose }: { record: LibraryRecord; on
               <Button size="sm" variant="primary" onClick={rename}><Check size={13} /></Button>
             </div>
           ) : <code className="block break-all text-xs">{r.fileName}</code>}
-          {r.parsed && (
-            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
-              <Badge>{r.parsed.prayer}</Badge>{r.parsed.surahs.map((s) => <Badge key={s} tone="info">{s}</Badge>)}<Badge>{r.parsed.date}</Badge>
-            </div>
-          )}
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+            {r.reciterKey && <Badge tone="accent">{library.reciters.find((x) => x.key === r.reciterKey)?.folder ?? r.reciterKey}</Badge>}
+            {r.tokens.prayer ? <Badge>{r.tokens.prayer}</Badge> : <Badge tone="err">no prayer</Badge>}
+            {r.tokens.surahs.length ? r.tokens.surahs.map((s, i) => <Badge key={i} tone="info">{s}</Badge>) : <Badge tone="err">no surah</Badge>}
+            {r.tokens.date ? <Badge>{r.tokens.date}{r.tokens.dateDirty ? ' ✎' : ''}</Badge> : <Badge tone="err">no date</Badge>}
+            {r.tokens.keywords.map((k) => <Badge key={k} tone="warn"><Tag size={10} /> {k}</Badge>)}
+          </div>
         </Section>
 
         {/* title */}
@@ -146,7 +167,56 @@ export function RecordDetail({ record: r, onClose }: { record: LibraryRecord; on
           {absPath && <Button size="sm" onClick={() => void window.api.showInFolder(absPath)}><FolderOpen size={13} /> Show in folder</Button>}
         </div>
       </div>
+      {leftoverAction && <LeftoverModal record={r} action={leftoverAction} onClose={() => setLeftoverAction(null)} />}
     </aside>
+  )
+}
+
+function LeftoverModal({ record, action, onClose }: { record: LibraryRecord; action: { word: string; kind: 'surah' | 'keyword' | 'reciter' }; onClose: () => void }) {
+  const library = useStore((s) => s.library)
+  const call = useStore((s) => s.call)
+  const [arabic, setArabic] = useState('')
+  const [name, setName] = useState(action.word)
+  const [playlists, setPlaylists] = useState<string[]>([])
+  const [check, setCheck] = useState<{ ok: boolean; error?: string; warning?: string } | null>(null)
+  useEffect(() => {
+    if (action.kind === 'surah') return
+    let live = true
+    void window.api.validateToken(action.kind, name).then((v) => { if (live) setCheck(v) })
+    return () => { live = false }
+  }, [name, action.kind])
+  const toggle = (id: string) => setPlaylists((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]))
+  const submit = () => {
+    if (action.kind === 'surah') return void call('leftover', () => window.api.setSurah(action.word, arabic).then(onClose), { success: `“${action.word}” now means ${arabic}` })
+    if (action.kind === 'keyword') return void call('leftover', () => window.api.setKeywords([...library.keywords, { name, playlistIds: playlists }]).then(onClose), { success: `Keyword “${name}” added` })
+    return void call('leftover', () => window.api.addReciter({ name, nameAr: arabic, ...(playlists[0] ? { playlistId: playlists[0] } : {}) }).then(onClose), { success: `Reciter “${name}” added` })
+  }
+  const titles = { surah: `“${action.word}” is a surah`, keyword: `“${action.word}” is a keyword`, reciter: `“${action.word}” is a reciter` }
+  return (
+    <Modal open onClose={onClose} title={titles[action.kind]}
+      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" onClick={submit} disabled={(action.kind !== 'surah' && (!check?.ok || !name.trim())) || (action.kind !== 'keyword' && !arabic.trim())}>Save</Button></>}>
+      <div className="space-y-3 text-[13px]">
+        {action.kind !== 'surah' && (
+          <div>
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name as written in filenames" />
+            {check?.error && <div className="text-xs text-err mt-1">{check.error}</div>}
+            {check?.warning && <div className="text-xs text-warn mt-1">{check.warning}</div>}
+          </div>
+        )}
+        {action.kind !== 'keyword' && <Input dir="rtl" value={arabic} onChange={(e) => setArabic(e.target.value)} placeholder={action.kind === 'surah' ? 'الاسم بالعربية' : 'اسم القارئ'} autoFocus />}
+        {action.kind !== 'surah' && (
+          <div>
+            <div className="text-xs text-muted mb-1">{action.kind === 'keyword' ? 'Add recordings with this keyword to:' : 'Playlist for this reciter (optional):'}</div>
+            <div className="flex flex-wrap gap-1.5">
+              {library.playlists.length === 0 && <span className="text-xs text-muted">No playlists loaded yet (Playlists → Refresh).</span>}
+              {library.playlists.map((p) => <Chip key={p.id} active={playlists.includes(p.id)} onClick={() => action.kind === 'reciter' ? setPlaylists([p.id]) : toggle(p.id)}>{p.title}</Chip>)}
+            </div>
+          </div>
+        )}
+        {action.kind === 'reciter' && <p className="text-xs text-muted">A folder “{name}” will be created and every recording naming this reciter — including “{record.fileName}” — will move into it.</p>}
+        {action.kind === 'surah' && <p className="text-xs text-muted">Every file using this spelling will parse again automatically.</p>}
+      </div>
+    </Modal>
   )
 }
 

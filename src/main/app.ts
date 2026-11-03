@@ -1,13 +1,13 @@
 import { app, BrowserWindow, dialog, nativeTheme, shell } from 'electron'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
-import type { Health, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, Settings } from '@shared/types'
+import type { Health, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, Settings, TokenValidation } from '@shared/types'
 import type { LibrarySnapshot, SurahEntry, SyncResult } from '@shared/api'
-import { DEFAULT_SURAHS, nextQuotaReset, normaliseQuota, remainingUploads, surahKey } from '@core/index'
+import { DEFAULT_SURAHS, nextQuotaReset, normaliseQuota, reciterKey, remainingUploads, surahKey, validateToken } from '@core/index'
 import { ffmpegAvailable, ffmpegPath } from './ffmpeg'
 import { connect, disconnect, getClient, parseClientSecretJson, resetClient } from './google/oauth'
 import { createPlaylist, getChannel, listPlaylists, listUploads } from './google/youtube'
-import { removeMarker, renameRecordFiles, scanLibrary, writeMarker, type ScanResult } from './library'
+import { currentVocabulary, removeMarker, renameRecordFiles, scanLibrary, writeMarker, type ScanResult } from './library'
 import { activity } from './log'
 import { Pipeline } from './pipeline'
 import { openLibraryStore, secrets, settings, type LibraryStore } from './store'
@@ -19,7 +19,7 @@ type Listener = (channel: string, payload: unknown) => void
 class YoosyApp {
   settings!: Settings
   store: LibraryStore | null = null
-  snapshot: ScanResult = { reciters: [], records: [] }
+  snapshot: ScanResult = { reciters: [], records: [], moves: [] }
   pipeline = new Pipeline()
   watcher = new Watcher()
   private channelTitle: string | null = null
@@ -91,13 +91,14 @@ class YoosyApp {
   async openLibrary(path: string | null): Promise<void> {
     this.watcher.stop()
     this.store = null
-    this.snapshot = { reciters: [], records: [] }
+    this.snapshot = { reciters: [], records: [], moves: [] }
     activity.setLibrary(path)
     if (path) {
       try {
         await fs.access(path)
         this.store = await openLibraryStore(path)
         await this.migrateLegacy(path)
+        await this.migrateV22()
         await this.rescan()
         activity.info(`Library opened: ${path}`)
       } catch (e) {
@@ -106,6 +107,33 @@ class YoosyApp {
     }
     this.syncWatcher()
     this.pushHealth()
+  }
+
+  /** v2.0–2.2 → vocabulary model: keyword rules become keywords, prefix overrides become aliases. */
+  private async migrateV22() {
+    if (!this.store) return
+    const r = this.store.rules.get() as unknown as { rules: (Omit<PlaylistRule, 'match'> & { match: string })[]; keywords?: KeywordDef[] }
+    if (!Array.isArray(r.keywords)) r.keywords = []
+    const legacy = r.rules.filter((x) => x.match === 'keyword')
+    if (legacy.length) {
+      for (const k of legacy) {
+        const name = k.value.trim(); if (!name) continue
+        const existing = r.keywords.find((d) => surahKey(d.name) === surahKey(name))
+        if (existing) { if (k.playlistId && !existing.playlistIds.includes(k.playlistId)) existing.playlistIds.push(k.playlistId) }
+        else r.keywords.push({ name, playlistIds: k.playlistId ? [k.playlistId] : [] })
+      }
+      await this.store.rules.replace({ rules: r.rules.filter((x) => x.match !== 'keyword') as PlaylistRule[], keywords: r.keywords })
+      activity.info(`Converted ${legacy.length} “filename contains” rule(s) into keywords`)
+    }
+    const rec = this.store.reciters.get()
+    let changed = false
+    for (const [folder, st] of Object.entries(rec)) {
+      if (st.prefixOverride) {
+        const a = new Set(st.aliases ?? []); if (reciterKey(st.prefixOverride) !== reciterKey(folder)) a.add(st.prefixOverride)
+        st.aliases = [...a]; delete st.prefixOverride; changed = true
+      }
+    }
+    if (changed) await this.store.reciters.save()
   }
 
   /** Import v1 config (script/reciters.json, playlists.json) if present and nothing is configured yet. */
@@ -120,7 +148,7 @@ class YoosyApp {
         await this.store.reciters.update((d) => {
           for (const [folder, v] of Object.entries(j)) {
             if (folder.startsWith('_')) continue
-            d[folder] = { nameAr: v.name_ar ?? null, prefixOverride: v.filename_prefix ?? null }
+            d[folder] = { nameAr: v.name_ar ?? null, aliases: v.filename_prefix && reciterKey(v.filename_prefix) !== reciterKey(folder) ? [v.filename_prefix] : [] }
             if (v.playlist_id) rules.push({ id: crypto.randomUUID(), match: 'reciter', value: folder, playlistId: v.playlist_id, enabled: v.playlist_enabled ?? true })
           }
         })
@@ -137,7 +165,8 @@ class YoosyApp {
 
   async rescan(): Promise<LibrarySnapshot> {
     if (this.store && this.settings.libraryPath) {
-      this.snapshot = await scanLibrary(this.settings.libraryPath, this.store)
+      this.snapshot = await scanLibrary(this.settings.libraryPath, this.store, { allowMoves: !this.pipeline.busy })
+      for (const m of this.snapshot.moves) activity.info(`Moved ${m.id || m.from} → ${m.newId.split('/')[0]}/`, m.newId)
     }
     const snap = this.getLibrary()
     this.broadcast('evt:library', snap)
@@ -150,6 +179,7 @@ class YoosyApp {
       reciters: this.snapshot.reciters,
       records: this.snapshot.records,
       rules: this.store?.rules.get().rules ?? [],
+      keywords: this.store?.rules.get().keywords ?? [],
       playlists: this.store?.playlists.get().items ?? [],
     }
   }
@@ -161,7 +191,7 @@ class YoosyApp {
   private abs(id: string): string {
     const rec = this.snapshot.records.find((r) => r.id === id)
     if (!rec) throw new Error(`Unknown recording ${id}`)
-    return join(this.req().library, rec.reciterFolder, rec.fileName)
+    return rec.reciterFolder ? join(this.req().library, rec.reciterFolder, rec.fileName) : join(this.req().library, rec.fileName)
   }
 
   async patchRecords(ids: string[], patch: RecordPatch): Promise<void> {
@@ -194,7 +224,7 @@ class YoosyApp {
   async applyAllFixes(): Promise<number> {
     let n = 0
     for (const rec of [...this.snapshot.records]) {
-      if (rec.status === 'fix' && rec.suggestion) {
+      if (rec.fixable && rec.suggestion) {
         try { await this.renameRecord(rec.id, rec.suggestion); n++ } catch (e) { activity.warn(`Fix skipped for ${rec.fileName}: ${e instanceof Error ? e.message : e}`) }
       }
     }
@@ -217,8 +247,57 @@ class YoosyApp {
   }
 
   async patchReciter(folder: string, patch: ReciterPatch): Promise<void> {
-    const { store } = this.req()
+    const { store, library } = this.req()
+    if (patch.aliases) {
+      const vocab = await currentVocabulary(library, store, folder)
+      const clean: string[] = []
+      for (const a of patch.aliases.map((x) => x.trim()).filter(Boolean)) {
+        if (reciterKey(a) === reciterKey(folder)) continue
+        const v = validateToken('reciter', a, { ...vocab, reciters: { ...vocab.reciters } })
+        if (!v.ok) throw new Error(`Alias “${a}”: ${v.error}`)
+        if (!clean.some((c) => reciterKey(c) === v.key)) clean.push(a)
+      }
+      patch = { ...patch, aliases: clean }
+    }
     await store.reciters.update((d) => { d[folder] = { ...d[folder], ...patch } })
+    await this.rescan()
+  }
+
+  /** Create a reciter folder + registration; the next scan files every matching recording into it. */
+  async addReciter(input: NewReciter): Promise<{ folder: string; moved: number }> {
+    const { store, library } = this.req()
+    const name = input.name.trim()
+    if (!name) throw new Error('Reciter name is required')
+    if (/[\\/:*?"<>|]/.test(name) || name.startsWith('.')) throw new Error('Name contains characters not allowed in folder names')
+    const v = validateToken('reciter', name, await currentVocabulary(library, store))
+    if (!v.ok) throw new Error(v.error)
+    if (this.snapshot.reciters.some((r) => r.key === v.key)) throw new Error('A reciter with that name already exists')
+    await fs.mkdir(join(library, name), { recursive: true })
+    await store.reciters.update((d) => { d[name] = { nameAr: input.nameAr.trim() || null, aliases: [] } })
+    if (input.playlistId) await store.rules.update((d) => { d.rules.push({ id: crypto.randomUUID(), match: 'reciter', value: name, playlistId: input.playlistId!, enabled: true }) })
+    await this.rescan()
+    const moved = this.snapshot.moves.filter((m) => m.newId.startsWith(name + '/')).length
+    activity.success(`Added reciter “${name}”${moved ? ` — moved ${moved} recording(s) into the folder` : ''}`)
+    return { folder: name, moved }
+  }
+
+  async validateToken(kind: 'keyword' | 'reciter', value: string): Promise<TokenValidation> {
+    const { store, library } = this.req()
+    return validateToken(kind, value, await currentVocabulary(library, store))
+  }
+
+  async setKeywords(keywords: KeywordDef[]): Promise<void> {
+    const { store, library } = this.req()
+    const base = await currentVocabulary(library, store)
+    const clean: KeywordDef[] = []
+    for (const k of keywords) {
+      const name = k.name.trim(); if (!name) continue
+      if (clean.some((c) => surahKey(c.name) === surahKey(name))) continue
+      const v = validateToken('keyword', name, { ...base, keywords: clean.map((c) => c.name) })
+      if (!v.ok) throw new Error(`Keyword “${name}”: ${v.error}`)
+      clean.push({ name, playlistIds: [...new Set(k.playlistIds.filter(Boolean))] })
+    }
+    await store.rules.update((d) => { d.keywords = clean })
     await this.rescan()
   }
 
@@ -242,7 +321,7 @@ class YoosyApp {
   }
 
   async setRules(rules: PlaylistRule[]): Promise<void> {
-    await this.req().store.rules.replace({ rules })
+    await this.req().store.rules.update((d) => { d.rules = rules })
     await this.rescan()
   }
 
@@ -318,7 +397,7 @@ class YoosyApp {
       const vid = byTitle.get(rec.title.trim())
       if (!vid) continue
       if (rec.status === 'uploaded') { alreadyMarked++; continue }
-      await writeMarker(join(library, rec.reciterFolder, rec.fileName), { video_id: vid, title: rec.title, uploaded_at: new Date().toISOString() })
+      await writeMarker(this.abs(rec.id), { video_id: vid, title: rec.title, uploaded_at: new Date().toISOString() })
       matched++
       activity.info(`Found on YouTube → marked as uploaded (${vid})`, rec.id)
     }

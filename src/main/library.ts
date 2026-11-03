@@ -1,139 +1,177 @@
 import { promises as fs } from 'node:fs'
-import { extname, join, basename } from 'node:path'
-import type { LibraryRecord, ReciterInfo, RecordStatus, ReasonCode } from '@shared/types'
-import { DEFAULT_SURAHS, type SurahDict, buildTitle, diagnoseStem, prefixFromFolder, resolvePlaylists } from '@core/index'
+import { basename, extname, join } from 'node:path'
+import type { LibraryRecord, ReasonCode, ReciterInfo, RecordStatus } from '@shared/types'
+import { DEFAULT_SURAHS, buildTitle, buildVocabulary, diagnoseStem, reciterKey, resolvePlaylists, tokenize, type SurahDict, type Vocabulary } from '@core/index'
 import { AUDIO_EXTS, IMAGE_EXTS, STATE_DIR } from './paths'
 import type { LibraryStore, SurahUserLayer } from './store'
 
 export const markerPath = (audioPath: string) => `${audioPath}.uploaded`
 export const videoPath = (audioPath: string) => audioPath.replace(/\.[^.]+$/, '.mp4')
+const sidecars = (audioPath: string) => [markerPath(audioPath), videoPath(audioPath)]
 
 export interface MarkerData { video_id?: string; title?: string; uploaded_at?: string; manual?: boolean }
 
 export function effectiveSurahs(layer: SurahUserLayer): SurahDict {
   const dict: SurahDict = { ...DEFAULT_SURAHS }
-  for (const [k, v] of Object.entries(layer)) {
-    if (v === null) delete dict[k]
-    else dict[k] = v
-  }
+  for (const [k, v] of Object.entries(layer)) { if (v === null) delete dict[k]; else dict[k] = v }
   return dict
 }
 
 async function listDir(dir: string) {
   try { return await fs.readdir(dir, { withFileTypes: true }) } catch { return [] }
 }
+const isAudio = (name: string) => AUDIO_EXTS.has(extname(name).toLowerCase())
+const isImage = (name: string) => IMAGE_EXTS.has(extname(name).toLowerCase())
 
-export interface ScanResult { reciters: ReciterInfo[]; records: LibraryRecord[] }
-
-export async function scanLibrary(library: string, store: LibraryStore): Promise<ScanResult> {
-  const surahs = effectiveSurahs(store.surahs.get())
-  const rules = store.rules.get().rules
-  const recordState = store.records.get()
-  const reciterState = store.reciters.get()
-
-  const reciters: ReciterInfo[] = []
-  const records: LibraryRecord[] = []
-
+/** Which folders count as reciters: any subfolder with audio, plus every registered one (may be empty). */
+async function reciterFolders(library: string, store: LibraryStore): Promise<string[]> {
+  const registered = new Set(Object.keys(store.reciters.get()))
+  const out: string[] = []
   for (const d of await listDir(library)) {
     if (!d.isDirectory() || d.name.startsWith('.') || d.name === STATE_DIR) continue
-    const folder = join(library, d.name)
-    const entries = (await listDir(folder)).filter((e) => e.isFile())
-    const audio = entries.filter((e) => AUDIO_EXTS.has(extname(e.name).toLowerCase())).map((e) => e.name).sort()
-    if (audio.length === 0) continue
+    if (registered.has(d.name)) { out.push(d.name); continue }
+    const hasAudio = (await listDir(join(library, d.name))).some((e) => e.isFile() && isAudio(e.name))
+    if (hasAudio) out.push(d.name)
+  }
+  return out.sort()
+}
 
-    const images = entries.filter((e) => IMAGE_EXTS.has(extname(e.name).toLowerCase())).map((e) => e.name).sort()
-    const rs = reciterState[d.name] ?? {}
-    const nameAr = rs.nameAr?.trim() || null
-    const prefix = rs.prefixOverride?.trim() || prefixFromFolder(d.name)
-    const imageName = (rs.imageOverride && images.includes(rs.imageOverride)) ? rs.imageOverride : images[0] ?? null
-    const imagePath = imageName ? join(folder, imageName) : null
+export async function currentVocabulary(library: string, store: LibraryStore, excludeFolder?: string): Promise<Vocabulary> {
+  const rs = store.reciters.get()
+  const folders = (await reciterFolders(library, store)).filter((f) => f !== excludeFolder)
+  return buildVocabulary(
+    folders.map((folder) => ({ folder, aliases: rs[folder]?.aliases ?? [] })),
+    effectiveSurahs(store.surahs.get()),
+    store.rules.get().keywords.map((k) => k.name),
+  )
+}
 
-    let uploaded = 0
-    for (const fileName of audio) {
-      const full = join(folder, fileName)
-      const id = `${d.name}/${fileName}`
-      const ext = extname(fileName)
-      const stem = basename(fileName, ext)
-      const st = recordState[id] ?? {}
+export interface Move { from: string; to: string; id: string; newId: string }
+export interface ScanResult { reciters: ReciterInfo[]; records: LibraryRecord[]; moves: Move[] }
+export interface ScanOptions { allowMoves: boolean }
 
-      let sizeBytes = 0
-      let unreadable = false
-      try { sizeBytes = (await fs.stat(full)).size } catch { unreadable = true }
+const RECENT_MS = 10_000
 
-      // marker
-      let marker: MarkerData | null = null
-      let markerCorrupt = false
+export async function scanLibrary(library: string, store: LibraryStore, opts: ScanOptions = { allowMoves: true }): Promise<ScanResult> {
+  const surahs = effectiveSurahs(store.surahs.get())
+  const { rules, keywords } = store.rules.get()
+  const recordState = store.records.get()
+  const reciterState = store.reciters.get()
+  const folders = await reciterFolders(library, store)
+  const vocab = await currentVocabulary(library, store)
+  const keyToFolder = new Map(folders.map((f) => [reciterKey(f), f]))
+
+  // ── pass 1: auto-file recordings whose name says they belong to another reciter ──
+  const moves: Move[] = []
+  const conflicts = new Set<string>()
+  const listAudio = async (folder: string) =>
+    (await listDir(folder ? join(library, folder) : library)).filter((e) => e.isFile() && isAudio(e.name)).map((e) => e.name).sort()
+  for (const folder of ['', ...folders]) {
+    for (const fileName of await listAudio(folder)) {
+      const from = folder ? join(library, folder, fileName) : join(library, fileName)
+      const t = tokenize(basename(fileName, extname(fileName)), vocab)
+      const home = t.reciter ? keyToFolder.get(t.reciter) : undefined
+      if (!home || home === folder) continue
+      const id = `${folder}/${fileName}`
+      const to = join(library, home, fileName)
+      if (await fs.access(to).then(() => true, () => false)) { conflicts.add(id); continue }
+      if (!opts.allowMoves) continue
       try {
-        const raw = await fs.readFile(markerPath(full), 'utf8')
-        try { marker = JSON.parse(raw) as MarkerData } catch { markerCorrupt = true; marker = {} }
-      } catch { /* no marker */ }
-
-      const hasVideoFile = await fs.access(videoPath(full)).then(() => true, () => false)
-
-      const diag = diagnoseStem(stem, prefix, surahs)
-      const parsed = diag.parsed ?? null
-
-      let status: RecordStatus
-      let reason: ReasonCode | null = null
-      let message: string | null = null
-      let suggestion: string | null = diag.suggestion ? `${diag.suggestion}${ext}` : null
-
-      if (marker) {
-        status = 'uploaded'; uploaded++
-        if (markerCorrupt) { reason = 'MARKER_CORRUPT'; message = 'Upload marker exists but is unreadable — verify on YouTube or re-mark.' }
-        else reason = 'UPLOADED'
-      } else if (st.skipped) {
-        status = 'skipped'; reason = 'SKIPPED'; message = 'Excluded from uploads by you.'
-      } else if (unreadable) {
-        status = 'error'; reason = 'UNREADABLE'; message = 'File cannot be read (permissions or it is in use).'
-      } else if (sizeBytes === 0) {
-        status = 'error'; reason = 'ZERO_BYTES'; message = 'File is empty (0 bytes).'
-      } else if (diag.status !== 'ready') {
-        status = diag.status; reason = diag.reason; message = diag.message
-      } else if (!nameAr) {
-        status = 'error'; reason = 'NO_RECITER_NAME'; message = `Set the Arabic name for "${d.name}" in Reciters — it is needed for the title.`
-      } else if (!imagePath) {
-        status = 'error'; reason = 'NO_IMAGE'; message = `No photo in "${d.name}" — add a .jpg/.png to use as the video background.`
-      } else if (hasVideoFile) {
-        status = 'encoded'; reason = 'ENCODED_NOT_UPLOADED'; message = 'Video already rendered; upload pending.'
-      } else {
-        status = 'ready'
-      }
-      if (status === 'ready' || status === 'encoded') {
-        if (st.lastError) { reason = 'LAST_ERROR'; message = `Last attempt failed during ${st.lastError.stage}: ${st.lastError.message}` }
-      }
-
-      const generated = parsed && nameAr ? buildTitle(nameAr, parsed, surahs) : null
-      const title = st.titleOverride?.trim() || marker?.title || generated
-
-      records.push({
-        id, reciterFolder: d.name, fileName, stem, ext, sizeBytes,
-        status, reason, message, suggestion, parsed,
-        title, titleOverride: st.titleOverride ?? null,
-        playlists: resolvePlaylists({ reciterFolder: d.name, stem, parsed }, rules, st.playlistOverrides),
-        playlistOverrides: st.playlistOverrides ?? { include: [], exclude: [] },
-        selected: st.selected ?? false,
-        skipped: st.skipped ?? false,
-        videoId: marker?.video_id ?? null,
-        uploadedAt: marker?.uploaded_at ?? null,
-        lastError: st.lastError ?? null,
-        hasVideoFile,
-      })
+        const st = await fs.stat(from)
+        if (Date.now() - st.mtimeMs < RECENT_MS) continue   // still being copied in
+        await moveRecordFiles(from, join(library, home))
+        const newId = `${home}/${fileName}`
+        await store.records.update((d) => { if (d[id]) { d[newId] = d[id]!; delete d[id] } })
+        moves.push({ from, to, id, newId })
+      } catch { /* leave it; it will be reported in pass 2 */ }
     }
+  }
 
+  // ── pass 2: build records ──
+  const reciters: ReciterInfo[] = []
+  const records: LibraryRecord[] = []
+  const infoByKey = new Map<string, { nameAr: string | null; imagePath: string | null }>()
+  const folderMeta: { folder: string; audio: string[]; images: string[] }[] = []
+  for (const folder of folders) {
+    const entries = (await listDir(join(library, folder))).filter((e) => e.isFile())
+    const audio = entries.filter((e) => isAudio(e.name)).map((e) => e.name).sort()
+    const images = entries.filter((e) => isImage(e.name)).map((e) => e.name).sort()
+    const rs = reciterState[folder] ?? {}
+    const nameAr = rs.nameAr?.trim() || null
+    const imageName = rs.imageOverride && images.includes(rs.imageOverride) ? rs.imageOverride : images[0] ?? null
+    const imagePath = imageName ? join(library, folder, imageName) : null
+    infoByKey.set(reciterKey(folder), { nameAr, imagePath })
+    folderMeta.push({ folder, audio, images })
+  }
+
+  const classify = async (folder: string, fileName: string): Promise<LibraryRecord> => {
+    const full = folder ? join(library, folder, fileName) : join(library, fileName)
+    const id = `${folder}/${fileName}`
+    const ext = extname(fileName), stem = basename(fileName, ext)
+    const st = recordState[id] ?? {}
+    let sizeBytes = 0, unreadable = false
+    try { sizeBytes = (await fs.stat(full)).size } catch { unreadable = true }
+    let marker: MarkerData | null = null, markerCorrupt = false
+    try { const raw = await fs.readFile(markerPath(full), 'utf8'); try { marker = JSON.parse(raw) as MarkerData } catch { markerCorrupt = true; marker = {} } } catch { /* none */ }
+    const hasVideoFile = await fs.access(videoPath(full)).then(() => true, () => false)
+
+    const diag = diagnoseStem(stem, vocab)
+    const folderKey = folder ? reciterKey(folder) : null
+    const reciterKeyEff = diag.tokens.reciter ?? folderKey
+    const home = reciterKeyEff ? infoByKey.get(reciterKeyEff) : undefined
+    const nameAr = home?.nameAr ?? null
+    const imagePath = home?.imagePath ?? null
+    const inWrongFolder = !!reciterKeyEff && reciterKeyEff !== folderKey && keyToFolder.has(reciterKeyEff)
+
+    let status: RecordStatus, reason: ReasonCode | null = null, message: string | null = null
+    if (marker) { status = 'uploaded'; reason = markerCorrupt ? 'MARKER_CORRUPT' : 'UPLOADED'; if (markerCorrupt) message = 'Upload marker exists but is unreadable — verify on YouTube or re-mark.' }
+    else if (st.skipped) { status = 'skipped'; reason = 'SKIPPED'; message = 'Excluded from uploads by you.' }
+    else if (unreadable) { status = 'error'; reason = 'UNREADABLE'; message = 'File cannot be read (permissions or it is in use).' }
+    else if (sizeBytes === 0) { status = 'error'; reason = 'ZERO_BYTES'; message = 'File is empty (0 bytes).' }
+    else if (conflicts.has(id)) { status = 'error'; reason = 'FILE_CONFLICT'; message = `Belongs in “${keyToFolder.get(reciterKeyEff!)}” but a file with this name already exists there.` }
+    else if (!folder && !reciterKeyEff) { status = 'error'; reason = 'NO_RECITER'; message = 'No reciter in the name and the file is not inside a reciter folder — move it into one or add the reciter name.' }
+    else if (inWrongFolder) { status = 'error'; reason = 'WRONG_FOLDER'; message = `Belongs to “${keyToFolder.get(reciterKeyEff!)}” — it will be moved there automatically.` }
+    else if (diag.status !== 'ready') { status = 'error'; reason = diag.reason; message = diag.message }
+    else if (!nameAr) { status = 'error'; reason = 'NO_RECITER_NAME'; message = `Set the Arabic name for “${keyToFolder.get(reciterKeyEff!) ?? folder}” in Reciters — it is needed for the title.` }
+    else if (!imagePath) { status = 'error'; reason = 'NO_IMAGE'; message = `No photo in “${folder}” — add a .jpg/.png to use as the video background.` }
+    else if (hasVideoFile) { status = 'encoded'; reason = 'ENCODED_NOT_UPLOADED'; message = 'Video already rendered; upload pending.' }
+    else status = 'ready'
+    if ((status === 'ready' || status === 'encoded') && st.lastError) { reason = 'LAST_ERROR'; message = `Last attempt failed during ${st.lastError.stage}: ${st.lastError.message}` }
+
+    const generated = diag.parsed && nameAr ? buildTitle(nameAr, diag.parsed, surahs) : null
+    const title = st.titleOverride?.trim() || marker?.title || generated
+    const overrides = st.playlistOverrides ?? { include: [], exclude: [] }
+    return {
+      id, reciterFolder: folder, reciterKey: reciterKeyEff, fileName, stem, ext, sizeBytes,
+      status, reason, message,
+      suggestion: diag.suggestion ? `${diag.suggestion}${ext}` : null, fixable: diag.fixable,
+      tokens: diag.tokens, parsed: diag.parsed,
+      title, titleOverride: st.titleOverride ?? null,
+      playlists: resolvePlaylists({ reciter: reciterKeyEff, tokens: diag.tokens }, rules, keywords, overrides),
+      playlistOverrides: overrides,
+      selected: st.selected ?? false, skipped: st.skipped ?? false,
+      videoId: marker?.video_id ?? null, uploadedAt: marker?.uploaded_at ?? null,
+      lastError: st.lastError ?? null, hasVideoFile,
+    }
+  }
+
+  for (const fileName of await listAudio('')) records.push(await classify('', fileName))
+  for (const { folder, audio, images } of folderMeta) {
+    let uploaded = 0
+    for (const fileName of audio) { const r = await classify(folder, fileName); if (r.status === 'uploaded') uploaded++; records.push(r) }
+    const rs = reciterState[folder] ?? {}
+    const info = infoByKey.get(reciterKey(folder))!
     reciters.push({
-      folder: d.name, nameAr, prefix, prefixOverride: rs.prefixOverride ?? null,
-      imagePath, imageOverride: rs.imageOverride ?? null, images,
+      folder, key: reciterKey(folder), nameAr: info.nameAr, aliases: rs.aliases ?? [],
+      imagePath: info.imagePath, imageOverride: rs.imageOverride ?? null, images,
       total: audio.length, uploaded,
     })
   }
 
-  // prune state for files that no longer exist (keep it tidy, log nothing noisy)
   const live = new Set(records.map((r) => r.id))
   const stale = Object.keys(recordState).filter((k) => !live.has(k))
   if (stale.length) await store.records.update((d) => { for (const k of stale) delete d[k] })
-
-  return { reciters, records }
+  return { reciters, records, moves }
 }
 
 export async function writeMarker(audioPath: string, data: MarkerData): Promise<void> {
@@ -150,8 +188,16 @@ export async function renameRecordFiles(audioPath: string, newFileName: string):
   if (target === audioPath) return audioPath
   await fs.access(target).then(() => { throw new Error(`"${newFileName}" already exists`) }, () => {})
   await fs.rename(audioPath, target)
-  for (const [from, to] of [[markerPath(audioPath), markerPath(target)], [videoPath(audioPath), videoPath(target)]]) {
-    await fs.rename(from!, to!).catch(() => {})
-  }
+  for (const [from, to] of [[markerPath(audioPath), markerPath(target)], [videoPath(audioPath), videoPath(target)]]) await fs.rename(from!, to!).catch(() => {})
+  return target
+}
+
+/** Move audio + sidecars into another folder (same file name). Never overwrites. */
+export async function moveRecordFiles(audioPath: string, targetDir: string): Promise<string> {
+  const target = join(targetDir, basename(audioPath))
+  await fs.access(target).then(() => { throw new Error(`"${basename(audioPath)}" already exists in ${basename(targetDir)}`) }, () => {})
+  await fs.mkdir(targetDir, { recursive: true })
+  await fs.rename(audioPath, target)
+  for (const s of sidecars(audioPath)) await fs.rename(s, join(targetDir, basename(s))).catch(() => {})
   return target
 }

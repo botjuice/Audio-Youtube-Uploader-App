@@ -31,7 +31,7 @@ export class Pipeline extends EventEmitter {
     try {
       const snap = await scanLibrary(ctx.library, ctx.store)
       const byId = new Map(snap.records.map((r) => [r.id, r]))
-      const reciters = new Map(snap.reciters.map((r) => [r.folder, r]))
+      const reciters = new Map(snap.reciters.map((r) => [r.key, r]))
       const queue = ids.map((id) => byId.get(id)).filter((r): r is LibraryRecord => !!r && (r.status === 'ready' || r.status === 'encoded'))
 
       if (queue.length === 0) { activity.info('Nothing to upload — no ready recordings in the selection.'); return 0 }
@@ -42,7 +42,7 @@ export class Pipeline extends EventEmitter {
         const remaining = remainingUploads(ctx.store.quota.get(), ctx.settings.upload.dailyLimit)
         if (remaining <= 0) { activity.warn(`Daily limit of ${ctx.settings.upload.dailyLimit} reached — stopping. Remaining items stay queued.`); break }
 
-        const reciter = reciters.get(rec.reciterFolder)!
+        const reciter = reciters.get(rec.reciterKey ?? '')!
         const audio = join(ctx.library, rec.reciterFolder, rec.fileName)
         const mp4 = videoPath(audio)
 
