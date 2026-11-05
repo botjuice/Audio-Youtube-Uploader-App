@@ -61,9 +61,13 @@ Google gives each project 10,000 API units per day; one upload costs 1,600, a pl
   at the library root or into another folder — is filed automatically on the next scan.
   Add *other spellings* (aliases) to a reciter if your filenames use several.
 - **Playlists → Keywords** registers words the parser should recognise (e.g. `Final`,
-  `Outside`). Each keyword can feed any number of playlists; a recording can carry any number
-  of keywords. Adding one is refused if it would collide with a prayer, a surah spelling or a
-  reciter name, and warned if it overlaps another keyword.
+  `Outside`). Keywords are vocabulary only; routing happens in rules (*Keyword is Final*).
+  Adding one is refused if it would collide with a prayer, a surah spelling or a reciter name,
+  and warned if it overlaps another keyword. A keyword used by a rule can't be deleted until
+  the rule is.
+- **Playlists → Routing rules**: pick a playlist, add a rule with 1–3 conditions (*is* / *is not*
+  on reciter, prayer, surah, keyword). Rules are grouped by playlist with live match counts;
+  click a rule's description to give it a custom name.
 - **Unrecognised fragments** in a filename make the recording *Needs attention*. In the detail
   panel you can **Rename** (removes the fragment) or teach the app: surah spelling, keyword, or
   reciter. "Fix N filenames" in the action bar removes fragments in bulk after confirmation.

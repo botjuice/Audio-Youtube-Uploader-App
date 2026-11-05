@@ -1,5 +1,5 @@
 import type { Parsed, ParseReason, Tokens } from '@shared/types'
-import { PRAYERS, canonicalPrayer } from './prayers'
+import { PRAYERS, PRAYER_SPELLINGS, canonicalPrayer } from './prayers'
 import { DEFAULT_SURAHS, surahKey, type SurahDict } from './surahs'
 
 /** Everything the tokenizer may attribute. Build with buildVocabulary(). */
@@ -129,7 +129,7 @@ export function tokenize(stem: string, vocab: Vocabulary = EMPTY_VOCAB): Tokeniz
     let pos = 0, leftStart: number | null = null
     const best = (p: number): Candidate | null => {
       const cands: Candidate[] = []
-      if (!out.prayer) for (const pr of PRAYERS) if (lower.startsWith(pr.toLowerCase(), p)) cands.push({ kind: 'prayer', len: pr.length, value: pr })
+      if (!out.prayer) for (const sp of PRAYER_SPELLINGS) if (lower.startsWith(sp, p)) { cands.push({ kind: 'prayer', len: sp.length, value: sp }); break }
       for (const r of reciterEntries) if (lower.startsWith(r.tok, p)) { cands.push({ kind: 'reciter', len: r.tok.length, value: r.key }); break }
       for (const k of surahKeys) if (lower.startsWith(k, p)) { cands.push({ kind: 'surah', len: k.length, value: text.slice(p, p + k.length) }); break }
       for (const k of keywordEntries) if (lower.startsWith(k.key, p)) { cands.push({ kind: 'keyword', len: k.key.length, value: k.name }); break }

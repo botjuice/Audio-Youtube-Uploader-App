@@ -67,9 +67,18 @@ describe('scanLibrary (vocabulary model + auto-filing)', () => {
     expect(by(`${P}IshaEmpty`).reason).toBe('ZERO_BYTES')
 
     // a registered keyword turns the leftover into a tag with its playlists
-    await store.rules.update((d) => { d.keywords = [{ name: 'final', playlistIds: ['PL_F', 'PL_G'] }] })
+    await store.rules.update((d) => {
+      d.keywords = [{ name: 'final' }]
+      d.rules = [
+        { id: 'k1', playlistId: 'PL_F', enabled: true, conditions: [{ kind: 'keyword', value: 'final', negate: false }] },
+        { id: 'k2', playlistId: 'PL_G', enabled: true, conditions: [{ kind: 'keyword', value: 'final', negate: false }, { kind: 'prayer', value: 'Isha', negate: false }] },
+        { id: 'k3', playlistId: 'PL_NOT', enabled: true, conditions: [{ kind: 'reciter', value: R, negate: false }, { kind: 'keyword', value: 'final', negate: true }] },
+      ]
+    })
     const snap2 = await scanLibrary(lib, store)
     const fin = snap2.records.find((r) => r.fileName.startsWith(`${P}IshaFINAL`))!
     expect(fin.status).toBe('ready'); expect(fin.tokens.keywords).toEqual(['final']); expect(fin.playlists.final).toEqual(['PL_F', 'PL_G'])
+    const mulk = snap2.records.find((r) => r.fileName.startsWith(`${P}IshaMulk`))!
+    expect(mulk.playlists.final).toEqual(['PL_NOT'])   // "keyword is not final" + reciter
   })
 })

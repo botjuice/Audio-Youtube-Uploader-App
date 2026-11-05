@@ -54,7 +54,7 @@ const RECENT_MS = 10_000
 
 export async function scanLibrary(library: string, store: LibraryStore, opts: ScanOptions = { allowMoves: true }): Promise<ScanResult> {
   const surahs = effectiveSurahs(store.surahs.get())
-  const { rules, keywords } = store.rules.get()
+  const { rules } = store.rules.get()
   const recordState = store.records.get()
   const reciterState = store.reciters.get()
   const folders = await reciterFolders(library, store)
@@ -147,7 +147,7 @@ export async function scanLibrary(library: string, store: LibraryStore, opts: Sc
       suggestion: diag.suggestion ? `${diag.suggestion}${ext}` : null, fixable: diag.fixable,
       tokens: diag.tokens, parsed: diag.parsed,
       title, titleOverride: st.titleOverride ?? null,
-      playlists: resolvePlaylists({ reciter: reciterKeyEff, tokens: diag.tokens }, rules, keywords, overrides),
+      playlists: resolvePlaylists({ reciter: reciterKeyEff, tokens: diag.tokens }, rules, surahs, overrides),
       playlistOverrides: overrides,
       selected: st.selected ?? false, skipped: st.skipped ?? false,
       videoId: marker?.video_id ?? null, uploadedAt: marker?.uploaded_at ?? null,

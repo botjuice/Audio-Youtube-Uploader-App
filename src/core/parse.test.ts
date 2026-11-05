@@ -19,9 +19,9 @@ describe('tokenize', () => {
     expect(tokenize(`MisharyFajrMulk-01.03.2025`, V).reciter).toBe('mishary')
     expect(tokenize(`IshaMulk-01.03.2025`, V).reciter).toBeNull()
   })
-  it('a second prayer word becomes a surah (IshaAsr = Surah Al-Asr at Isha)', () => {
-    const t = tokenize(`${P}IshaAsr-01.03.2025`, V)
-    expect(t.prayer).toBe('Isha'); expect(t.surahs.map((s) => s.toLowerCase())).toEqual(['asr'])
+  it('a second prayer-looking word becomes a surah (IshaJumuah = Surah Al-Jumuah at Isha)', () => {
+    const t = tokenize(`${P}IshaJumuah-01.03.2025`, V)
+    expect(t.prayer).toBe('Isha'); expect(t.surahs.map((s) => s.toLowerCase())).toEqual(['jumuah'])
   })
   it('longest match: a reciter whose name contains a surah is still the reciter', () => {
     const v = buildVocabulary([{ folder: 'Yaseen Khan' }])

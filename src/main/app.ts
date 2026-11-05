@@ -3,11 +3,11 @@ import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import type { Health, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, Settings, TokenValidation } from '@shared/types'
 import type { LibrarySnapshot, SurahEntry, SyncResult } from '@shared/api'
-import { DEFAULT_SURAHS, nextQuotaReset, normaliseQuota, reciterKey, remainingUploads, surahKey, validateToken } from '@core/index'
+import { DEFAULT_SURAHS, conditionKey, describeRule, nextQuotaReset, normaliseQuota, reciterKey, remainingUploads, surahKey, validateRule, validateToken } from '@core/index'
 import { ffmpegAvailable, ffmpegPath } from './ffmpeg'
 import { connect, disconnect, getClient, parseClientSecretJson, resetClient } from './google/oauth'
 import { createPlaylist, getChannel, listPlaylists, listUploads } from './google/youtube'
-import { currentVocabulary, removeMarker, renameRecordFiles, scanLibrary, writeMarker, type ScanResult } from './library'
+import { currentVocabulary, effectiveSurahs, removeMarker, renameRecordFiles, scanLibrary, writeMarker, type ScanResult } from './library'
 import { activity } from './log'
 import { Pipeline } from './pipeline'
 import { openLibraryStore, secrets, settings, type LibraryStore } from './store'
@@ -109,21 +109,34 @@ class YoosyApp {
     this.pushHealth()
   }
 
-  /** v2.0–2.2 → vocabulary model: keyword rules become keywords, prefix overrides become aliases. */
+  /** v2.0–2.3 → conditions model. Idempotent. */
   private async migrateV22() {
     if (!this.store) return
-    const r = this.store.rules.get() as unknown as { rules: (Omit<PlaylistRule, 'match'> & { match: string })[]; keywords?: KeywordDef[] }
+    type OldRule = { id: string; playlistId: string; enabled: boolean; match?: string; value?: string; conditions?: PlaylistRule['conditions']; label?: string; origin?: PlaylistRule['origin'] }
+    type OldKeyword = { name: string; playlistIds?: string[] }
+    const r = this.store.rules.get() as unknown as { rules: OldRule[]; keywords?: OldKeyword[] }
     if (!Array.isArray(r.keywords)) r.keywords = []
-    const legacy = r.rules.filter((x) => x.match === 'keyword')
-    if (legacy.length) {
-      for (const k of legacy) {
-        const name = k.value.trim(); if (!name) continue
-        const existing = r.keywords.find((d) => surahKey(d.name) === surahKey(name))
-        if (existing) { if (k.playlistId && !existing.playlistIds.includes(k.playlistId)) existing.playlistIds.push(k.playlistId) }
-        else r.keywords.push({ name, playlistIds: k.playlistId ? [k.playlistId] : [] })
+    let converted = 0
+    const rules: PlaylistRule[] = []
+    for (const old of r.rules) {
+      if (old.conditions) { rules.push(old as PlaylistRule); continue }
+      const kind = old.match as PlaylistRule['conditions'][0]['kind'] | undefined
+      if (!kind || !old.value) continue
+      rules.push({ id: old.id, playlistId: old.playlistId, enabled: old.enabled, conditions: [{ kind, value: old.value, negate: false }], origin: 'migrated' })
+      converted++
+    }
+    const keywords: KeywordDef[] = []
+    for (const k of r.keywords) {
+      keywords.push({ name: k.name })
+      for (const pid of k.playlistIds ?? []) {
+        if (rules.some((x) => x.playlistId === pid && x.conditions.length === 1 && x.conditions[0]!.kind === 'keyword' && surahKey(x.conditions[0]!.value) === surahKey(k.name))) continue
+        rules.push({ id: crypto.randomUUID(), playlistId: pid, enabled: true, conditions: [{ kind: 'keyword', value: k.name, negate: false }], origin: 'migrated' })
+        converted++
       }
-      await this.store.rules.replace({ rules: r.rules.filter((x) => x.match !== 'keyword') as PlaylistRule[], keywords: r.keywords })
-      activity.info(`Converted ${legacy.length} “filename contains” rule(s) into keywords`)
+    }
+    if (converted || r.keywords.some((k) => k.playlistIds)) {
+      await this.store.rules.replace({ rules, keywords })
+      if (converted) activity.info(`Converted ${converted} rule(s) to the new conditions format`)
     }
     const rec = this.store.reciters.get()
     let changed = false
@@ -149,13 +162,13 @@ class YoosyApp {
           for (const [folder, v] of Object.entries(j)) {
             if (folder.startsWith('_')) continue
             d[folder] = { nameAr: v.name_ar ?? null, aliases: v.filename_prefix && reciterKey(v.filename_prefix) !== reciterKey(folder) ? [v.filename_prefix] : [] }
-            if (v.playlist_id) rules.push({ id: crypto.randomUUID(), match: 'reciter', value: folder, playlistId: v.playlist_id, enabled: v.playlist_enabled ?? true })
+            if (v.playlist_id) rules.push({ id: crypto.randomUUID(), playlistId: v.playlist_id, enabled: v.playlist_enabled ?? true, conditions: [{ kind: 'reciter', value: folder, negate: false }], origin: 'migrated' })
           }
         })
         try {
           const p = JSON.parse(await fs.readFile(join(legacy, 'playlists.json'), 'utf8')) as { prayers?: Record<string, { playlist_id?: string; enabled?: boolean }>; surahs?: Record<string, { playlist_id?: string; enabled?: boolean }> }
-          for (const [k, v] of Object.entries(p.prayers ?? {})) if (v.playlist_id) rules.push({ id: crypto.randomUUID(), match: 'prayer', value: k, playlistId: v.playlist_id, enabled: !!v.enabled })
-          for (const [k, v] of Object.entries(p.surahs ?? {})) if (v.playlist_id) rules.push({ id: crypto.randomUUID(), match: 'surah', value: k, playlistId: v.playlist_id, enabled: !!v.enabled })
+          for (const [k, v] of Object.entries(p.prayers ?? {})) if (v.playlist_id) rules.push({ id: crypto.randomUUID(), playlistId: v.playlist_id, enabled: !!v.enabled, conditions: [{ kind: 'prayer', value: k, negate: false }], origin: 'migrated' })
+          for (const [k, v] of Object.entries(p.surahs ?? {})) if (v.playlist_id) rules.push({ id: crypto.randomUUID(), playlistId: v.playlist_id, enabled: !!v.enabled, conditions: [{ kind: 'surah', value: k, negate: false }], origin: 'migrated' })
         } catch { /* none */ }
         if (rules.length) await this.store.rules.update((d) => { d.rules.push(...rules) })
         activity.info(`Imported v1 settings from ${legacy}`)
@@ -274,7 +287,7 @@ class YoosyApp {
     if (this.snapshot.reciters.some((r) => r.key === v.key)) throw new Error('A reciter with that name already exists')
     await fs.mkdir(join(library, name), { recursive: true })
     await store.reciters.update((d) => { d[name] = { nameAr: input.nameAr.trim() || null, aliases: [] } })
-    if (input.playlistId) await store.rules.update((d) => { d.rules.push({ id: crypto.randomUUID(), match: 'reciter', value: name, playlistId: input.playlistId!, enabled: true }) })
+    if (input.playlistId) await store.rules.update((d) => { d.rules.push({ id: crypto.randomUUID(), playlistId: input.playlistId!, enabled: true, conditions: [{ kind: 'reciter', value: name, negate: false }], origin: 'reciter-added' }) })
     await this.rescan()
     const moved = this.snapshot.moves.filter((m) => m.newId.startsWith(name + '/')).length
     activity.success(`Added reciter “${name}”${moved ? ` — moved ${moved} recording(s) into the folder` : ''}`)
@@ -295,7 +308,13 @@ class YoosyApp {
       if (clean.some((c) => surahKey(c.name) === surahKey(name))) continue
       const v = validateToken('keyword', name, { ...base, keywords: clean.map((c) => c.name) })
       if (!v.ok) throw new Error(`Keyword “${name}”: ${v.error}`)
-      clean.push({ name, playlistIds: [...new Set(k.playlistIds.filter(Boolean))] })
+      clean.push({ name })
+    }
+    // a keyword still referenced by a rule cannot be removed
+    const removed = store.rules.get().keywords.filter((k) => !clean.some((c) => surahKey(c.name) === surahKey(k.name)))
+    for (const k of removed) {
+      const users = store.rules.get().rules.filter((r) => r.conditions.some((c) => c.kind === 'keyword' && conditionKey(c) === surahKey(k.name)))
+      if (users.length) throw new Error(`Keyword “${k.name}” is used by ${users.length} rule${users.length === 1 ? '' : 's'} — remove those first`)
     }
     await store.rules.update((d) => { d.keywords = clean })
     await this.rescan()
@@ -321,7 +340,13 @@ class YoosyApp {
   }
 
   async setRules(rules: PlaylistRule[]): Promise<void> {
-    await this.req().store.rules.update((d) => { d.rules = rules })
+    const { store } = this.req()
+    const surahs = effectiveSurahs(store.surahs.get())
+    for (const r of rules) {
+      const errs = validateRule(r, surahs)
+      if (errs.length) throw new Error(`Rule “${describeRule(r)}”: ${errs[0]}`)
+    }
+    await store.rules.update((d) => { d.rules = rules })
     await this.rescan()
   }
 

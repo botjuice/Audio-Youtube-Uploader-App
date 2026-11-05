@@ -52,7 +52,7 @@ export interface LibraryRecord {
   parsed: Parsed | null
   title: string | null       // effective title: override ?? generated
   titleOverride: string | null
-  playlists: { auto: string[]; final: string[] }
+  playlists: { auto: string[]; final: string[]; via?: Record<string, string[]> }
   playlistOverrides: PlaylistOverrides
   selected: boolean
   skipped: boolean
@@ -74,21 +74,28 @@ export interface ReciterInfo {
   uploaded: number
 }
 
-export type RuleMatch = 'reciter' | 'prayer' | 'surah'
+export type ConditionKind = 'reciter' | 'prayer' | 'surah' | 'keyword'
 
-/** A free-form tag recognised in filenames; routes to zero or more playlists. */
-export interface KeywordDef { name: string; playlistIds: string[] }
+/** One test on a recording. `negate` turns "is" into "is not". */
+export interface Condition { kind: ConditionKind; value: string; negate: boolean }
+
+/** A free-form tag recognised in filenames. Routing is done by rules with a keyword condition. */
+export interface KeywordDef { name: string }
 
 export interface TokenValidation { ok: boolean; key: string; error?: string; warning?: string }
 
 export interface NewReciter { name: string; nameAr: string; playlistId?: string }
 
+/** Adds a recording to `playlistId` when ALL conditions hold (1–3; at least one positive). */
 export interface PlaylistRule {
   id: string
-  match: RuleMatch
-  value: string
   playlistId: string
+  conditions: Condition[]
   enabled: boolean
+  /** optional custom name; otherwise described from the conditions */
+  label?: string
+  /** set when the app created the rule itself */
+  origin?: 'reciter-added' | 'migrated'
 }
 
 export interface PlaylistOverrides { include: string[]; exclude: string[] }

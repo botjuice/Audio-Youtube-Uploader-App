@@ -53,6 +53,25 @@ It bumps the version, runs typecheck + tests, commits, tags `vX.Y.Z`, pushes, an
 GitHub Actions publishes the Windows/macOS installers plus the update feed
 (`latest.yml`, `latest-mac.yml`). Users pick it up within 6 hours.
 
+## Playlist rules
+
+**Playlists** groups rules by playlist. A recording is added to a playlist when **all**
+conditions of **any one** of its rules hold. Conditions test the reciter, prayer, a surah,
+or a registered keyword, and each can be *is* or *is not*. Rules never cancel each other —
+to keep something out of a playlist, say so with *is not*:
+
+| Playlist | Rule |
+|---|---|
+| Abdullah Mousa | Reciter is Abdullah Al Mousa · Prayer **is not** Taraweeh |
+| Abdullah Mousa Taraweeh | Reciter is Abdullah Al Mousa · Prayer is Taraweeh |
+| Juz Amma | Surah is Naba · Keyword is Final |
+
+The editor refuses rules that can never match (two different "prayer is", *X and not X*),
+rules made only of *is not* (they'd match almost everything), and values the parser
+doesn't know. Every rule shows how many recordings it matches right now. Rule changes
+affect future uploads only. *Jumuah* and *Duha* are both prayers and surahs: the first
+prayer-looking word in a filename is the prayer, so write the prayer before the surah.
+
 ## What the Library tells you
 
 Every recording has a status and, when it isn't uploading, the exact reason:
@@ -77,7 +96,7 @@ The app reads names as a **vocabulary**, not a fixed pattern. Any order, separat
 | Part | Recognised as | Examples |
 |---|---|---|
 | Date | `D.M.YYYY` (junk tolerated: `14x.12.2024`) | `01.03.2025`, `1.3.2025` |
-| Prayer | one of Fajr · Dhuhr · Asr · Maghrib · Isha · Taraweeh · Qiyam · Tahajjud · Witr | `Isha`, `fajr` |
+| Prayer | Fajr · Maghrib · Isha · Jumuah · Duha · Taraweeh · Qiyam · Tahajjud · Witr · Eid · Istisqa · Kusuf (common spellings accepted) | `Isha`, `jummah`, `tarawih` |
 | Reciter | any reciter folder name or alias (optional — the folder is the default) | `AbdullahAlMousa`, `Mousa` |
 | Surah | 400+ spellings; several surahs may be glued or `•`-separated | `Ahzab•Munafiqoon`, `ShamsLayl` |
 | Keyword | anything you register in **Playlists → Keywords** | `Final`, `Outside`, `#ramadan` |

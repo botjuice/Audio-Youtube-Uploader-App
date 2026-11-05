@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import type { LibraryRecord } from '@shared/types'
 import { Badge, Button, Chip, IconButton, Input, Modal, Select } from '@/components/ui'
 import { statusMeta, fmtBytes, fmtRel, parseVideoId } from '@/lib/format'
+import { describeRule } from '@core/rules'
 import { useStore } from '@/store'
 
 export function RecordDetail({ record: r, onClose }: { record: LibraryRecord; onClose: () => void }) {
@@ -125,7 +126,11 @@ export function RecordDetail({ record: r, onClose }: { record: LibraryRecord; on
         <Section label="Playlists" hint={r.status === 'uploaded' ? 'Already uploaded — changes here affect future uploads only' : 'Click a playlist to include or exclude it for this recording'}>
           <div className="flex flex-wrap gap-1.5">
             {candidates.length === 0 && <span className="text-xs text-muted">No playlist rules match. Add one in Playlists, or add one below.</span>}
-            {candidates.map((id) => <Chip key={id} active={r.playlists.final.includes(id)} onClick={() => togglePlaylist(id)} title={id}>{plName(id)}</Chip>)}
+            {candidates.map((id) => {
+              const viaIds = r.playlists.via?.[id] ?? []
+              const why = viaIds.length ? 'via: ' + viaIds.map((rid) => describeRule(library.rules.find((x) => x.id === rid) ?? { conditions: [] })).join(' | ') : 'added manually for this recording'
+              return <Chip key={id} active={r.playlists.final.includes(id)} onClick={() => togglePlaylist(id)} title={why}>{plName(id)}</Chip>
+            })}
           </div>
           {addable.length > 0 && (
             <div className="mt-2 flex gap-2">
@@ -188,7 +193,11 @@ function LeftoverModal({ record, action, onClose }: { record: LibraryRecord; act
   const toggle = (id: string) => setPlaylists((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]))
   const submit = () => {
     if (action.kind === 'surah') return void call('leftover', () => window.api.setSurah(action.word, arabic).then(onClose), { success: `“${action.word}” now means ${arabic}` })
-    if (action.kind === 'keyword') return void call('leftover', () => window.api.setKeywords([...library.keywords, { name, playlistIds: playlists }]).then(onClose), { success: `Keyword “${name}” added` })
+    if (action.kind === 'keyword') return void call('leftover', async () => {
+      await window.api.setKeywords([...library.keywords, { name }])
+      if (playlists.length) await window.api.setRules([...library.rules, ...playlists.map((pid) => ({ id: crypto.randomUUID(), playlistId: pid, enabled: true, conditions: [{ kind: 'keyword' as const, value: name, negate: false }] }))])
+      onClose()
+    }, { success: `Keyword “${name}” added${playlists.length ? ` with ${playlists.length} rule${playlists.length === 1 ? '' : 's'}` : ''}` })
     return void call('leftover', () => window.api.addReciter({ name, nameAr: arabic, ...(playlists[0] ? { playlistId: playlists[0] } : {}) }).then(onClose), { success: `Reciter “${name}” added` })
   }
   const titles = { surah: `“${action.word}” is a surah`, keyword: `“${action.word}” is a keyword`, reciter: `“${action.word}” is a reciter` }
@@ -206,7 +215,7 @@ function LeftoverModal({ record, action, onClose }: { record: LibraryRecord; act
         {action.kind !== 'keyword' && <Input dir="rtl" value={arabic} onChange={(e) => setArabic(e.target.value)} placeholder={action.kind === 'surah' ? 'الاسم بالعربية' : 'اسم القارئ'} autoFocus />}
         {action.kind !== 'surah' && (
           <div>
-            <div className="text-xs text-muted mb-1">{action.kind === 'keyword' ? 'Add recordings with this keyword to:' : 'Playlist for this reciter (optional):'}</div>
+            <div className="text-xs text-muted mb-1">{action.kind === 'keyword' ? 'Also create a rule “Keyword is …” for these playlists (optional):' : 'Playlist for this reciter (optional):'}</div>
             <div className="flex flex-wrap gap-1.5">
               {library.playlists.length === 0 && <span className="text-xs text-muted">No playlists loaded yet (Playlists → Refresh).</span>}
               {library.playlists.map((p) => <Chip key={p.id} active={playlists.includes(p.id)} onClick={() => action.kind === 'reciter' ? setPlaylists([p.id]) : toggle(p.id)}>{p.title}</Chip>)}
