@@ -1,5 +1,5 @@
 import { clsx } from 'clsx'
-import { useEffect } from 'react'
+import { Component, useEffect, type ReactNode } from 'react'
 import { Sidebar } from '@/components/Sidebar'
 import { Spinner } from '@/components/ui'
 import { useStore } from '@/store'
@@ -9,6 +9,24 @@ import Playlists from '@/pages/Playlists'
 import Reciters from '@/pages/Reciters'
 import Settings from '@/pages/Settings'
 import Welcome from '@/pages/Welcome'
+
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null }
+  static getDerivedStateFromError(error: Error) { return { error } }
+  render() {
+    if (!this.state.error) return this.props.children
+    return (
+      <div className="flex h-full items-center justify-center p-8">
+        <div className="max-w-lg rounded-xl border border-err/40 bg-surface p-6 space-y-3">
+          <h1 className="font-semibold">Something went wrong in the interface</h1>
+          <pre className="whitespace-pre-wrap break-words rounded bg-surface-2 p-3 text-[11px]">{String(this.state.error?.stack ?? this.state.error)}</pre>
+          <p className="text-xs text-muted">Your recordings and settings are safe. Reload the window; if it keeps happening, send the text above.</p>
+          <button className="rounded-lg bg-accent px-4 h-9 text-accent-fg font-medium" onClick={() => location.reload()}>Reload</button>
+        </div>
+      </div>
+    )
+  }
+}
 
 export default function App() {
   const booted = useStore((s) => s.booted)
@@ -22,11 +40,13 @@ export default function App() {
 
   const Page = { library: Library, playlists: Playlists, reciters: Reciters, settings: Settings, activity: Activity }[page]
   return (
-    <div className="flex h-full">
-      <Sidebar />
-      <main className="flex-1 min-w-0 min-h-0"><Page /></main>
-      <Toasts />
-    </div>
+    <ErrorBoundary>
+      <div className="flex h-full">
+        <Sidebar />
+        <main className="flex-1 min-w-0 min-h-0"><Page /></main>
+        <Toasts />
+      </div>
+    </ErrorBoundary>
   )
 }
 

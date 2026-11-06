@@ -66,6 +66,19 @@ export async function openLibraryStore(library: string): Promise<LibraryStore> {
   return s
 }
 
+/** Merge a (possibly older) settings file over the defaults, section by section. */
+export function mergeSettings(saved: Partial<Settings> | null | undefined): Settings {
+  const d = structuredClone(DEFAULT_SETTINGS)
+  const s = saved ?? {}
+  return {
+    ...d, ...s,
+    upload: { ...d.upload, ...(s.upload ?? {}) },
+    watcher: { ...d.watcher, ...(s.watcher ?? {}) },
+    updates: { ...d.updates, ...(s.updates ?? {}) },
+    thumbnails: { ...d.thumbnails, ...(s.thumbnails ?? {}) },
+  }
+}
+
 export const settings = new JsonFile<Settings>(settingsFile(), () => structuredClone(DEFAULT_SETTINGS))
 
 // ── Encrypted secrets (OS keychain-backed via safeStorage) ───────────────────

@@ -10,7 +10,7 @@ import { createPlaylist, getChannel, listPlaylists, listUploads } from './google
 import { currentVocabulary, effectiveSurahs, removeMarker, renameRecordFiles, scanLibrary, writeMarker, type ScanResult } from './library'
 import { activity } from './log'
 import { Pipeline } from './pipeline'
-import { openLibraryStore, secrets, settings, type LibraryStore } from './store'
+import { mergeSettings, openLibraryStore, secrets, settings, type LibraryStore } from './store'
 import { Watcher } from './watcher'
 import { updater } from './updater'
 import { buildThumbnailJob, disposeThumbnails, renderJob, sampleJobForReciter, toPreview } from './thumbnails'
@@ -34,7 +34,8 @@ class YoosyApp {
   private broadcast(channel: string, payload: unknown) { for (const l of this.listeners) l(channel, payload) }
 
   async init(): Promise<void> {
-    this.settings = await settings.load()
+    this.settings = mergeSettings(await settings.load())   // older settings files lack newer sections/fields
+    await settings.replace(this.settings)
     nativeTheme.themeSource = this.settings.theme
     activity.on('entry', (e) => this.broadcast('evt:activity', e))
     this.pipeline.on('progress', (p) => this.broadcast('evt:progress', p))
@@ -520,12 +521,13 @@ class YoosyApp {
   async getHealth(): Promise<Health> {
     const q = normaliseQuota(this.store?.quota.get())
     const limit = this.settings.upload.dailyLimit
+    const unitLimit = Number(this.settings.upload.dailyUnits) || 10_000
     return {
       app: { version: app.getVersion(), platform: process.platform },
       library: { path: this.settings.libraryPath, reciters: this.snapshot.reciters.length, records: this.snapshot.records.length },
       youtube: { connected: !!this.channelTitle, channel: this.channelTitle, error: this.youtubeError, hasClientSecret: await this.hasClientSecret() },
       ffmpeg: { ok: await ffmpegAvailable(), path: ffmpegPath() },
-      quota: { used: q.uploads, limit, remaining: remainingUploads(q, limit, this.settings.upload.dailyUnits), units: q.units, unitLimit: this.settings.upload.dailyUnits, resetsAt: nextQuotaReset().toISOString() },
+      quota: { used: q.uploads, limit, remaining: remainingUploads(q, limit, unitLimit), units: q.units ?? 0, unitLimit, resetsAt: nextQuotaReset().toISOString() },
       watcher: { running: this.watcher.running, busy: this.pipeline.busy, nextRunAt: this.watcher.nextRunAt?.toISOString() ?? null },
     }
   }
