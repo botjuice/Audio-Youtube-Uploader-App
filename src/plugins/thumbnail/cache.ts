@@ -5,8 +5,9 @@ import type { ThumbnailJob } from './types'
 
 export interface PhotoStat { size: number; mtimeMs: number }
 
-/** Stable key: every job field that affects the picture, plus the photo's identity and the template version. */
-export function cacheKey(job: ThumbnailJob, templateVersion: number, photo: PhotoStat): string {
+/** Stable key: every job field that affects the picture, the resolved style (schema-ordered JSON),
+ *  the photo's identity and the template version. */
+export function cacheKey(job: ThumbnailJob, templateVersion: number, photo: PhotoStat, style: string): string {
   const h = createHash('sha1')
   h.update(JSON.stringify({
     v: templateVersion,
@@ -16,6 +17,7 @@ export function cacheKey(job: ThumbnailJob, templateVersion: number, photo: Phot
     prayer: job.prayer,
     date: job.date,
     options: job.options,
+    style,
   }))
   return h.digest('hex').slice(0, 20)
 }

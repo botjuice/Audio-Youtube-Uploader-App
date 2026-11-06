@@ -1,6 +1,7 @@
 /**
  * Offscreen renderer: one hidden Chromium window, reused for every job.
- * Loads the template once, injects data, waits for the template's own ready signal, captures.
+ * Loads the template once, injects style variables + data, waits for the template's own
+ * ready signal, captures.
  */
 import { app, BrowserWindow, nativeImage, type NativeImage } from 'electron'
 import { existsSync } from 'node:fs'
@@ -13,15 +14,18 @@ export const THUMB = { width: 1280, height: 720 } as const
 /** The template is authored at 1280×720; zoom 1.5 renders it pixel-identical at 1080p. */
 const ZOOM = FRAME.width / THUMB.width
 
+export interface LayoutReport {
+  lines: number
+  clamped: boolean
+  inkTop?: number; inkBottom?: number; inkLeft?: number; inkRight?: number
+}
 export interface RenderReport {
   fontOk: boolean
   /** Shrink ratio applied per text block (1 = no shrink). */
   fit: Record<string, number>
+  layout: LayoutReport
 }
-
-export interface Captured extends RenderReport {
-  frame: NativeImage
-}
+export interface Captured extends RenderReport { frame: NativeImage }
 
 const TEMPLATE_REL = join('src', 'plugins', 'thumbnail', 'template')
 
@@ -45,8 +49,8 @@ export class OffscreenRenderer {
   private queue: Promise<unknown> = Promise.resolve()
 
   /** Serialises renders: the pipeline is sequential anyway, and one window can't render two jobs at once. */
-  render(data: TemplateData): Promise<Captured> {
-    const run = this.queue.then(() => this.renderNow(data))
+  render(data: TemplateData, vars: Record<string, string>): Promise<Captured> {
+    const run = this.queue.then(() => this.renderNow(data, vars))
     this.queue = run.catch(() => undefined)
     return run
   }
@@ -69,10 +73,11 @@ export class OffscreenRenderer {
     return win
   }
 
-  private async renderNow(data: TemplateData): Promise<Captured> {
+  private async renderNow(data: TemplateData, vars: Record<string, string>): Promise<Captured> {
     const win = await this.window()
     const report = (await win.webContents.executeJavaScript(
-      `window.renderThumbnail(${JSON.stringify(data)}).then(() => ({ fontOk: window.__fontOk === true, fit: window.__fit || {} }))`,
+      `window.renderThumbnail(${JSON.stringify(data)}, ${JSON.stringify(vars)})
+         .then(() => ({ fontOk: window.__fontOk === true, fit: window.__fit || {}, layout: window.__layout || { lines: 0, clamped: false } }))`,
       true,
     )) as RenderReport
     // Give the compositor one frame after layout before capturing.

@@ -10,16 +10,20 @@ import { pathToFileURL } from 'node:url'
 import { bothExist, cacheKey, framePath, thumbPath, writeAtomic } from './cache'
 import { checkJob } from './job'
 import { downscale, OffscreenRenderer, toJpegUnder } from './renderer'
+import { canonicalStyle, cssVars, safeMargin, validateStyle, type Style } from './style'
 import type { PluginHost, PluginManifest, ThumbnailJob, ThumbnailResult } from './types'
 
 export type { PluginHost, PluginManifest, ThumbnailJob, ThumbnailReason, ThumbnailResult } from './types'
+export { DEFAULT_STYLE, STYLE_FIELDS, STYLE_SCHEMA, validateStyle, type Style, type StylePatch, type StyleError, type StyleFieldInfo } from './style'
 
-export const manifest: PluginManifest = { id: 'thumbnail', version: '1.0.0', templateVersion: 1 }
+export const manifest: PluginManifest = { id: 'thumbnail', version: '1.1.0', templateVersion: 2, styleVersion: 1 }
 
 /** YouTube's limit for custom thumbnails. */
 const THUMB_MAX_BYTES = 2 * 1024 * 1024
 /** Below this shrink ratio the text would be unreadable at feed size; refuse rather than ship it. */
 const MIN_FIT = 0.55
+/** Template canvas (template pixels, 1280×720); the safe margin comes from the style (frame-aware). */
+const CANVAS = { width: 1280, height: 720 }
 
 let renderer: OffscreenRenderer | null = null
 const getRenderer = () => (renderer ??= new OffscreenRenderer())
@@ -34,6 +38,12 @@ export async function render(job: ThumbnailJob, host: PluginHost): Promise<Thumb
   const check = checkJob(job)
   if (!check.ok) return check
 
+  const styled = validateStyle(job.style ?? {})
+  if (!styled.ok) {
+    return { ok: false, reason: 'INVALID_STYLE', message: styled.errors.map((e) => `${e.key}: ${e.message}`).join('; ') }
+  }
+  const style: Style = styled.style
+
   let photo: { size: number; mtimeMs: number }
   try {
     const st = await fs.stat(job.photoPath)
@@ -44,27 +54,43 @@ export async function render(job: ThumbnailJob, host: PluginHost): Promise<Thumb
     return { ok: false, reason: 'PHOTO_UNREADABLE', message: `Photo cannot be read: ${job.photoPath} (${errMsg(e)})` }
   }
 
-  const key = cacheKey(job, manifest.templateVersion, photo)
+  const key = cacheKey(job, manifest.templateVersion, photo, canonicalStyle(style))
   const frame = framePath(host.outputDir, key)
   const thumbnail = thumbPath(host.outputDir, key)
-  if (await bothExist(host.outputDir, key)) return { ok: true, frame, thumbnail, cacheKey: key, cached: true }
+  if (await bothExist(host.outputDir, key)) return { ok: true, frame, thumbnail, cacheKey: key, cached: true, warnings: [] }
 
   try {
     await fs.mkdir(host.outputDir, { recursive: true })
-    const out = await getRenderer().render({ ...check.data, photo: pathToFileURL(job.photoPath).href })
+    const out = await getRenderer().render({ ...check.data, photo: pathToFileURL(job.photoPath).href }, cssVars(style))
 
     if (!out.fontOk) return { ok: false, reason: 'FONT_NOT_LOADED', message: 'The surah calligraphy font did not load — refusing to render the surah name as plain code.' }
     const worst = Math.min(1, ...Object.values(out.fit))
     if (worst < MIN_FIT) {
-      return { ok: false, reason: 'TEXT_OVERFLOW', message: `Text had to shrink to ${Math.round(worst * 100)}% to fit — too small to read. Shorten the reciter name or surah list.` }
+      return { ok: false, reason: 'TEXT_OVERFLOW', message: `Text had to shrink to ${Math.round(worst * 100)}% to fit — too small to read. Shorten the reciter name or surah list, or reduce the size knobs.` }
     }
+    const l = out.layout
+    if (l.lines > 0 && l.inkTop !== undefined && l.inkBottom !== undefined && l.inkLeft !== undefined && l.inkRight !== undefined) {
+      const safe = safeMargin(style)
+      const tooTall = l.inkBottom - l.inkTop > CANVAS.height - 2 * safe
+      const tooWide = l.inkRight - l.inkLeft > CANVAS.width - 2 * safe
+      if (tooTall || tooWide) {
+        const have = tooTall ? `${Math.round(l.inkBottom - l.inkTop)}px tall` : `${Math.round(l.inkRight - l.inkLeft)}px wide`
+        const room = tooTall ? `${CANVAS.height - 2 * safe}px` : `${CANVAS.width - 2 * safe}px`
+        return { ok: false, reason: 'TEXT_OVERFLOW', message: `The text group is ${have} but only ${room} fits inside the safe area — reduce size, gap, pill or divider knobs.` }
+      }
+    }
+    const warnings: string[] = []
+    if (l.clamped) warnings.push('Text group was pulled back inside the safe area (offset or size knobs pushed it to the edge).')
+    if (worst < 1) warnings.push(`Text shrank to ${Math.round(worst * 100)}% to fit its box.`)
 
-    const frameBuf = out.frame.toJPEG(90)
-    const thumbBuf = toJpegUnder(downscale(out.frame), THUMB_MAX_BYTES)
+    const quality = Math.round(style.output.quality)
+    const frameBuf = out.frame.toJPEG(quality)
+    const thumbBuf = toJpegUnder(downscale(out.frame), THUMB_MAX_BYTES, quality)
     await writeAtomic(frame, frameBuf)
     await writeAtomic(thumbnail, thumbBuf)
     host.log('info', `Thumbnail rendered (${Math.round(thumbBuf.length / 1024)} KB) → ${key}`)
-    return { ok: true, frame, thumbnail, cacheKey: key, cached: false }
+    const layout = { inkTop: l.inkTop ?? 0, inkBottom: l.inkBottom ?? 0, inkLeft: l.inkLeft ?? 0, inkRight: l.inkRight ?? 0, clamped: l.clamped, fit: out.fit }
+    return { ok: true, frame, thumbnail, cacheKey: key, cached: false, warnings, layout }
   } catch (e) {
     host.log('error', `Thumbnail render failed: ${errMsg(e)}`)
     await fs.rm(frame, { force: true }).catch(() => {})

@@ -2,41 +2,106 @@
   {
     "reciterNameAr": "عبدالله الموسى",
     "photoPath": "photos/mosque-drone-wide.jpg",
-    "surahsAr": ["يوسف"],
+    "surahsAr": [
+      "يوسف"
+    ],
     "prayer": "Fajr",
     "date": "2025-02-05",
-    "options": { "sheikhPrefix": true, "template": "default" }
+    "options": {
+      "sheikhPrefix": true,
+      "template": "default"
+    }
   },
   {
     "reciterNameAr": "عبدالله الموسى",
     "photoPath": "photos/mosque-dome-sign.jpg",
-    "surahsAr": ["الدخان", "الذاريات"],
+    "surahsAr": [
+      "الدخان",
+      "الذاريات"
+    ],
     "prayer": "Isha",
     "date": "2024-12-23",
-    "options": { "sheikhPrefix": true, "template": "default" }
+    "options": {
+      "sheikhPrefix": true,
+      "template": "default"
+    }
   },
   {
     "reciterNameAr": "عبد الرحمن بن عبد العزيز السديس",
     "photoPath": "photos/mosque-dome-sign.jpg",
-    "surahsAr": ["الكافرون"],
+    "surahsAr": [
+      "الكافرون"
+    ],
     "prayer": "Istisqa",
     "date": "2024-12-31",
-    "options": { "sheikhPrefix": true, "template": "default" }
+    "options": {
+      "sheikhPrefix": true,
+      "template": "default"
+    }
   },
   {
     "reciterNameAr": "عبدالله الموسى",
     "photoPath": "photos/mosque-drone-wide.jpg",
-    "surahsAr": ["سورة غير موجودة"],
+    "surahsAr": [
+      "سورة غير موجودة"
+    ],
     "prayer": "Fajr",
     "date": "2025-02-05",
-    "options": { "sheikhPrefix": true, "template": "default" }
+    "options": {
+      "sheikhPrefix": true,
+      "template": "default"
+    }
   },
   {
     "reciterNameAr": "عبدالله الموسى",
     "photoPath": "photos/does-not-exist.jpg",
-    "surahsAr": ["الكهف"],
+    "surahsAr": [
+      "الكهف"
+    ],
     "prayer": "Jumuah",
     "date": "2025-02-07",
-    "options": { "sheikhPrefix": false, "template": "default" }
+    "options": {
+      "sheikhPrefix": false,
+      "template": "default"
+    }
+  },
+  {
+    "reciterNameAr": "عبدالله الموسى",
+    "photoPath": "photos/mosque-dome-sign.jpg",
+    "surahsAr": [
+      "الكهف"
+    ],
+    "prayer": "Jumuah",
+    "date": "2025-02-07",
+    "options": {
+      "sheikhPrefix": true,
+      "template": "default"
+    },
+    "style": {
+      "title": {
+        "color": "#5BD1C9",
+        "outlineWidth": 2,
+        "scale": 0.95
+      },
+      "reciter": {
+        "pill": {
+          "opacity": 0.55
+        }
+      },
+      "dividers": {
+        "aboveTitle": {
+          "opacity": 1,
+          "width": 300
+        }
+      },
+      "frame": {
+        "width": 6,
+        "inset": 20
+      },
+      "photo": {
+        "zoom": 1.2,
+        "blur": 2
+      }
+    }
   }
 ]

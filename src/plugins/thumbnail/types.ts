@@ -4,6 +4,7 @@
  * The app hands the plugin a small, data-only job and gets back two image paths or a reason.
  * Nothing else crosses the boundary. The plugin imports nothing from src/main or src/core.
  */
+import type { StylePatch } from './style'
 
 export interface ThumbnailJob {
   /** Reciter's Arabic name as stored in the app, e.g. "عبدالله الموسى" (no prefix). */
@@ -22,10 +23,15 @@ export interface ThumbnailJob {
     /** Template to use. v1 ships one. */
     template: 'default'
   }
+  /** Optional look: any subset of the knobs in `STYLE_SCHEMA`, grouped (photo, overlay, text,
+   *  shadow, title, reciter, meta, dividers, frame, output). Missing knobs take the locked
+   *  design's defaults; an empty or absent style renders the default look exactly. */
+  style?: StylePatch
 }
 
 export type ThumbnailReason =
   | 'INVALID_JOB'
+  | 'INVALID_STYLE'
   | 'PHOTO_UNREADABLE'
   | 'UNKNOWN_SURAH'
   | 'UNKNOWN_PRAYER'
@@ -41,10 +47,14 @@ export type ThumbnailResult =
       frame: string
       /** 1280×720 JPEG under 2 MB — the YouTube thumbnail. Same render, downscaled. */
       thumbnail: string
-      /** Stable key for this job + template version; the app may use it to notice changes. */
+      /** Stable key for this job + style + template version; the app may use it to notice changes. */
       cacheKey: string
       /** True when nothing was rendered because both files already existed. */
       cached: boolean
+      /** Non-fatal notes, e.g. the text group was pulled back inside the safe area. */
+      warnings: string[]
+      /** Where the text group landed, in 1280×720 template pixels (absent on cached results). */
+      layout?: { inkTop: number; inkBottom: number; inkLeft: number; inkRight: number; clamped: boolean; fit: Record<string, number> }
     }
   | { ok: false; reason: ThumbnailReason; message: string }
 
@@ -60,4 +70,6 @@ export interface PluginManifest {
   version: string
   /** Bump to invalidate every cached render (e.g. after a template change). */
   templateVersion: number
+  /** Bumped when a knob is added or a range changes. */
+  styleVersion: number
 }
