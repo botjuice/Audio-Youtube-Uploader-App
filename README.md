@@ -53,6 +53,18 @@ It bumps the version, runs typecheck + tests, commits, tags `vX.Y.Z`, pushes, an
 GitHub Actions publishes the Windows/macOS installers plus the update feed
 (`latest.yml`, `latest-mac.yml`). Users pick it up within 6 hours.
 
+## Thumbnails
+
+Each recording gets a designed 1920×1080 frame — reciter name (with «الشيخ»), the surah name
+in calligraphy, prayer · Hijri date (Umm al-Qura) over the reciter's photo. It is used as the
+video's background **and** set as the YouTube custom thumbnail after upload. Rendered by the
+bundled template in `src/plugins/thumbnail` (no internet), cached in `<library>/.yoosyjoosy/thumbs`.
+
+- On by default; Settings → Thumbnails turns it off (then: plain photo at 720p, no custom thumbnail, exactly as before) or drops the «الشيخ» prefix.
+- A thumbnail problem **never blocks an upload**: the recording shows the reason, the plain photo is used.
+- Setting the thumbnail costs 50 API units (an upload is 1,600; a playlist add 50); the sidebar shows units next to uploads. Custom thumbnails require a **phone-verified** channel — otherwise the recording shows "Thumbnail not set" with a Retry button.
+- Previews: the record detail panel, and the reciter page (updates when you change the photo).
+
 ## Playlist rules
 
 **Playlists** groups rules by playlist. A recording is added to a playlist when **all**

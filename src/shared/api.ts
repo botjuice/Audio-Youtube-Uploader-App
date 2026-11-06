@@ -1,6 +1,6 @@
 import type {
   ActivityEntry, Health, KeywordDef, LibraryRecord, NewReciter, Playlist, PlaylistRule, Privacy, Progress,
-  ReciterInfo, ReciterPatch, RecordPatch, Settings, TokenValidation, UpdateState,
+  ReciterInfo, ReciterPatch, RecordPatch, Settings, ThumbnailPreview, TokenValidation, UpdateState,
 } from './types'
 
 export interface LibrarySnapshot {
@@ -48,6 +48,10 @@ export interface Api {
   refreshPlaylists(): Promise<Playlist[]>
   createPlaylist(title: string, privacy: Privacy): Promise<Playlist>
   syncWithYouTube(): Promise<SyncResult>
+  // thumbnails
+  previewThumbnail(recordId: string): Promise<ThumbnailPreview>
+  previewReciterThumbnail(folder: string): Promise<ThumbnailPreview>
+  retryThumbnail(recordId: string): Promise<void>
   // pipeline
   startUpload(ids: string[]): Promise<void>
   cancelUpload(): Promise<void>

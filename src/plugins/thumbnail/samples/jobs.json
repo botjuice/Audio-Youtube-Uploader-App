@@ -1,0 +1,42 @@
+[
+  {
+    "reciterNameAr": "عبدالله الموسى",
+    "photoPath": "photos/mosque-drone-wide.jpg",
+    "surahsAr": ["يوسف"],
+    "prayer": "Fajr",
+    "date": "2025-02-05",
+    "options": { "sheikhPrefix": true, "template": "default" }
+  },
+  {
+    "reciterNameAr": "عبدالله الموسى",
+    "photoPath": "photos/mosque-dome-sign.jpg",
+    "surahsAr": ["الدخان", "الذاريات"],
+    "prayer": "Isha",
+    "date": "2024-12-23",
+    "options": { "sheikhPrefix": true, "template": "default" }
+  },
+  {
+    "reciterNameAr": "عبد الرحمن بن عبد العزيز السديس",
+    "photoPath": "photos/mosque-dome-sign.jpg",
+    "surahsAr": ["الكافرون"],
+    "prayer": "Istisqa",
+    "date": "2024-12-31",
+    "options": { "sheikhPrefix": true, "template": "default" }
+  },
+  {
+    "reciterNameAr": "عبدالله الموسى",
+    "photoPath": "photos/mosque-drone-wide.jpg",
+    "surahsAr": ["سورة غير موجودة"],
+    "prayer": "Fajr",
+    "date": "2025-02-05",
+    "options": { "sheikhPrefix": true, "template": "default" }
+  },
+  {
+    "reciterNameAr": "عبدالله الموسى",
+    "photoPath": "photos/does-not-exist.jpg",
+    "surahsAr": ["الكهف"],
+    "prayer": "Jumuah",
+    "date": "2025-02-07",
+    "options": { "sheikhPrefix": false, "template": "default" }
+  }
+]

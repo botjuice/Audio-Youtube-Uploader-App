@@ -1,6 +1,6 @@
 import { FolderOpen, ImageOff, Plus, Users } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import type { ReciterInfo, TokenValidation } from '@shared/types'
+import type { ReciterInfo, ThumbnailPreview, TokenValidation } from '@shared/types'
 import { Badge, Button, Card, Empty, Field, Input, Select } from '@/components/ui'
 import { useBusy, useStore } from '@/store'
 
@@ -64,6 +64,16 @@ function AddReciter() {
 
 function ReciterCard({ r, libraryPath }: { r: ReciterInfo; libraryPath: string }) {
   const call = useStore((s) => s.call)
+  const settings = useStore((s) => s.settings)
+  const [preview, setPreview] = useState<ThumbnailPreview | null>(null)
+  const thumbsOn = !!settings?.thumbnails.enabled
+  useEffect(() => {
+    setPreview(null)
+    if (!thumbsOn || !r.nameAr || !r.imagePath) return
+    let live = true
+    void window.api.previewReciterThumbnail(r.folder).then((p) => { if (live) setPreview(p) }).catch(() => { if (live) setPreview({ ok: false, message: 'Preview failed' }) })
+    return () => { live = false }
+  }, [r.folder, r.imagePath, r.nameAr, thumbsOn, settings?.thumbnails.sheikhPrefix])
   const [nameAr, setNameAr] = useState(r.nameAr ?? '')
   const [aliases, setAliases] = useState(r.aliases.join(', '))
   useEffect(() => { setNameAr(r.nameAr ?? ''); setAliases(r.aliases.join(', ')) }, [r.nameAr, r.aliases])
@@ -84,6 +94,14 @@ function ReciterCard({ r, libraryPath }: { r: ReciterInfo; libraryPath: string }
             </Select>
           )}
         </Field>
+        {thumbsOn && (
+          <Field label="Thumbnail preview" hint="How this reciter's thumbnails will look with the current photo and name">
+            {!r.nameAr || !r.imagePath ? <div className="text-xs text-muted">Set the Arabic name and a photo to see a preview.</div>
+              : !preview ? <div className="aspect-video rounded-lg bg-surface-2 animate-pulse" />
+              : preview.ok ? <img src={preview.dataUrl} alt="preview" className="w-full aspect-video rounded-lg border border-border object-cover" />
+              : <div className="text-xs text-warn">Can't render: {preview.message}</div>}
+          </Field>
+        )}
         <Field label="Other spellings" hint="Comma-separated. Filenames using any of these also belong to this reciter.">
           <Input value={aliases} onChange={(e) => setAliases(e.target.value)}
             onBlur={() => { const next = aliases.split(',').map((a) => a.trim()).filter(Boolean); if (next.join('|') !== r.aliases.join('|')) save({ aliases: next }) }}

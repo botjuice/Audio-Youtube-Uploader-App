@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Thumbnail template — 1280×720 (rendered by the thumbnail plugin)</title>
+<style>
+  /* ---------- Fonts ---------- */
+  @font-face {
+    font-family: "surah-name-v4-icon";             /* V4 Surah Name Font (QUL / Tarteel) — ligature font */
+    src: url("fonts/surah-name-v4.ttf") format("truetype");
+    font-display: block;
+  }
+  @font-face {
+    font-family: "Amiri";                          /* Google Fonts, OFL */
+    src: url("fonts/Amiri-Bold.ttf") format("truetype");
+    font-weight: 700;
+    font-display: block;
+  }
+  @font-face {
+    font-family: "IBM Plex Sans Arabic";           /* Google Fonts, OFL */
+    src: url("fonts/IBMPlexSansArabic-Medium.ttf") format("truetype");
+    font-weight: 500;
+    font-display: block;
+  }
+
+  /* ---------- Palette (from the channel logo) ---------- */
+  :root {
+    --gold:        #D6B33C;   /* main gold — surah title              */
+    --gold-light:  #EBD27A;   /* highlight gold — rule, accents       */
+    --gold-deep:   #B9962B;   /* deep gold — bottom of the title gradient */
+    --cream:       #F4EFE3;   /* warm cream — secondary text          */
+    --cream-soft:  rgba(244, 239, 227, 0.82);
+    --ink:         #0B1A26;   /* deep tone for the photo overlay      */
+    --ink-rgb:     11, 26, 38;
+
+    /* layout */
+    --canvas-w: 1280px;
+    --canvas-h: 720px;
+    --title-max-w: 1040px;     /* fixed maximum box for the whole title */
+    --title-size: 290px;       /* base size; shrinks to fit the box     */
+    --title-gap: 0.14em;       /* space between "سورة" and the name     */
+    --reciter-max-w: 1000px;
+    --reciter-size: 52px;
+    --meta-max-w: 1000px;
+    --meta-size: 36px;
+    --optical-lift: 30px;     /* raise the group above true centre: the heavy title reads as the visual centre */
+  }
+
+  html, body { margin: 0; padding: 0; background: #000; }
+
+  /* ---------- Canvas ---------- */
+  .thumb {
+    position: relative;
+    width: var(--canvas-w);
+    height: var(--canvas-h);
+    overflow: hidden;
+    background: var(--ink);
+    color: var(--cream);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Photo: full bleed */
+  .thumb__photo {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover; object-position: center;
+    display: block;
+  }
+
+  /* Overlay: deep tone, heavier at the bottom where the small text sits,
+     lighter at the top so the photo stays visible; plus a soft vignette. */
+  .thumb__overlay {
+    position: absolute; inset: 0;
+    background:
+      /* soft scrim behind the text block — keeps the title clean on busy photos */
+      radial-gradient(58% 60% at 50% 52%, rgba(var(--ink-rgb), 0.30) 0%, rgba(var(--ink-rgb), 0.00) 100%),
+      /* vignette */
+      radial-gradient(120% 90% at 50% 40%, rgba(var(--ink-rgb), 0.00) 0%, rgba(var(--ink-rgb), 0.45) 100%),
+      linear-gradient(180deg,
+        rgba(var(--ink-rgb), 0.22) 0%,
+        rgba(var(--ink-rgb), 0.46) 45%,
+        rgba(var(--ink-rgb), 0.84) 100%);
+  }
+
+  /* Content stack */
+  .thumb__content {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 56px 80px 64px;
+    box-sizing: border-box;
+  }
+
+  /* ---------- Surah title (two words, one unit) ---------- */
+  .title {
+    display: flex; flex-direction: row;     /* dir=rtl on the element: "سورة" lands on the right */
+    align-items: baseline; justify-content: center;
+    gap: var(--title-gap);                  /* the font's space glyph is zero-width */
+    max-width: var(--title-max-w);
+    font-family: "surah-name-v4-icon";      /* no fallback on purpose: see notes */
+    font-size: var(--title-size);
+    line-height: 1;
+    color: var(--gold);                     /* single-colour font: coloured like normal text */
+    white-space: nowrap;
+    font-variant-ligatures: common-ligatures; /* keep liga on — the codes depend on it */
+    text-rendering: optimizeLegibility;
+    /* soft drop shadow + faint gold glow so the gold lifts off any photo */
+    filter:
+      drop-shadow(0 4px 6px rgba(0, 0, 0, 0.45))
+      drop-shadow(0 10px 28px rgba(0, 0, 0, 0.45))
+      drop-shadow(0 0 22px rgba(235, 210, 122, 0.30));
+    margin-bottom: 24px;
+  }
+  .title > span {
+    font-family: inherit; display: inline-block;
+    /* gentle vertical gold gradient on the glyphs themselves */
+    background: linear-gradient(180deg, var(--gold-light) 0%, var(--gold) 55%, var(--gold-deep) 100%);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .title .title__and { font-family: 'Amiri', serif; font-weight: 700; font-size: 0.38em; align-self: center; }
+  /* NOTE: never set letter-spacing, word-spacing or text-transform on .title */
+
+  /* Thin gold rule */
+  .rule {
+    width: 120px; height: 3px; border-radius: 2px;
+    background: linear-gradient(90deg, transparent, var(--gold-light), transparent);
+    margin: 0 0 26px;
+  }
+
+  /* ---------- Secondary text ---------- */
+  .reciter {
+    max-width: var(--reciter-max-w);
+    font-family: "Amiri", serif;
+    font-weight: 700;
+    font-size: var(--reciter-size);
+    line-height: 1.35;
+    color: var(--cream);
+    white-space: nowrap;
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
+    margin-bottom: 14px;
+  }
+  .reciter--top { margin: 0 0 10px; }
+  .meta {
+    display: flex; flex-direction: row; align-items: center; justify-content: center;
+    gap: 0.55em;
+    max-width: var(--meta-max-w);
+    font-family: "IBM Plex Sans Arabic", sans-serif;
+    font-weight: 500;
+    font-size: var(--meta-size);
+    line-height: 1.4;
+    color: var(--cream-soft);
+    white-space: nowrap;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
+  }
+  .meta__dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--gold-light); flex: none;
+  }
+</style>
+</head>
+<body>
+
+<div class="thumb" id="thumb">
+  <img class="thumb__photo" data-slot="photo" alt="">
+  <div class="thumb__overlay"></div>
+
+  <div class="thumb__content">
+    <div class="reciter reciter--top" dir="rtl" data-slot="reciter_name" data-fit="reciter"></div>
+
+    <div class="title" dir="rtl" data-fit="title">
+      <span class="title__word" data-code="surah-icon">surah-icon</span>
+      <span class="title__word" data-slot="surah_name"></span>
+    </div>
+
+    <div class="meta" dir="rtl" data-fit="meta">
+      <span data-slot="prayer"></span>
+      <span class="meta__dot" aria-hidden="true"></span>
+      <span data-slot="date"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const root = document.getElementById("thumb");
+  const q = (sel) => root.querySelector(sel);
+
+  /* surah number → ligature code, e.g. 2 → "surah002" */
+  function surahCode(n) {
+    const num = Math.min(114, Math.max(1, parseInt(n, 10) || 1));
+    return "surah" + String(num).padStart(3, "0");
+  }
+
+  /* Fill the slots from a data object */
+  function fill(d) {
+    const photo = q('[data-slot="photo"]');
+    photo.src = d.photo;
+    const list = d.surahs || [d.surah];
+    const title = q('.title');
+    const slot = q('[data-slot="surah_name"]');
+    root.querySelectorAll('.title__extra').forEach((e) => e.remove());
+    const icon = q('[data-code="surah-icon"]');
+    icon.style.display = list.length > 1 ? 'none' : '';
+    slot.textContent = surahCode(list[0]);
+    list.slice(1).forEach((n) => {
+      const and = document.createElement('span'); and.className = 'title__word title__extra title__and'; and.textContent = 'و';
+      const w = document.createElement('span'); w.className = 'title__word title__extra'; w.textContent = surahCode(n);
+      slot.parentNode.append(and, w);
+    });
+    q('[data-slot="reciter_name"]').textContent = d.reciter_name;
+    q('[data-slot="prayer"]').textContent       = d.prayer;
+    q('[data-slot="date"]').textContent         = d.date;
+  }
+
+  /* Shrink-to-fit: each data-fit element has a fixed max box (max-width).
+     The title is measured as one unit (both words + gap). */
+  const BASE = { title: "--title-size", reciter: "--reciter-size", meta: "--meta-size" };
+  function fitAll() {
+    const cs = getComputedStyle(root);
+    const fit = {}; window.__fit = fit;
+    root.querySelectorAll("[data-fit]").forEach((el) => {
+      const base = parseFloat(cs.getPropertyValue(BASE[el.dataset.fit]));
+      el.style.fontSize = base + "px";
+      const maxW = parseFloat(getComputedStyle(el).maxWidth);
+      const w = el.scrollWidth;                 // content width incl. gap
+      const ratio = w > maxW ? maxW / w : 1;
+      if (ratio < 1) el.style.fontSize = Math.floor(base * ratio * 100) / 100 + "px";
+      fit[el.dataset.fit] = ratio;
+    });
+  }
+
+  /* Visible ink of a text element: baseline from a zero-size probe, extent by drawing on a canvas. */
+  const cv = document.createElement("canvas"), ctx = cv.getContext("2d", { willReadFrequently: true });
+  function inkOf(el) {
+    const cs = getComputedStyle(el);
+    const probe = document.createElement("span");
+    probe.style.cssText = "display:inline-block;width:0;height:0;vertical-align:baseline";
+    el.appendChild(probe);
+    const baseline = probe.getBoundingClientRect().bottom;
+    probe.remove();
+    const size = parseFloat(cs.fontSize);
+    ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    const w = Math.ceil(ctx.measureText(el.textContent).width) + 40;
+    cv.width = w; cv.height = Math.ceil(size * 3);
+    ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    ctx.direction = "rtl"; ctx.textAlign = "right";
+    const by = Math.round(size * 1.6);
+    ctx.fillStyle = "#000"; ctx.fillText(el.textContent, w - 20, by);
+    const px = ctx.getImageData(0, 0, cv.width, cv.height).data;
+    let top = -1, bottom = -1;
+    for (let y = 0; y < cv.height; y++) {
+      let hit = false;
+      for (let x = 3; x < cv.width * 4; x += 4) if (px[y * cv.width * 4 + x] > 16) { hit = true; break; }
+      if (hit) { if (top < 0) top = y; bottom = y; }
+    }
+    return { top: baseline - (by - top), bottom: baseline + (bottom - by) };
+  }
+  /* Keep the CSS spacing; just shift the whole block so its visible ink is centred on the canvas. */
+  function centreGroup() {
+    const content = q(".thumb__content");
+    content.style.transform = "";
+    const parts = (el) => { const sp = [...el.querySelectorAll("span")].filter((s) => s.textContent.trim()); return sp.length ? sp : [el]; };
+    const top = Math.min(...parts(content.firstElementChild).map((s) => inkOf(s).top));
+    const bottom = Math.max(...parts(content.lastElementChild).map((s) => inkOf(s).bottom));
+    const canvas = root.getBoundingClientRect();
+    const lift = parseFloat(getComputedStyle(root).getPropertyValue("--optical-lift")) || 0;
+    const shift = (canvas.top + canvas.height / 2) - (top + bottom) / 2 - lift;
+    content.style.transform = `translateY(${shift.toFixed(1)}px)`;
+    window.__layout = { inkTop: Math.round(top - canvas.top + shift), inkBottom: Math.round(bottom - canvas.top + shift), shift: Math.round(shift) };
+  }
+
+  /* Wait for every image + every font before measuring / signalling ready.
+     Fonts must be loaded first: a fallback-less font measures as zero width. */
+  function imagesReady() {
+    return Promise.all([...root.querySelectorAll("img")].map((img) =>
+      img.complete && img.naturalWidth ? Promise.resolve()
+        : new Promise((res) => { img.onload = img.onerror = res; })));
+  }
+
+  async function render(d) {
+    root.removeAttribute("data-ready");
+    fill(d);
+    await document.fonts.ready;
+    // Force the surah font to actually load (fonts.ready resolves early if nothing requested it yet)
+    await Promise.all([
+      document.fonts.load('290px "surah-name-v4-icon"'),
+      document.fonts.load('700 52px "Amiri"'),
+      document.fonts.load('500 36px "IBM Plex Sans Arabic"')
+    ]);
+    await imagesReady();
+    window.__fontOk = document.fonts.check('290px "surah-name-v4-icon"');
+    fitAll();
+    centreGroup();
+    root.setAttribute("data-ready", "true");   // renderers wait for [data-ready="true"]
+  }
+
+  window.renderThumbnail = render;              // for the upload script
+  if (window.THUMB_DATA) render(window.THUMB_DATA);   // the plugin calls window.renderThumbnail(data) directly
+})();
+</script>
+</body>
+</html>

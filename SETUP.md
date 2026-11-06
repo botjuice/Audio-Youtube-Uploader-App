@@ -34,7 +34,7 @@ Your browser opens; sign in with the account that owns the YouTube channel and a
 
 ## Quota
 
-Google gives each project 10,000 API units per day; one upload costs 1,600, a playlist add 50. The app's default of **6 uploads per day** fits inside that. The counter and the "resets in" timer in the sidebar follow YouTube's reset time (midnight Pacific). You can request more quota from Google at <https://support.google.com/youtube/contact/yt_api_form>.
+Google gives each project 10,000 API units per day; one upload costs 1,600, setting its thumbnail 50, a playlist add 50. The app counts all of them: a run stops when either the *uploads per day* cap or the unit budget would be exceeded (both in Settings → Upload defaults). The counter and the "resets in" timer in the sidebar follow YouTube's reset time (midnight Pacific). You can request more quota from Google at <https://support.google.com/youtube/contact/yt_api_form>.
 
 ## Troubleshooting
 
@@ -44,6 +44,7 @@ Google gives each project 10,000 API units per day; one upload costs 1,600, a pl
 | Connect opens the browser, then "Access blocked: … has not completed the Google verification process" | Your email isn't in Test users and the app isn't published. Add it, or publish (step 3). |
 | Connect says "Google did not return a refresh token" | Remove YouTube Quran Uploader at <https://myaccount.google.com/permissions> and connect again. |
 | Upload fails with **quotaExceeded** | Daily units used up; wait for the reset shown in the sidebar. |
+| **Thumbnail not set** — "custom thumbnails need a phone-verified channel" | Verify the channel once at <https://www.youtube.com/verify>, then click **Retry** on the recording. The video itself is uploaded fine. |
 | Upload fails with **uploadLimitExceeded** | YouTube's own channel limit (common on new/unverified channels). Verify the channel by phone at <https://www.youtube.com/verify>. |
 | A recording shows **Needs you · no prayer name** | The filename has no Fajr/Dhuhr/…/Witr in it — rename it from the detail panel. |
 | **unknown surah** | Add the spelling in Settings → Surah spellings (e.g. `thashr` → الحشر). |

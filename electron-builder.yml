@@ -9,6 +9,9 @@ files:
   - '!**/*.map'
 asarUnpack:
   - node_modules/ffmpeg-static/**
+extraResources:
+  - from: src/plugins/thumbnail/template
+    to: thumbnail
 mac:
   category: public.app-category.video
   target: [dmg, zip]

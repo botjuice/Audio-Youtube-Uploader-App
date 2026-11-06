@@ -1,7 +1,7 @@
 import { clsx } from 'clsx'
-import { Check, ExternalLink, FolderOpen, Pencil, RotateCcw, Sparkles, X, Plus, CircleSlash, CircleCheck, Tag, BookOpen, UserPlus } from 'lucide-react'
+import { Check, ExternalLink, FolderOpen, Pencil, RotateCcw, Sparkles, X, Plus, CircleSlash, CircleCheck, Tag, BookOpen, UserPlus, Image as ImageIcon, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import type { LibraryRecord } from '@shared/types'
+import type { LibraryRecord, ThumbnailPreview } from '@shared/types'
 import { Badge, Button, Chip, IconButton, Input, Modal, Select } from '@/components/ui'
 import { statusMeta, fmtBytes, fmtRel, parseVideoId } from '@/lib/format'
 import { describeRule } from '@core/rules'
@@ -122,6 +122,9 @@ export function RecordDetail({ record: r, onClose }: { record: LibraryRecord; on
           )}
         </Section>
 
+        {/* thumbnail */}
+        <ThumbnailSection record={r} />
+
         {/* playlists */}
         <Section label="Playlists" hint={r.status === 'uploaded' ? 'Already uploaded — changes here affect future uploads only' : 'Click a playlist to include or exclude it for this recording'}>
           <div className="flex flex-wrap gap-1.5">
@@ -226,6 +229,52 @@ function LeftoverModal({ record, action, onClose }: { record: LibraryRecord; act
         {action.kind === 'surah' && <p className="text-xs text-muted">Every file using this spelling will parse again automatically.</p>}
       </div>
     </Modal>
+  )
+}
+
+function ThumbnailSection({ record: r }: { record: LibraryRecord }) {
+  const settings = useStore((s) => s.settings)
+  const call = useStore((s) => s.call)
+  const [preview, setPreview] = useState<ThumbnailPreview | null>(null)
+  const [full, setFull] = useState(false)
+  const enabled = !!settings?.thumbnails.enabled
+  const canPreview = enabled && !!r.parsed
+  useEffect(() => {
+    setPreview(null)
+    if (!canPreview) return
+    let live = true
+    void window.api.previewThumbnail(r.id).then((p) => { if (live) setPreview(p) }).catch((e) => { if (live) setPreview({ ok: false, reason: 'RENDER_FAILED', message: String(e) }) })
+    return () => { live = false }
+  }, [r.id, r.fileName, r.titleOverride, canPreview, settings?.thumbnails.sheikhPrefix])
+  if (!enabled) return null
+  const t = r.thumbnail
+  return (
+    <Section label="Thumbnail" hint={r.status === 'uploaded' ? (t?.set ? 'Set on YouTube' : t?.setError ? 'Not set on YouTube' : 'Uploaded before thumbnails existed') : 'Rendered on upload; also used as the video frame'}>
+      {!r.parsed ? <div className="text-xs text-muted">Fix the filename first.</div>
+        : !preview ? <div className="h-[135px] rounded-lg bg-surface-2 animate-pulse" />
+        : preview.ok ? (
+          <button className="block w-full rounded-lg overflow-hidden border border-border" onClick={() => setFull(true)} title="Click to enlarge">
+            <img src={preview.dataUrl} alt="thumbnail" className="w-full aspect-video object-cover" />
+          </button>
+        ) : (
+          <div className="rounded-lg border border-warn/30 bg-warn/6 p-2 text-xs">
+            <div className="flex items-center gap-1.5 font-medium"><ImageIcon size={12} /> Thumbnail can't be rendered ({preview.reason})</div>
+            <div className="text-muted mt-0.5">{preview.message}</div>
+            <div className="text-muted mt-1">The plain photo will be used — the upload is not blocked.</div>
+          </div>
+        )}
+      {t?.setError && (
+        <div className="mt-2 flex items-start gap-2 rounded-lg border border-warn/30 bg-warn/6 p-2 text-xs">
+          <div className="flex-1"><b>Thumbnail not set:</b> {t.setError}</div>
+          {r.videoId && <Button size="sm" onClick={() => void call('retryThumb', () => window.api.retryThumbnail(r.id), { success: 'Thumbnail set on YouTube' })}><RefreshCw size={12} /> Retry</Button>}
+        </div>
+      )}
+      {full && preview?.ok && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-8 no-drag" onClick={() => setFull(false)}>
+          <img src={preview.dataUrl} alt="thumbnail" className="max-h-full max-w-full rounded-lg shadow-2xl" />
+        </div>
+      )}
+    </Section>
   )
 }
 

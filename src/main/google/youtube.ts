@@ -91,6 +91,21 @@ export async function listUploads(max = 5000): Promise<{ videoId: string; title:
   return out
 }
 
+/** Custom thumbnail (JPEG/PNG ≤ 2 MB). 50 quota units. Needs a phone-verified channel. */
+export async function setThumbnail(videoId: string, file: string): Promise<void> {
+  const body = await fs.readFile(file)
+  const res = await fetch(`https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(videoId)}&uploadType=media`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${await accessToken()}`, 'Content-Type': 'image/jpeg', 'Content-Length': String(body.length) },
+    body,
+  })
+  if (res.status === 403) {
+    const e = await friendlyError(res)
+    throw new Error(`YouTube refused the custom thumbnail — custom thumbnails need a phone-verified channel (youtube.com/verify). ${e.message}`)
+  }
+  if (!res.ok) throw await friendlyError(res)
+}
+
 export interface UploadMeta {
   title: string
   description: string

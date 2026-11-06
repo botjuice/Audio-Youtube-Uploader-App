@@ -169,7 +169,7 @@ function Row({ r, active, onSelect, onCheck, progress }: { r: LibraryRecord; act
       className={clsx('grid grid-cols-[28px_104px_minmax(0,1.15fr)_minmax(0,1fr)_76px] items-center gap-3 px-3 h-11 border-b border-border/60 cursor-default transition-colors',
         active ? 'bg-accent/8' : 'hover:bg-surface-2/70')}>
       <Checkbox checked={r.selected} onChange={onCheck} disabled={!isUploadable(r)} />
-      <div className="flex items-center gap-1"><Badge tone={meta.tone}>{meta.label}</Badge>{warn && <span className="h-1.5 w-1.5 rounded-full bg-warn" title="Last attempt failed" />}</div>
+      <div className="flex items-center gap-1"><Badge tone={meta.tone}>{meta.label}</Badge>{warn && <span className="h-1.5 w-1.5 rounded-full bg-warn" title="Last attempt failed" />}{r.thumbnail && (!r.thumbnail.ok || r.thumbnail.setError) && <span className="h-1.5 w-1.5 rounded-full bg-warn" title={`Thumbnail: ${r.thumbnail.message ?? r.thumbnail.setError}`} />}</div>
       <div className="min-w-0">
         <div className="truncate font-mono text-[12px]">{r.fileName}</div>
         {progress !== null ? <ProgressBar value={progress} className="mt-1 h-1" /> :
@@ -182,7 +182,7 @@ function Row({ r, active, onSelect, onCheck, progress }: { r: LibraryRecord; act
 }
 
 function ProgressStrip({ progress, record, onCancel }: { progress: { stage: string; percent: number; detail?: string }; record?: LibraryRecord; onCancel: () => void }) {
-  const stage = { encode: 'Rendering video', upload: 'Uploading to YouTube', playlist: 'Adding to playlists' }[progress.stage] ?? progress.stage
+  const stage = { thumbnail: 'Rendering thumbnail', encode: 'Rendering video', upload: 'Uploading to YouTube', playlist: 'Adding to playlists' }[progress.stage] ?? progress.stage
   return (
     <div className="border-b border-border bg-accent/6 px-4 py-2.5 flex items-center gap-3">
       <Spinner className="text-accent" />

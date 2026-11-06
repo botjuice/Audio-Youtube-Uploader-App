@@ -152,6 +152,7 @@ export async function scanLibrary(library: string, store: LibraryStore, opts: Sc
       selected: st.selected ?? false, skipped: st.skipped ?? false,
       videoId: marker?.video_id ?? null, uploadedAt: marker?.uploaded_at ?? null,
       lastError: st.lastError ?? null, hasVideoFile,
+      thumbnail: st.thumbnail ?? null,
     }
   }
 

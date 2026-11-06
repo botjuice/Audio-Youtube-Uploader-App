@@ -23,5 +23,8 @@ describe('ffmpeg (bundled binary, real encode)', () => {
     expect(seen.at(-1)).toBe(100)
     const probe = spawnSync(bin, ['-i', out, '-f', 'null', '-'], { encoding: 'utf8' }).stderr
     expect(probe).toMatch(/1280x720/)
-  }, 60_000)
+    const out2 = join(tmp, 'out1080.mp4')
+    await encodeVideo({ audio, image: resolve('resources/icon.png'), output: out2, size: '1080p' })
+    expect(spawnSync(bin, ['-i', out2, '-f', 'null', '-'], { encoding: 'utf8' }).stderr).toMatch(/1920x1080/)
+  }, 90_000)
 })

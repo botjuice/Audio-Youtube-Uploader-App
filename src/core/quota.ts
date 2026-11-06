@@ -1,6 +1,8 @@
 /** YouTube Data API quota resets at midnight Pacific Time, not UTC. */
 export const QUOTA_TZ = 'America/Los_Angeles'
 export const UPLOAD_COST_UNITS = 1600
+export const THUMBNAIL_COST_UNITS = 50
+export const PLAYLIST_ADD_COST_UNITS = 50
 export const DEFAULT_DAILY_UNITS = 10_000
 
 const dayFmt = new Intl.DateTimeFormat('en-CA', {
@@ -27,13 +29,25 @@ export function nextQuotaReset(now: Date = new Date()): Date {
   return t
 }
 
-export interface QuotaState { day: string; uploads: number }
+export interface QuotaState { day: string; uploads: number; units: number }
 
 export function normaliseQuota(state: QuotaState | null | undefined, now: Date = new Date()): QuotaState {
   const day = quotaDayKey(now)
-  return state && state.day === day ? state : { day, uploads: 0 }
+  if (state && state.day === day) return { day, uploads: state.uploads ?? 0, units: state.units ?? 0 }
+  return { day, uploads: 0, units: 0 }
 }
 
-export function remainingUploads(state: QuotaState | null | undefined, dailyLimit: number, now: Date = new Date()): number {
-  return Math.max(0, dailyLimit - normaliseQuota(state, now).uploads)
+/** Uploads still possible today: bounded by the user's upload cap AND by the API unit budget
+ *  (an upload needs 1,600 units; thumbnail + playlist adds come out of the same budget). */
+export function remainingUploads(state: QuotaState | null | undefined, dailyLimit: number, dailyUnits: number = DEFAULT_DAILY_UNITS, now: Date = new Date()): number {
+  const q = normaliseQuota(state, now)
+  const byCount = dailyLimit - q.uploads
+  const byUnits = Math.floor((dailyUnits - q.units) / UPLOAD_COST_UNITS)
+  return Math.max(0, Math.min(byCount, byUnits))
+}
+
+/** Mutate a quota state in place for today, adding uploads/units. */
+export function addQuota(q: QuotaState, add: { uploads?: number; units?: number }, now: Date = new Date()): void {
+  const n = normaliseQuota(q, now)
+  q.day = n.day; q.uploads = n.uploads + (add.uploads ?? 0); q.units = n.units + (add.units ?? 0)
 }

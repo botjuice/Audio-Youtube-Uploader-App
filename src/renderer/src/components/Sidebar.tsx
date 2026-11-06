@@ -59,9 +59,9 @@ export function Sidebar() {
         <div className="rounded-lg border border-border bg-surface px-2.5 py-2 space-y-1.5">
           <div className="flex items-center justify-between text-muted">
             <span className="inline-flex items-center gap-1.5"><Gauge size={13} /> Today</span>
-            <span className="tabular-nums">{health ? `${health.quota.used}/${health.quota.limit}` : '–'}</span>
+            <span className="tabular-nums" title={health ? `${health.quota.units.toLocaleString()} of ${health.quota.unitLimit.toLocaleString()} API units used` : ''}>{health ? `${health.quota.used}/${health.quota.limit} · ${Math.round(health.quota.units / 1000 * 10) / 10}k/${Math.round(health.quota.unitLimit / 1000)}k` : '–'}</span>
           </div>
-          <ProgressBar value={health ? (health.quota.used / Math.max(1, health.quota.limit)) * 100 : 0}
+          <ProgressBar value={health ? Math.max(health.quota.used / Math.max(1, health.quota.limit), health.quota.units / Math.max(1, health.quota.unitLimit)) * 100 : 0}
             tone={health && health.quota.remaining === 0 ? 'warn' : 'accent'} />
           {health && health.quota.remaining === 0 && <div className="text-[11px] text-muted">Resets in {fmtUntil(health.quota.resetsAt)}</div>}
         </div>

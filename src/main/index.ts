@@ -83,5 +83,5 @@ void app.whenReady().then(async () => {
 })
 
 app.on('activate', showWindow)
-app.on('before-quit', () => { quitting = true })
+app.on('before-quit', () => { quitting = true; yoosy.shutdown() })
 app.on('window-all-closed', () => { if (!isMac && !yoosy.settings.watcher.enabled) app.quit() })

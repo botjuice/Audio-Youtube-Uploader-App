@@ -1,12 +1,13 @@
 import { EventEmitter } from 'node:events'
 import { join } from 'node:path'
 import type { LibraryRecord, Progress, Settings } from '@shared/types'
-import { normaliseQuota, remainingUploads } from '@core/quota'
+import { PLAYLIST_ADD_COST_UNITS, THUMBNAIL_COST_UNITS, UPLOAD_COST_UNITS, addQuota, remainingUploads } from '@core/quota'
 import { encodeVideo } from './ffmpeg'
-import { addToPlaylist, uploadVideo } from './google/youtube'
-import { scanLibrary, videoPath, writeMarker } from './library'
+import { addToPlaylist, setThumbnail, uploadVideo } from './google/youtube'
+import { effectiveSurahs, scanLibrary, videoPath, writeMarker } from './library'
 import { activity } from './log'
 import type { LibraryStore } from './store'
+import { buildThumbnailJob, renderJob } from './thumbnails'
 
 export interface PipelineContext {
   library: string
@@ -39,20 +40,40 @@ export class Pipeline extends EventEmitter {
 
       for (const rec of queue) {
         if (signal.aborted) { activity.warn('Run cancelled.'); break }
-        const remaining = remainingUploads(ctx.store.quota.get(), ctx.settings.upload.dailyLimit)
-        if (remaining <= 0) { activity.warn(`Daily limit of ${ctx.settings.upload.dailyLimit} reached — stopping. Remaining items stay queued.`); break }
+        const remaining = remainingUploads(ctx.store.quota.get(), ctx.settings.upload.dailyLimit, ctx.settings.upload.dailyUnits)
+        if (remaining <= 0) { activity.warn(`Daily limit reached (${ctx.settings.upload.dailyLimit} uploads / ${ctx.settings.upload.dailyUnits} API units) — stopping. Remaining items stay queued.`); break }
 
         const reciter = reciters.get(rec.reciterKey ?? '')!
         const audio = join(ctx.library, rec.reciterFolder, rec.fileName)
         const mp4 = videoPath(audio)
 
-        // 1 — encode
-        if (!rec.hasVideoFile) {
+        // 0 — thumbnail (never blocks: on any failure we fall back to the plain photo)
+        let frame: string = reciter.imagePath!
+        let frameKey = 'photo'
+        let thumbFile: string | null = null
+        if (ctx.settings.thumbnails.enabled) {
+          this.progress({ recordId: rec.id, stage: 'thumbnail', percent: 0 })
+          const built = buildThumbnailJob(rec, reciter, effectiveSurahs(ctx.store.surahs.get()), ctx.settings.thumbnails)
+          const result = built.ok ? await renderJob(built.job, ctx.library, rec.id) : built
+          if (result.ok) {
+            frame = result.frame; frameKey = result.cacheKey; thumbFile = result.thumbnail
+            await ctx.store.records.update((d) => { d[rec.id] = { ...d[rec.id], thumbnail: { ok: true, key: result.cacheKey, set: d[rec.id]?.thumbnail?.set, at: new Date().toISOString() } } })
+          } else {
+            activity.warn(`Thumbnail not rendered for ${rec.fileName} (${result.reason}): ${result.message} — using the plain photo.`, rec.id)
+            await ctx.store.records.update((d) => { d[rec.id] = { ...d[rec.id], thumbnail: { ok: false, reason: result.reason, message: result.message, at: new Date().toISOString() } } })
+          }
+        }
+
+        // 1 — encode (also re-encode when the existing mp4 was made from a different frame)
+        const prevKey = ctx.store.records.get()[rec.id]?.videoKey
+        const needsEncode = !rec.hasVideoFile || (ctx.settings.thumbnails.enabled && frameKey !== 'photo' && prevKey !== frameKey)
+        if (needsEncode) {
           this.progress({ recordId: rec.id, stage: 'encode', percent: 0 })
-          activity.info(`Rendering video for ${rec.fileName}`, rec.id)
+          activity.info(`${rec.hasVideoFile ? 'Re-rendering' : 'Rendering'} video for ${rec.fileName}${frameKey !== 'photo' ? ' (designed frame, 1080p)' : ''}`, rec.id)
           try {
-            await encodeVideo({ audio, image: reciter.imagePath!, output: mp4, signal,
+            await encodeVideo({ audio, image: frame, output: mp4, signal, size: frameKey !== 'photo' ? '1080p' : '720p',
               onProgress: (percent) => this.progress({ recordId: rec.id, stage: 'encode', percent }) })
+            await ctx.store.records.update((d) => { d[rec.id] = { ...d[rec.id], videoKey: frameKey } })
           } catch (e) {
             await this.fail(ctx, rec, 'encode', e); continue
           }
@@ -75,17 +96,33 @@ export class Pipeline extends EventEmitter {
 
         // 3 — mark FIRST so a playlist failure can never cause a duplicate upload
         await writeMarker(audio, { video_id: videoId, title: rec.title!, uploaded_at: new Date().toISOString() })
-        await ctx.store.quota.update((q) => { const n = normaliseQuota(q); q.day = n.day; q.uploads = n.uploads + 1 })
+        await ctx.store.quota.update((q) => addQuota(q, { uploads: 1, units: UPLOAD_COST_UNITS }))
         await ctx.store.records.update((d) => { d[rec.id] = { ...d[rec.id], selected: false, lastError: null } })
         done++
         activity.success(`Uploaded → youtu.be/${videoId}`, rec.id)
         this.emit('changed')
 
-        // 4 — playlists (non-fatal)
+        // 4 — custom thumbnail (non-fatal, 50 units)
+        if (thumbFile) {
+          this.progress({ recordId: rec.id, stage: 'thumbnail', percent: 100 })
+          try {
+            await setThumbnail(videoId, thumbFile)
+            await ctx.store.quota.update((q) => addQuota(q, { units: THUMBNAIL_COST_UNITS }))
+            await ctx.store.records.update((d) => { d[rec.id] = { ...d[rec.id], thumbnail: { ...(d[rec.id]?.thumbnail ?? { ok: true, at: '' }), ok: true, set: true, setError: undefined, at: new Date().toISOString() } } })
+            activity.info('Thumbnail set on YouTube', rec.id)
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e)
+            activity.warn(`Thumbnail not set: ${msg}`, rec.id)
+            await ctx.store.records.update((d) => { d[rec.id] = { ...d[rec.id], thumbnail: { ...(d[rec.id]?.thumbnail ?? { ok: true, at: '' }), set: false, setError: msg, at: new Date().toISOString() }, lastError: { stage: 'thumbnail', message: msg, at: new Date().toISOString() } } })
+          }
+        }
+
+        // 5 — playlists (non-fatal, 50 units each)
         for (const pid of rec.playlists.final) {
           this.progress({ recordId: rec.id, stage: 'playlist', percent: 100, detail: pid })
           try {
             await addToPlaylist(pid, videoId)
+            await ctx.store.quota.update((q) => addQuota(q, { units: PLAYLIST_ADD_COST_UNITS }))
             activity.info(`Added to playlist ${snapPlaylistName(ctx, pid)}`, rec.id)
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e)

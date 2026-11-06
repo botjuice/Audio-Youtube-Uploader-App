@@ -1,6 +1,6 @@
 import { safeStorage } from 'electron'
 import { promises as fs } from 'node:fs'
-import type { KeywordDef, LastError, Playlist, PlaylistOverrides, PlaylistRule, Settings } from '@shared/types'
+import type { KeywordDef, LastError, Playlist, PlaylistOverrides, PlaylistRule, Settings, ThumbnailInfo } from '@shared/types'
 import type { QuotaState } from '@core/quota'
 import { JsonFile, readJson } from './jsonfile'
 import { secretFile, settingsFile, stateFile, tokenFile } from './paths'
@@ -15,7 +15,9 @@ export const DEFAULT_SETTINGS: Settings = {
     tags: [],
     description: '',
     madeForKids: false,
+    dailyUnits: 10_000,
   },
+  thumbnails: { enabled: true, sheikhPrefix: true },
   watcher: { enabled: false, intervalMinutes: 30, startOnLogin: false, closeToTray: true },
   updates: { autoCheck: true, autoInstallWhenIdle: true },
 }
@@ -26,6 +28,9 @@ export interface RecordState {
   titleOverride?: string | null
   playlistOverrides?: PlaylistOverrides
   lastError?: LastError | null
+  thumbnail?: ThumbnailInfo | null
+  /** what the rendered mp4 was made from: a thumbnail cache key, or 'photo' */
+  videoKey?: string
 }
 
 export interface ReciterState {
@@ -54,7 +59,7 @@ export async function openLibraryStore(library: string): Promise<LibraryStore> {
     reciters: new JsonFile(stateFile(library, 'reciters.json'), () => ({})),
     rules: new JsonFile(stateFile(library, 'rules.json'), () => ({ rules: [], keywords: [] })),
     surahs: new JsonFile(stateFile(library, 'surahs.json'), () => ({})),
-    quota: new JsonFile(stateFile(library, 'quota.json'), () => ({ day: '', uploads: 0 })),
+    quota: new JsonFile(stateFile(library, 'quota.json'), () => ({ day: '', uploads: 0, units: 0 })),
     playlists: new JsonFile(stateFile(library, 'playlists.json'), () => ({ items: [], fetchedAt: null })),
   }
   await Promise.all(Object.values(s).map((f) => f.load()))

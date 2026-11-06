@@ -21,24 +21,27 @@ export interface EncodeOptions {
   audio: string
   image: string
   output: string
+  /** 1080p when the image is a designed 1920×1080 frame; 720p (default) for a plain photo. */
+  size?: '720p' | '1080p'
   signal?: AbortSignal
   onProgress?: (percent: number) => void
 }
 
 /**
- * Still image + audio → 1280×720 H.264/AAC MP4. Writes to `<output>.part` and renames on success,
+ * Still image + audio → 1280×720 (or 1920×1080) H.264/AAC MP4. Writes to `<output>.part` and renames on success,
  * so an interrupted encode never leaves a plausible-looking .mp4 behind.
  */
 export function encodeVideo(o: EncodeOptions): Promise<void> {
   const bin = ffmpegPath()
   if (!bin) return Promise.reject(new Error('FFmpeg binary not found in this build'))
   const part = `${o.output}.part.mp4`
+  const [W, H] = o.size === '1080p' ? [1920, 1080] : [1280, 720]
   const args = [
     '-y', '-hide_banner', '-nostats', '-progress', 'pipe:1',
     '-loop', '1', '-framerate', '2', '-i', o.image,
     '-i', o.audio,
     '-c:v', 'libx264', '-tune', 'stillimage', '-preset', 'medium', '-r', '2',
-    '-vf', "scale='min(1280,iw*720/ih)':'min(720,ih*1280/iw)':force_original_aspect_ratio=decrease,pad=1280:720:(1280-iw)/2:(720-ih)/2:color=black,format=yuv420p",
+    '-vf', `scale='min(${W},iw*${H}/ih)':'min(${H},ih*${W}/iw)':force_original_aspect_ratio=decrease,pad=${W}:${H}:(${W}-iw)/2:(${H}-ih)/2:color=black,format=yuv420p`,
     '-c:a', 'aac', '-b:a', '192k',
     '-movflags', '+faststart', '-shortest',
     '-f', 'mp4', part,

@@ -13,6 +13,10 @@ import { Pipeline } from './pipeline'
 import { openLibraryStore, secrets, settings, type LibraryStore } from './store'
 import { Watcher } from './watcher'
 import { updater } from './updater'
+import { buildThumbnailJob, disposeThumbnails, renderJob, sampleJobForReciter, toPreview } from './thumbnails'
+import { setThumbnail } from './google/youtube'
+import { THUMBNAIL_COST_UNITS, addQuota } from '@core/quota'
+import type { ThumbnailPreview } from '@shared/types'
 
 type Listener = (channel: string, payload: unknown) => void
 
@@ -59,6 +63,7 @@ class YoosyApp {
       upload: { ...prev.upload, ...(patch.upload ?? {}) },
       watcher: { ...prev.watcher, ...(patch.watcher ?? {}) },
       updates: { ...prev.updates, ...(patch.updates ?? {}) },
+      thumbnails: { ...prev.thumbnails, ...(patch.thumbnails ?? {}) },
     })
     nativeTheme.themeSource = this.settings.theme
     if (patch.libraryPath !== undefined && patch.libraryPath !== prev.libraryPath) {
@@ -431,6 +436,51 @@ class YoosyApp {
     return { matched, alreadyMarked, scannedVideos: uploads.length }
   }
 
+  // ── thumbnails ─────────────────────────────────────────────────────────────
+  async previewThumbnail(recordId: string): Promise<ThumbnailPreview> {
+    const { store, library } = this.req()
+    const rec = this.snapshot.records.find((r) => r.id === recordId)
+    if (!rec) throw new Error('Unknown recording')
+    const reciter = this.snapshot.reciters.find((r) => r.key === rec.reciterKey)
+    const built = buildThumbnailJob(rec, reciter, effectiveSurahs(store.surahs.get()), this.settings.thumbnails)
+    if (!built.ok) return { ok: false, reason: built.reason, message: built.message }
+    return toPreview(await renderJob(built.job, library, rec.id))
+  }
+
+  async previewReciterThumbnail(folder: string): Promise<ThumbnailPreview> {
+    const { library } = this.req()
+    const reciter = this.snapshot.reciters.find((r) => r.folder === folder)
+    const job = reciter && sampleJobForReciter(reciter, this.settings.thumbnails)
+    if (!job) return { ok: false, reason: 'INVALID_JOB', message: 'Set the Arabic name and add a photo to see a preview.' }
+    return toPreview(await renderJob(job, library))
+  }
+
+  /** Re-send the (cached) thumbnail for an already-uploaded recording. */
+  async retryThumbnail(recordId: string): Promise<void> {
+    const { store, library } = this.req()
+    const rec = this.snapshot.records.find((r) => r.id === recordId)
+    if (!rec?.videoId) throw new Error('This recording has no YouTube video id yet')
+    const reciter = this.snapshot.reciters.find((r) => r.key === rec.reciterKey)
+    const built = buildThumbnailJob(rec, reciter, effectiveSurahs(store.surahs.get()), this.settings.thumbnails)
+    if (!built.ok) throw new Error(built.message)
+    const result = await renderJob(built.job, library, rec.id)
+    if (!result.ok) throw new Error(result.message)
+    try {
+      await setThumbnail(rec.videoId, result.thumbnail)
+      await store.quota.update((q) => addQuota(q, { units: THUMBNAIL_COST_UNITS }))
+      await store.records.update((d) => { d[recordId] = { ...d[recordId], thumbnail: { ok: true, key: result.cacheKey, set: true, at: new Date().toISOString() }, lastError: null } })
+      activity.success('Thumbnail set on YouTube', recordId)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      await store.records.update((d) => { d[recordId] = { ...d[recordId], thumbnail: { ok: true, key: result.cacheKey, set: false, setError: msg, at: new Date().toISOString() } } })
+      throw e
+    } finally {
+      await this.rescan()
+    }
+  }
+
+  shutdown(): void { this.watcher.stop(); disposeThumbnails() }
+
   // ── pipeline / watcher ─────────────────────────────────────────────────────
   async startUpload(ids: string[]): Promise<void> {
     const { store, library } = this.req()
@@ -475,7 +525,7 @@ class YoosyApp {
       library: { path: this.settings.libraryPath, reciters: this.snapshot.reciters.length, records: this.snapshot.records.length },
       youtube: { connected: !!this.channelTitle, channel: this.channelTitle, error: this.youtubeError, hasClientSecret: await this.hasClientSecret() },
       ffmpeg: { ok: await ffmpegAvailable(), path: ffmpegPath() },
-      quota: { used: q.uploads, limit, remaining: remainingUploads(q, limit), resetsAt: nextQuotaReset().toISOString() },
+      quota: { used: q.uploads, limit, remaining: remainingUploads(q, limit, this.settings.upload.dailyUnits), units: q.units, unitLimit: this.settings.upload.dailyUnits, resetsAt: nextQuotaReset().toISOString() },
       watcher: { running: this.watcher.running, busy: this.pipeline.busy, nextRunAt: this.watcher.nextRunAt?.toISOString() ?? null },
     }
   }

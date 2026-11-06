@@ -98,10 +98,25 @@ export default function Settings() {
           </div>
         </Card>
 
+        <Card title="Thumbnails" subtitle="A designed 1080p frame (reciter · surah calligraphy · prayer · Hijri date) is rendered for each recording, used as the video background and set as the YouTube thumbnail.">
+          <div className="space-y-3">
+            <Field inline label="Designed thumbnails" hint="Off = plain reciter photo at 720p, no custom thumbnail — exactly the old behaviour. A thumbnail problem never blocks an upload.">
+              <Switch checked={settings.thumbnails.enabled} onChange={(v) => void save({ thumbnails: { ...settings.thumbnails, enabled: v } })} />
+            </Field>
+            <Field inline label="Prefix «الشيخ»" hint="Shown before the reciter's name on the thumbnail">
+              <Switch checked={settings.thumbnails.sheikhPrefix} disabled={!settings.thumbnails.enabled} onChange={(v) => void save({ thumbnails: { ...settings.thumbnails, sheikhPrefix: v } })} />
+            </Field>
+            <p className="text-xs text-muted">Custom thumbnails need a phone-verified YouTube channel. Setting one costs 50 API units (an upload is 1,600).</p>
+          </div>
+        </Card>
+
         <Card title="Upload defaults" subtitle="Applied to every video">
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Uploads per day" hint="YouTube's default API quota allows about 6">
+            <Field label="Uploads per day" hint="Also capped by the API units below (an upload is 1,600 units)">
               <Input type="number" min={1} max={200} value={settings.upload.dailyLimit} onChange={(e) => void save({ upload: { ...settings.upload, dailyLimit: Math.max(1, Number(e.target.value) || 6) } })} />
+            </Field>
+            <Field label="API units per day" hint="Google's default is 10,000; raise it here if Google granted you more">
+              <Input type="number" min={1600} step={100} value={settings.upload.dailyUnits} onChange={(e) => void save({ upload: { ...settings.upload, dailyUnits: Math.max(1600, Number(e.target.value) || 10000) } })} />
             </Field>
             <Field label="Visibility">
               <Select value={settings.upload.privacy} onChange={(e) => void save({ upload: { ...settings.upload, privacy: e.target.value as Privacy } })} className="w-full">

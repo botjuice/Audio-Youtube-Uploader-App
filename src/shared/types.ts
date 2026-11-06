@@ -31,9 +31,22 @@ export type ReasonCode =
 
 export type RecordStatus = 'ready' | 'error' | 'skipped' | 'encoded' | 'uploaded'
 
-export type PipelineStage = 'encode' | 'upload' | 'playlist'
+export type PipelineStage = 'thumbnail' | 'encode' | 'upload' | 'playlist'
 
 export interface LastError { stage: PipelineStage; message: string; at: string }
+
+/** What happened with a recording's thumbnail: the last render, and whether it reached YouTube. */
+export interface ThumbnailInfo {
+  ok: boolean
+  reason?: string
+  message?: string
+  /** plugin cache key of the last successful render (also stamped on the mp4 encoded from it) */
+  key?: string
+  /** set on YouTube */
+  set?: boolean
+  setError?: string
+  at: string
+}
 
 export interface LibraryRecord {
   id: string                 // "<reciterFolder>/<fileName>" — stable across sessions ("" folder = library root)
@@ -60,6 +73,7 @@ export interface LibraryRecord {
   uploadedAt: string | null
   lastError: LastError | null
   hasVideoFile: boolean
+  thumbnail: ThumbnailInfo | null
 }
 
 export interface ReciterInfo {
@@ -120,6 +134,12 @@ export interface Settings {
     tags: string[]
     description: string
     madeForKids: boolean
+    /** YouTube API units per day for this project (Google's default is 10,000). */
+    dailyUnits: number
+  }
+  thumbnails: {
+    enabled: boolean      // render the designed frame + set the YouTube thumbnail
+    sheikhPrefix: boolean // prefix the reciter name with «الشيخ»
   }
   watcher: {
     enabled: boolean
@@ -153,7 +173,7 @@ export interface Health {
   library: { path: string | null; reciters: number; records: number }
   youtube: { connected: boolean; channel: string | null; error: string | null; hasClientSecret: boolean }
   ffmpeg: { ok: boolean; path: string | null }
-  quota: { used: number; limit: number; remaining: number; resetsAt: string }
+  quota: { used: number; limit: number; remaining: number; units: number; unitLimit: number; resetsAt: string }
   watcher: { running: boolean; busy: boolean; nextRunAt: string | null }
 }
 
@@ -175,6 +195,15 @@ export interface ReciterPatch {
   nameAr?: string | null
   aliases?: string[]
   imageOverride?: string | null
+}
+
+export interface ThumbnailPreview {
+  ok: boolean
+  reason?: string
+  message?: string
+  /** data: URL of the 1280×720 thumbnail (renderer can't load file:// in dev) */
+  dataUrl?: string
+  cached?: boolean
 }
 
 export interface RecordPatch {
