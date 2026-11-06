@@ -1,17 +1,17 @@
-import { Image as ImageIcon, Plus, X, Sparkles } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { Image as ImageIcon, Plus, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import type { SurahOption, ThumbnailPreview } from '@shared/types'
 import { PRAYERS } from '@core/prayers'
 import { Badge, Button, Card, Field, Select, Spinner, Switch } from '@/components/ui'
-import { useBusy, useStore } from '@/store'
+import { errText, useStore } from '@/store'
 
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 
 export default function Thumbnails() {
   const library = useStore((s) => s.library)
   const settings = useStore((s) => s.settings)
-  const call = useStore((s) => s.call)
-  const busy = useBusy('playground')
+  const [rendering, setRendering] = useState(false)
+  const seq = useRef(0)
   const [surahOptions, setSurahOptions] = useState<SurahOption[]>([])
   const [folder, setFolder] = useState(library.reciters[0]?.folder ?? '')
   const [surahs, setSurahs] = useState<string[]>(['الفاتحة'])
@@ -25,11 +25,24 @@ export default function Thumbnails() {
   useEffect(() => { if (!folder && library.reciters[0]) setFolder(library.reciters[0].folder) }, [library.reciters, folder])
 
   const reciter = library.reciters.find((r) => r.folder === folder)
-  const render = () => void call('playground', async () => {
-    setResult(await window.api.renderPlayground({ folder, surahsAr: surahs, prayer, date, sheikhPrefix: sheikh }))
-  })
-  // first render once everything is loaded
-  useEffect(() => { if (folder && surahOptions.length && !result && !busy) render() }, [folder, surahOptions.length]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-render: debounce input changes, ignore responses that arrive out of order.
+  useEffect(() => {
+    if (!folder || !surahOptions.length || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return
+    const mine = ++seq.current
+    setRendering(true)
+    const t = setTimeout(async () => {
+      try {
+        const r = await window.api.renderPlayground({ folder, surahsAr: surahs, prayer, date, sheikhPrefix: sheikh })
+        if (mine === seq.current) setResult(r)
+      } catch (e) {
+        if (mine === seq.current) setResult({ ok: false, reason: 'RENDER_FAILED', message: errText(e) })
+      } finally {
+        if (mine === seq.current) setRendering(false)
+      }
+    }, 400)
+    return () => clearTimeout(t)
+  }, [folder, surahs, prayer, date, sheikh, surahOptions.length])
 
   return (
     <div className="h-full overflow-auto">
@@ -72,12 +85,11 @@ export default function Thumbnails() {
             <Field inline label="Prefix «الشيخ»" hint={settings && sheikh !== settings.thumbnails.sheikhPrefix ? 'Differs from Settings — uploads use the Settings value' : undefined}>
               <Switch checked={sheikh} onChange={setSheikh} />
             </Field>
-            <Button variant="primary" className="w-full" onClick={render} disabled={busy || !folder}>{busy ? <Spinner /> : <Sparkles size={14} />} Render</Button>
           </div>
         </Card>
 
-        <Card title="Frame · 1920×1080" subtitle={result?.ok ? `${result.cached ? 'From cache' : 'Rendered'}${result.ms !== undefined ? ` in ${result.ms} ms` : ''} · this exact image becomes the video; the YouTube thumbnail is the same at 1280×720` : 'Click Render'}
-          actions={result?.ok && <Button size="sm" variant="ghost" onClick={() => setFull(true)}>View full size</Button>}>
+        <Card title="Frame · 1920×1080" subtitle={rendering ? 'Rendering…' : result?.ok ? `${result.cached ? 'From cache' : 'Rendered'}${result.ms !== undefined ? ` in ${result.ms} ms` : ''} · this exact image becomes the video; the YouTube thumbnail is the same at 1280×720` : 'Change anything on the left — the frame updates by itself'}
+          actions={<div className="flex items-center gap-2">{rendering && <Spinner className="text-accent" />}{result?.ok && <Button size="sm" variant="ghost" onClick={() => setFull(true)}>View full size</Button>}</div>}>
           {!result ? <div className="aspect-video rounded-lg bg-surface-2 flex items-center justify-center text-muted"><ImageIcon size={28} /></div>
             : result.ok ? (
               <button className="block w-full rounded-lg overflow-hidden border border-border" onClick={() => setFull(true)} title="Click to view full size">
