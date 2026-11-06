@@ -5,8 +5,10 @@
  */
 import { promises as fs } from 'node:fs'
 
-import type { LibraryRecord, ReciterInfo, Settings, ThumbnailPreview } from '@shared/types'
-import { translateSurah, type SurahDict } from '@core/surahs'
+import type { LibraryRecord, PlaygroundInput, ReciterInfo, Settings, SurahOption, ThumbnailPreview } from '@shared/types'
+import { DEFAULT_SURAHS, translateSurah, type SurahDict } from '@core/surahs'
+import { SURAHS_AR } from '../plugins/thumbnail/surahs'
+import { PRAYERS } from '@core/prayers'
 import { render, dispose as disposePlugin, type ThumbnailJob, type ThumbnailResult } from '../plugins/thumbnail/index'
 import { activity } from './log'
 import { stateFile } from './paths'
@@ -58,10 +60,39 @@ export async function renderJob(job: ThumbnailJob, library: string, recordId?: s
 }
 
 /** Turn a plugin result into something the renderer can display (data: URL — file:// is blocked in dev). */
-export async function toPreview(result: ThumbnailResult): Promise<ThumbnailPreview> {
-  if (!result.ok) return { ok: false, reason: result.reason, message: result.message }
-  const buf = await fs.readFile(result.thumbnail)
-  return { ok: true, dataUrl: `data:image/jpeg;base64,${buf.toString('base64')}`, cached: result.cached }
+export async function toPreview(result: ThumbnailResult, opts: { withFrame?: boolean; ms?: number } = {}): Promise<ThumbnailPreview> {
+  if (!result.ok) return { ok: false, reason: result.reason, message: result.message, ...(opts.ms !== undefined ? { ms: opts.ms } : {}) }
+  const thumb = await fs.readFile(result.thumbnail)
+  const out: ThumbnailPreview = { ok: true, dataUrl: `data:image/jpeg;base64,${thumb.toString('base64')}`, cached: result.cached }
+  if (opts.withFrame) out.frameDataUrl = `data:image/jpeg;base64,${(await fs.readFile(result.frame)).toString('base64')}`
+  if (opts.ms !== undefined) out.ms = opts.ms
+  return out
+}
+
+/** Playground: user-chosen surahs/prayer/date on a real reciter. Same job shape the pipeline builds. */
+export function buildPlaygroundJob(
+  input: PlaygroundInput,
+  reciter: Pick<ReciterInfo, 'nameAr' | 'imagePath'> | undefined,
+): { ok: true; job: ThumbnailJob } | { ok: false; reason: string; message: string } {
+  if (!reciter) return { ok: false, reason: 'INVALID_JOB', message: 'Choose a reciter.' }
+  if (!reciter.nameAr) return { ok: false, reason: 'INVALID_JOB', message: 'This reciter has no Arabic name — set it in Reciters.' }
+  if (!reciter.imagePath) return { ok: false, reason: 'PHOTO_UNREADABLE', message: 'This reciter folder has no photo.' }
+  const surahs = input.surahsAr.map((s) => s.trim()).filter(Boolean)
+  if (surahs.length < 1 || surahs.length > 3) return { ok: false, reason: 'INVALID_JOB', message: 'Choose between 1 and 3 surahs.' }
+  if (!PRAYERS.includes(input.prayer)) return { ok: false, reason: 'UNKNOWN_PRAYER', message: `Unknown prayer "${input.prayer}".` }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) return { ok: false, reason: 'BAD_DATE', message: 'Date must be YYYY-MM-DD.' }
+  return { ok: true, job: { reciterNameAr: reciter.nameAr, photoPath: reciter.imagePath, surahsAr: surahs, prayer: input.prayer, date: input.date, options: { sheikhPrefix: input.sheikhPrefix, template: 'default' } } }
+}
+
+/** The 114 surahs in order, with a Latin label taken from the app dictionary. */
+export function surahOptions(): SurahOption[] {
+  const byAr = new Map<string, string[]>()
+  for (const [key, ar] of Object.entries(DEFAULT_SURAHS)) (byAr.get(ar) ?? byAr.set(ar, []).get(ar)!).push(key)
+  return SURAHS_AR.map((ar, i) => {
+    const keys = (byAr.get(ar) ?? []).filter((k) => /^[a-z]+$/.test(k)).sort((a, b) => a.length - b.length)
+    const pick = keys.find((k) => k.length >= 4 && !k.startsWith('al') && !k.startsWith('an') && !k.startsWith('as')) ?? keys[0] ?? ''
+    return { n: i + 1, ar, label: pick ? pick[0]!.toUpperCase() + pick.slice(1) : '' }
+  })
 }
 
 export function disposeThumbnails(): void { disposePlugin() }

@@ -38,6 +38,8 @@ export function registerIpc(): void {
     previewThumbnail: (_w, id) => yoosy.previewThumbnail(id),
     previewReciterThumbnail: (_w, f) => yoosy.previewReciterThumbnail(f),
     retryThumbnail: (_w, id) => yoosy.retryThumbnail(id),
+    renderPlayground: (_w, input) => yoosy.renderPlayground(input),
+    listSurahOptions: async () => yoosy.listSurahOptions(),
     startUpload: (_w, ids) => yoosy.startUpload(ids),
     cancelUpload: async () => yoosy.cancelUpload(),
     getUpdateState: async () => updater.state,

@@ -1,6 +1,6 @@
 import type {
   ActivityEntry, Health, KeywordDef, LibraryRecord, NewReciter, Playlist, PlaylistRule, Privacy, Progress,
-  ReciterInfo, ReciterPatch, RecordPatch, Settings, ThumbnailPreview, TokenValidation, UpdateState,
+  PlaygroundInput, ReciterInfo, ReciterPatch, RecordPatch, Settings, SurahOption, ThumbnailPreview, TokenValidation, UpdateState,
 } from './types'
 
 export interface LibrarySnapshot {
@@ -52,6 +52,8 @@ export interface Api {
   previewThumbnail(recordId: string): Promise<ThumbnailPreview>
   previewReciterThumbnail(folder: string): Promise<ThumbnailPreview>
   retryThumbnail(recordId: string): Promise<void>
+  renderPlayground(input: PlaygroundInput): Promise<ThumbnailPreview>
+  listSurahOptions(): Promise<SurahOption[]>
   // pipeline
   startUpload(ids: string[]): Promise<void>
   cancelUpload(): Promise<void>

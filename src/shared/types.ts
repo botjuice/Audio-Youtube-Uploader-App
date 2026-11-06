@@ -203,8 +203,22 @@ export interface ThumbnailPreview {
   message?: string
   /** data: URL of the 1280×720 thumbnail (renderer can't load file:// in dev) */
   dataUrl?: string
+  /** data: URL of the 1920×1080 frame — only when asked for (playground) */
+  frameDataUrl?: string
   cached?: boolean
+  ms?: number
 }
+
+/** Playground input: everything a user can vary; photo + Arabic name come from the reciter folder. */
+export interface PlaygroundInput {
+  folder: string
+  surahsAr: string[]      // 1–3 Arabic names from the 114
+  prayer: string
+  date: string            // YYYY-MM-DD
+  sheikhPrefix: boolean
+}
+
+export interface SurahOption { n: number; ar: string; label: string }
 
 export interface RecordPatch {
   selected?: boolean

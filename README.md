@@ -63,7 +63,7 @@ bundled template in `src/plugins/thumbnail` (no internet), cached in `<library>/
 - On by default; Settings → Thumbnails turns it off (then: plain photo at 720p, no custom thumbnail, exactly as before) or drops the «الشيخ» prefix.
 - A thumbnail problem **never blocks an upload**: the recording shows the reason, the plain photo is used.
 - Setting the thumbnail costs 50 API units (an upload is 1,600; a playlist add 50); the sidebar shows units next to uploads. Custom thumbnails require a **phone-verified** channel — otherwise the recording shows "Thumbnail not set" with a Retry button.
-- Previews: the record detail panel, and the reciter page (updates when you change the photo).
+- Previews: the record detail panel, the reciter page (updates when you change the photo), and the **Thumbnails** page — a playground where you pick a reciter, up to 3 surahs, prayer, date and the «الشيخ» prefix and see the exact 1920×1080 frame an upload would get, rendered by the same code and cache.
 
 ## Playlist rules
 

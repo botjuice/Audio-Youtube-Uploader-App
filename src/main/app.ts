@@ -13,10 +13,10 @@ import { Pipeline } from './pipeline'
 import { mergeSettings, openLibraryStore, secrets, settings, type LibraryStore } from './store'
 import { Watcher } from './watcher'
 import { updater } from './updater'
-import { buildThumbnailJob, disposeThumbnails, renderJob, sampleJobForReciter, toPreview } from './thumbnails'
+import { buildPlaygroundJob, buildThumbnailJob, disposeThumbnails, renderJob, sampleJobForReciter, surahOptions, toPreview } from './thumbnails'
 import { setThumbnail } from './google/youtube'
 import { THUMBNAIL_COST_UNITS, addQuota } from '@core/quota'
-import type { ThumbnailPreview } from '@shared/types'
+import type { PlaygroundInput, SurahOption, ThumbnailPreview } from '@shared/types'
 
 type Listener = (channel: string, payload: unknown) => void
 
@@ -455,6 +455,19 @@ class YoosyApp {
     if (!job) return { ok: false, reason: 'INVALID_JOB', message: 'Set the Arabic name and add a photo to see a preview.' }
     return toPreview(await renderJob(job, library))
   }
+
+  /** Thumbnail playground: same renderer, same cache dir as uploads; returns the 1080p frame too. */
+  async renderPlayground(input: PlaygroundInput): Promise<ThumbnailPreview> {
+    const { library } = this.req()
+    const reciter = this.snapshot.reciters.find((r) => r.folder === input.folder)
+    const built = buildPlaygroundJob(input, reciter)
+    if (!built.ok) return { ok: false, reason: built.reason, message: built.message }
+    const t0 = Date.now()
+    const result = await renderJob(built.job, library)
+    return toPreview(result, { withFrame: true, ms: Date.now() - t0 })
+  }
+
+  listSurahOptions(): SurahOption[] { return surahOptions() }
 
   /** Re-send the (cached) thumbnail for an already-uploaded recording. */
   async retryThumbnail(recordId: string): Promise<void> {
