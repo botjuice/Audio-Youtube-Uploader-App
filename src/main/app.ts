@@ -395,7 +395,7 @@ class YoosyApp {
       return ch.title
     } catch (e) {
       this.channelTitle = null
-      this.youtubeError = e instanceof Error ? e.message : String(e)
+      this.youtubeError = explainGoogleError(e)
       return null
     } finally {
       this.pushHealth()
@@ -533,6 +533,16 @@ class YoosyApp {
 
   openExternal(url: string) { return shell.openExternal(url) }
   showInFolder(p: string) { shell.showItemInFolder(p) }
+}
+
+/** Turn the common "request to … failed, reason:" into something a person can act on. */
+export function explainGoogleError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e)
+  if (/(oauth2\.googleapis\.com|accounts\.google\.com)/.test(msg) && /(failed|ETIMEDOUT|ENOTFOUND|ECONNREFUSED|EAI_AGAIN)/i.test(msg)) {
+    return 'Can\'t reach Google sign-in (accounts.google.com / oauth2.googleapis.com). A content filter, Screen Time profile or DNS on this computer or network is blocking it — ask whoever manages it to allow those two hosts. Uploads need this to refresh your sign-in.'
+  }
+  if (/invalid_grant/i.test(msg)) return 'Google sign-in expired or was revoked — reconnect in Settings. (OAuth apps left in "Testing" expire every 7 days; publish the consent screen to stop that.)'
+  return msg
 }
 
 export const yoosy = new YoosyApp()

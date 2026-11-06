@@ -3,7 +3,8 @@
  * Loads the template once, injects data, waits for the template's own ready signal, captures.
  */
 import { app, BrowserWindow, nativeImage, type NativeImage } from 'electron'
-import { dirname, join, resolve } from 'node:path'
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { TemplateData } from './job'
 
@@ -22,11 +23,21 @@ export interface Captured extends RenderReport {
   frame: NativeImage
 }
 
-/** Where the template lives: next to the app's resources when packaged; in dev, the repo folder
- *  relative to the built bundle (out/main/*.js → src/plugins/thumbnail/template). */
+const TEMPLATE_REL = join('src', 'plugins', 'thumbnail', 'template')
+
+/** Where the template lives.
+ *  Packaged: copied next to the app's resources (electron-builder `extraResources`).
+ *  Dev: the repo's src/plugins/thumbnail/template, found without assuming where the bundler put
+ *  this file — `app.getAppPath()` works when the app runs from package.json, and walking up from
+ *  the bundle covers the CLI (`electron out/main/thumbnail-cli.js`) and chunk subfolders. */
 export function templateDir(): string {
   if (app.isPackaged) return join(process.resourcesPath, 'thumbnail')
-  return resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'plugins', 'thumbnail', 'template')
+  const candidates = [join(app.getAppPath(), TEMPLATE_REL)]
+  let dir = dirname(fileURLToPath(import.meta.url))
+  for (let i = 0; i < 6; i++) { candidates.push(join(dir, TEMPLATE_REL)); dir = dirname(dir) }
+  const found = candidates.find((c) => existsSync(join(c, 'thumbnail.html')))
+  if (!found) throw new Error(`Thumbnail template not found; looked in: ${candidates.join(', ')}`)
+  return found
 }
 
 export class OffscreenRenderer {
