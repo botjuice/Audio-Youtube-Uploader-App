@@ -1,6 +1,7 @@
 import { clsx } from 'clsx'
 import { useSyncExternalStore } from 'react'
-import { Activity, ListMusic, Settings as SettingsIcon, Users, LibraryBig, MonitorPlay, Gauge, Moon, Film, Sun, Image as ImageIcon } from 'lucide-react'
+import logo from '../assets/logo.png'
+import { Activity, ListMusic, Settings as SettingsIcon, Users, LibraryBig, MonitorPlay, Gauge, Moon, Sun, Image as ImageIcon } from 'lucide-react'
 import { IconButton } from './ui'
 import { useStore, type Page } from '@/store'
 import { fmtUntil } from '@/lib/format'
@@ -29,9 +30,7 @@ export function Sidebar() {
   return (
     <aside className={clsx('drag flex w-56 shrink-0 flex-col border-r border-border bg-surface/60', isMac ? 'pt-11' : 'pt-3')}>
       <div className="px-4 pb-3 flex items-center gap-2.5">
-        <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-indigo-500 to-sky-400 flex items-center justify-center">
-          <Film size={14} className="text-white" />
-        </div>
+        <img src={logo} alt="" className="h-7 w-7 rounded-lg ring-1 ring-border" draggable={false} />
         <div className="font-semibold tracking-tight flex-1">YouTube Quran Uploader</div>
         <IconButton label={isDark ? 'Switch to light mode' : 'Switch to dark mode'} onClick={toggleTheme} className="h-7 w-7">
           {isDark ? <Sun size={15} /> : <Moon size={15} />}
