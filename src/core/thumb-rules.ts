@@ -45,6 +45,8 @@ export function matchingOverlays(t: ThumbTarget, rules: readonly ThumbnailRule[]
 export interface ThumbnailLook {
   base: ThumbnailRule | null
   overlays: ThumbnailRule[]
+  /** the base rule's custom background file name, if any (overlays never change the photo) */
+  photo?: string
   /** base patch with every overlay's changed knobs layered on top; undefined = plugin defaults */
   style: StylePatch | undefined
 }
@@ -64,7 +66,7 @@ export function resolveThumbnailLook(t: ThumbTarget, rules: readonly ThumbnailRu
   const base = resolveThumbnailRule(t, rules, surahs)
   const overlays = matchingOverlays(t, rules, surahs)
   const merged = overlays.reduce((acc, r) => mergePatches(acc, r.style), base?.style ?? {})
-  return { base, overlays, style: isEmptyPatch(merged) ? undefined : merged }
+  return { base, overlays, style: isEmptyPatch(merged) ? undefined : merged, ...(base?.photo && !base.overlay ? { photo: base.photo } : {}) }
 }
 
 /** The style patch to send with a recording's job (undefined = plugin defaults). */
@@ -159,5 +161,5 @@ export function newThumbnailRule(conditions: ThumbCondition[], sample: Thumbnail
 export function normaliseThumbRules(rules: readonly ThumbnailRule[]): ThumbnailRule[] {
   const others = rules.filter((r) => r.origin !== 'default')
   const def = rules.find((r) => r.origin === 'default') ?? defaultThumbnailRule()
-  return [...others, { ...def, id: DEFAULT_RULE_ID, conditions: [], overlay: false }]
+  return [...others.map((r) => (r.overlay && r.photo ? { ...r, photo: undefined } : r)), { ...def, id: DEFAULT_RULE_ID, conditions: [], overlay: false }]
 }

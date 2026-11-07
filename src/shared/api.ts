@@ -1,6 +1,6 @@
 import type {
   ActivityEntry, Health, KeywordDef, LibraryRecord, NewReciter, Playlist, PlaylistRule, Privacy, Progress,
-  ReciterInfo, ReciterPatch, RecordPatch, Settings, StyleRenderInput, StyleSchemaInfo, SurahOption, ThumbnailPreview, ThumbnailRule, TokenValidation, UpdateState,
+  ReciterInfo, ReciterPatch, RecordPatch, RulePhoto, Settings, StyleRenderInput, StyleSchemaInfo, SurahOption, ThumbnailPreview, ThumbnailRule, TokenValidation, UpdateState,
 } from './types'
 
 export interface LibrarySnapshot {
@@ -56,6 +56,8 @@ export interface Api {
   retryThumbnail(recordId: string): Promise<void>
   renderStyled(input: StyleRenderInput): Promise<ThumbnailPreview>   // rule editor preview (1080p frame included)
   getStyleSchema(): Promise<StyleSchemaInfo>
+  chooseRulePhoto(ruleId: string): Promise<RulePhoto | null>   // file dialog → copy into <library>/.yoosyjoosy/thumb-photos
+  getRulePhoto(file: string): Promise<RulePhoto | null>
   listSurahOptions(): Promise<SurahOption[]>
   // pipeline
   startUpload(ids: string[]): Promise<void>

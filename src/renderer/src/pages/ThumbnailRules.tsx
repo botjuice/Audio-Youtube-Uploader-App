@@ -1,7 +1,7 @@
 import { clsx } from 'clsx'
-import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, ChevronRight, Image as ImageIcon, Layers, Maximize2, Plus, RotateCcw, Trash2, X } from 'lucide-react'
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, ChevronRight, FolderOpen, Image as ImageIcon, Layers, Maximize2, Plus, RotateCcw, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { StyleFieldInfo, StylePatch, StyleSchemaInfo, SurahOption, ThumbCondition, ThumbConditionKind, ThumbnailPreview, ThumbnailRule, ThumbnailSample } from '@shared/types'
+import type { RulePhoto, StyleFieldInfo, StylePatch, StyleSchemaInfo, SurahOption, ThumbCondition, ThumbConditionKind, ThumbnailPreview, ThumbnailRule, ThumbnailSample } from '@shared/types'
 import { PRAYERS } from '@core/prayers'
 import { DEFAULT_SURAHS } from '@core/surahs'
 import { MAX_CONDITIONS } from '@core/rules'
@@ -22,9 +22,9 @@ type Draft = { rule: ThumbnailRule; isNew: boolean }
 // ── Shared preview hook: debounced, out-of-order safe, memoised across cards ─────────────────────
 
 const previewCache = new Map<string, ThumbnailPreview>()
-function useStyledPreview(sample: ThumbnailSample, style: StylePatch, enabled = true, delay = 250) {
+function useStyledPreview(sample: ThumbnailSample, style: StylePatch, photo?: string, enabled = true, delay = 250) {
   const sheikh = useStore((s) => s.settings?.thumbnails.sheikhPrefix ?? true)
-  const key = JSON.stringify([sample, style, sheikh])
+  const key = JSON.stringify([sample, style, sheikh, photo ?? null])
   const [result, setResult] = useState<ThumbnailPreview | null>(() => previewCache.get(key) ?? null)
   const [rendering, setRendering] = useState(false)
   const seq = useRef(0)
@@ -36,7 +36,7 @@ function useStyledPreview(sample: ThumbnailSample, style: StylePatch, enabled = 
     setRendering(true)
     const t = setTimeout(async () => {
       let r: ThumbnailPreview
-      try { r = await window.api.renderStyled({ sample, style, sheikhPrefix: sheikh }) }
+      try { r = await window.api.renderStyled({ sample, style, sheikhPrefix: sheikh, ...(photo ? { photo } : {}) }) }
       catch (e) { r = { ok: false, reason: 'RENDER_FAILED', message: errText(e) } }
       if (r.ok) previewCache.set(key, r)
       if (mine === seq.current) { setResult(r); setRendering(false) }
@@ -132,7 +132,7 @@ function RuleCard({ rule, count, plName, index, total, onEdit, onToggle, onMove,
 }) {
   const rules = useStore((s) => s.library.thumbnailRules)
   const defaultStyle = rules.find((x) => x.origin === 'default')?.style ?? {}
-  const { result, rendering } = useStyledPreview(rule.sample, rule.overlay ? mergePatches(defaultStyle, rule.style) : rule.style)
+  const { result, rendering } = useStyledPreview(rule.sample, rule.overlay ? mergePatches(defaultStyle, rule.style) : rule.style, rule.overlay ? undefined : rule.photo)
   const isDefault = rule.origin === 'default'
   const knobs = countKnobs(rule.style)
   return (
@@ -160,6 +160,7 @@ function RuleCard({ rule, count, plName, index, total, onEdit, onToggle, onMove,
         </div>
         <div className="flex items-center gap-2 text-xs text-muted">
           <span>{knobs ? `${knobs} knob${knobs === 1 ? '' : 's'} changed` : 'plugin default look'}</span>
+          {rule.photo && !rule.overlay && <><span>·</span><span title={rule.photo}>own image</span></>}
           <span>·</span>
           <span className="tabular-nums">{count} recording{count === 1 ? '' : 's'} now</span>
           {!isDefault && (
@@ -187,7 +188,20 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
   const [surahOptions, setSurahOptions] = useState<SurahOption[]>([])
   const [full, setFull] = useState(false)
   const [confirmClose, setConfirmClose] = useState(false)
+  const [photo, setPhoto] = useState<RulePhoto | null>(null)
+  const choosing = useStore((s) => !!s.busy['rulePhoto'])
+  const call = useStore((s) => s.call)
   useEffect(() => { void window.api.getStyleSchema().then(setSchema); void window.api.listSurahOptions().then(setSurahOptions) }, [])
+  useEffect(() => {
+    let live = true
+    if (!rule.photo) { setPhoto(null); return }
+    void window.api.getRulePhoto(rule.photo).then((p) => { if (live) setPhoto(p) })
+    return () => { live = false }
+  }, [rule.photo])
+  const choosePhoto = () => void call('rulePhoto', async () => {
+    const picked = await window.api.chooseRulePhoto(rule.id)
+    if (picked) { setPhoto(picked); setRule((r) => ({ ...r, photo: picked.file })) }
+  })
   const dirty = draft.isNew || JSON.stringify(rule) !== JSON.stringify(draft.rule)
   // X / Esc: close straight away when nothing changed, otherwise ask first
   const requestClose = () => { if (full) { setFull(false); return } if (dirty) setConfirmClose(true); else onDiscard() }
@@ -202,7 +216,7 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
   // an overlay is previewed on top of the default look, which is what most recordings would combine it with
   const defaultStyle = rules.find((x) => x.origin === 'default' && x.id !== rule.id)?.style ?? {}
   const previewStyle = rule.overlay ? mergePatches(defaultStyle, rule.style) : rule.style
-  const { result, rendering } = useStyledPreview(rule.sample, previewStyle)
+  const { result, rendering } = useStyledPreview(rule.sample, previewStyle, rule.overlay ? undefined : rule.photo)
   const styleBlocks = !!result && !result.ok && (result.reason === 'INVALID_STYLE' || result.reason === 'TEXT_OVERFLOW')
   const canSave = errors.length === 0 && !styleBlocks && !rendering && !saving
   const knobs = countKnobs(rule.style)
@@ -269,7 +283,23 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
               )}
             </Section>
 
-            <Section title="Preview sample" hint="Saved with the rule. Photo and Arabic name come from the reciter folder, exactly as in an upload.">
+            {!rule.overlay && (
+              <Section title="Background image" hint="By default the reciter folder's photo. Choose an image to use for every recording this look applies to; a copy is kept inside the library.">
+                <div className="flex items-center gap-3">
+                  <div className="h-14 w-24 shrink-0 overflow-hidden rounded-md border border-border bg-surface-2 flex items-center justify-center text-muted">
+                    {photo ? <img src={photo.dataUrl} alt="" className="h-full w-full object-cover" /> : <ImageIcon size={16} />}
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="truncate text-xs" title={rule.photo}>{rule.photo ? (photo ? rule.photo : <span className="text-err">⚠ {rule.photo} is missing — the reciter photo will be used</span>) : "Reciter's photo"}</div>
+                    <div className="flex gap-1.5">
+                      <Button size="sm" onClick={choosePhoto} disabled={choosing}>{choosing ? <Spinner /> : <FolderOpen size={13} />} {rule.photo ? 'Change image…' : 'Choose image…'}</Button>
+                      {rule.photo && <Button size="sm" variant="ghost" onClick={() => setRule({ ...rule, photo: undefined })}><X size={13} /> Use reciter photo</Button>}
+                    </div>
+                  </div>
+                </div>
+              </Section>
+            )}
+            <Section title="Preview sample" hint={rule.photo && !rule.overlay ? 'Saved with the rule. The Arabic name comes from the reciter folder; the background is the image above.' : 'Saved with the rule. Photo and Arabic name come from the reciter folder, exactly as in an upload.'}>
               <div className="space-y-2">
                 <Select value={rule.sample.folder} onChange={(e) => setSample({ folder: e.target.value })} className="h-7.5 w-full text-xs">
                   {!library.reciters.some((r) => r.folder === rule.sample.folder) && <option value={rule.sample.folder}>{rule.sample.folder ? `⚠ ${rule.sample.folder} (not found)` : '(first reciter)'}</option>}

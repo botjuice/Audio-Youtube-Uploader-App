@@ -4,6 +4,7 @@
  * src/plugins/thumbnail and imports nothing from here.
  */
 import { promises as fs } from 'node:fs'
+import { basename, join } from 'node:path'
 
 import type { LibraryRecord, ReciterInfo, Settings, StyleError, StylePatch, StyleSchemaInfo, SurahOption, ThumbnailPreview, ThumbnailRule, ThumbnailSample } from '@shared/types'
 import { resolveThumbnailLook, type ThumbTarget, type ThumbnailLook } from '@core/thumb-rules'
@@ -15,6 +16,18 @@ import { activity } from './log'
 import { stateFile } from './paths'
 
 export const thumbsDir = (library: string) => stateFile(library, 'thumbs')
+/** Copies of images chosen for thumbnail rules (travel with the library, like the rules). */
+export const rulePhotosDir = (library: string) => stateFile(library, 'thumb-photos')
+export const rulePhotoPath = (library: string, file: string) => join(rulePhotosDir(library), basename(file))
+
+/** Absolute path of a rule's photo when the file still exists; otherwise undefined (callers fall back to the reciter photo). */
+export async function resolveRulePhoto(library: string, file: string | undefined, recordId?: string): Promise<string | undefined> {
+  if (!file) return undefined
+  const abs = rulePhotoPath(library, file)
+  try { if ((await fs.stat(abs)).size > 0) return abs } catch { /* missing */ }
+  activity.warn(`Rule photo “${file}” is missing — using the reciter photo instead.`, recordId)
+  return undefined
+}
 
 /** DD.MM.YYYY → YYYY-MM-DD (the plugin wants ISO). */
 export function isoDate(ddmmyyyy: string): string {
@@ -29,15 +42,18 @@ export function buildThumbnailJob(
   surahs: SurahDict,
   options: Settings['thumbnails'],
   style?: StylePatch,
+  /** absolute path of a rule photo that replaces the reciter's */
+  photoOverride?: string,
 ): { ok: true; job: ThumbnailJob } | { ok: false; reason: string; message: string } {
   if (!rec.parsed) return { ok: false, reason: 'INVALID_JOB', message: 'Filename is not fully parsed yet.' }
   if (!reciter?.nameAr) return { ok: false, reason: 'INVALID_JOB', message: 'Reciter has no Arabic name.' }
-  if (!reciter.imagePath) return { ok: false, reason: 'PHOTO_UNREADABLE', message: 'Reciter folder has no photo.' }
+  const photoPath = photoOverride ?? reciter.imagePath
+  if (!photoPath) return { ok: false, reason: 'PHOTO_UNREADABLE', message: 'Reciter folder has no photo.' }
   return {
     ok: true,
     job: {
       reciterNameAr: reciter.nameAr,
-      photoPath: reciter.imagePath,
+      photoPath,
       surahsAr: rec.parsed.surahs.map((s) => translateSurah(s, surahs)),
       prayer: rec.parsed.prayer,
       date: isoDate(rec.parsed.date),
@@ -87,15 +103,17 @@ export function buildSampleJob(
   reciter: Pick<ReciterInfo, 'nameAr' | 'imagePath'> | undefined,
   options: Pick<Settings['thumbnails'], 'sheikhPrefix'>,
   style?: StylePatch,
+  photoOverride?: string,
 ): { ok: true; job: ThumbnailJob } | { ok: false; reason: string; message: string } {
   if (!reciter) return { ok: false, reason: 'INVALID_JOB', message: 'Choose a reciter for the preview.' }
   if (!reciter.nameAr) return { ok: false, reason: 'INVALID_JOB', message: 'This reciter has no Arabic name — set it in Reciters.' }
-  if (!reciter.imagePath) return { ok: false, reason: 'PHOTO_UNREADABLE', message: 'This reciter folder has no photo.' }
+  const photoPath = photoOverride ?? reciter.imagePath
+  if (!photoPath) return { ok: false, reason: 'PHOTO_UNREADABLE', message: 'This reciter folder has no photo.' }
   const surahs = sample.surahsAr.map((s) => s.trim()).filter(Boolean)
   if (surahs.length < 1 || surahs.length > 3) return { ok: false, reason: 'INVALID_JOB', message: 'Choose between 1 and 3 surahs.' }
   if (!PRAYERS.includes(sample.prayer)) return { ok: false, reason: 'UNKNOWN_PRAYER', message: `Unknown prayer "${sample.prayer}".` }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(sample.date)) return { ok: false, reason: 'BAD_DATE', message: 'Date must be YYYY-MM-DD.' }
-  const job: ThumbnailJob = { reciterNameAr: reciter.nameAr, photoPath: reciter.imagePath, surahsAr: surahs, prayer: sample.prayer, date: sample.date, options: { sheikhPrefix: options.sheikhPrefix, template: 'default' } }
+  const job: ThumbnailJob = { reciterNameAr: reciter.nameAr, photoPath, surahsAr: surahs, prayer: sample.prayer, date: sample.date, options: { sheikhPrefix: options.sheikhPrefix, template: 'default' } }
   if (style && Object.keys(style).length) job.style = style
   return { ok: true, job }
 }

@@ -143,12 +143,17 @@ export interface ThumbnailRule {
   /** Overlay rules don't compete for "first match": every matching overlay layers its changed knobs
    *  on top of whatever rule won (or the default look), in list order. */
   overlay?: boolean
+  /** Background image for this look instead of the reciter's photo: a file name inside
+   *  `<library>/.yoosyjoosy/thumb-photos/` (a copy the app made). Ignored on overlay rules. */
+  photo?: string
 }
 
 export interface StyleError { key: string; message: string }
 
 /** What the editor sends to render a preview of a style on a sample. */
-export interface StyleRenderInput { sample: ThumbnailSample; style: StylePatch; sheikhPrefix?: boolean }
+export interface StyleRenderInput { sample: ThumbnailSample; style: StylePatch; sheikhPrefix?: boolean; /** rule photo file name (see ThumbnailRule.photo) */ photo?: string }
+
+export interface RulePhoto { file: string; dataUrl: string }
 
 /** The plugin's knob table, so the editor builds its controls from data (ranges, steps, defaults, descriptions). */
 export interface StyleSchemaInfo { fields: StyleFieldInfo[]; defaults: Style; styleVersion: number }

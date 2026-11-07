@@ -28,6 +28,13 @@ describe('thumbnail job builder', () => {
     const none = buildThumbnailJob({ fileName: 'x', parsed }, { nameAr: 'a', imagePath: '/p' }, DEFAULT_SURAHS, opts, styleForRecord({ ...rec, tokens: { ...rec.tokens, prayer: 'Isha' } }, rules, DEFAULT_SURAHS).style)
     expect(none.ok && !('style' in none.job)).toBe(true)
   })
+  it('a rule photo replaces the reciter photo in the job', () => {
+    const parsed = { date: '1.1.2025', prayer: 'Fajr', reciter: null, surahs: ['Mulk'], keywords: [] }
+    const r = buildThumbnailJob({ fileName: 'x', parsed }, { nameAr: 'a', imagePath: '/p/reciter.jpg' }, DEFAULT_SURAHS, opts, undefined, '/lib/.yoosyjoosy/thumb-photos/rule-1.png')
+    expect(r.ok && r.job.photoPath).toBe('/lib/.yoosyjoosy/thumb-photos/rule-1.png')
+    const noPhotoReciter = buildThumbnailJob({ fileName: 'x', parsed }, { nameAr: 'a', imagePath: null }, DEFAULT_SURAHS, opts, undefined, '/lib/x.png')
+    expect(noPhotoReciter.ok && noPhotoReciter.job.photoPath).toBe('/lib/x.png')
+  })
   it('reciter sample job respects the prefix option', () => {
     expect(sampleJobForReciter({ nameAr: 'x', imagePath: '/p' }, { enabled: true, sheikhPrefix: false })?.options.sheikhPrefix).toBe(false)
     expect(sampleJobForReciter({ nameAr: null, imagePath: '/p' }, opts)).toBeNull()

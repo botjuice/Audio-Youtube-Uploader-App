@@ -51,6 +51,13 @@ describe('overlay rules', () => {
     expect(resolveThumbnailLook(target('Taraweeh'), [second, taraOverlay, def]).style?.frame).toEqual({ width: 8, radius: 10 })
     expect(mergePatches({ a: { x: 1, y: 2 } } as never, { a: { y: 3 }, b: { z: 1 } } as never)).toEqual({ a: { x: 1, y: 3 }, b: { z: 1 } })
   })
+  it("the base rule's photo is used; overlays never carry one", () => {
+    const photoBase = { ...mousa, photo: 'mousa-1.jpg' }
+    expect(resolveThumbnailLook(target('Taraweeh'), [{ ...taraOverlay, photo: 'ignored.jpg' }, photoBase, def]).photo).toBe('mousa-1.jpg')
+    expect(resolveThumbnailLook(target('Isha'), [photoBase, def]).photo).toBe('mousa-1.jpg')
+    expect(resolveThumbnailLook({ ...target('Isha'), reciter: 'other' }, [photoBase, def]).photo).toBeUndefined()
+    expect(normaliseThumbRules([{ ...taraOverlay, photo: 'x.jpg' }])[0]!.photo).toBeUndefined()
+  })
   it('describes the combined look and refuses an overlay default', () => {
     expect(describeLook(resolveThumbnailLook(target('Taraweeh'), [taraOverlay, mousa, def]))).toBe('Reciter is Abdullah Al Mousa + Taraweeh gold')
     expect(describeLook({ base: null, overlays: [] })).toBeNull()

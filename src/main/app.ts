@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, nativeTheme, shell } from 'electron'
 import { promises as fs } from 'node:fs'
-import { join } from 'node:path'
-import type { Health, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, Settings, StyleRenderInput, StyleSchemaInfo, ThumbnailRule, TokenValidation } from '@shared/types'
+import { basename, extname, join } from 'node:path'
+import type { Health, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, RulePhoto, Settings, StyleRenderInput, StyleSchemaInfo, ThumbnailRule, TokenValidation } from '@shared/types'
 import type { LibrarySnapshot, SurahEntry, SyncResult } from '@shared/api'
 import { DEFAULT_SURAHS, conditionKey, describeRule, describeThumbRule, nextQuotaReset, normaliseQuota, normaliseThumbRules, reciterKey, remainingUploads, surahKey, validateRule, validateThumbRule, validateToken } from '@core/index'
 import { ffmpegAvailable, ffmpegPath } from './ffmpeg'
@@ -13,7 +13,7 @@ import { Pipeline } from './pipeline'
 import { mergeSettings, openLibraryStore, secrets, settings, type LibraryStore } from './store'
 import { Watcher } from './watcher'
 import { updater } from './updater'
-import { buildSampleJob, buildThumbnailJob, disposeThumbnails, renderJob, sampleJobForReciter, styleForRecord, styleProblems, styleSchema, surahOptions, toPreview } from './thumbnails'
+import { buildSampleJob, buildThumbnailJob, disposeThumbnails, renderJob, resolveRulePhoto, rulePhotoPath, rulePhotosDir, sampleJobForReciter, styleForRecord, styleProblems, styleSchema, surahOptions, toPreview } from './thumbnails'
 import { setThumbnail } from './google/youtube'
 import { THUMBNAIL_COST_UNITS, addQuota } from '@core/quota'
 import type { SurahOption, ThumbnailPreview } from '@shared/types'
@@ -372,6 +372,48 @@ class YoosyApp {
     }
     await store.thumbRules.replace({ rules: next })
     this.broadcast('evt:library', this.getLibrary())
+    void this.sweepRulePhotos().catch(() => {})
+  }
+
+  /** Let the user pick an image for a rule; a copy goes into the library so the rule keeps working. */
+  async chooseRulePhoto(win: BrowserWindow | null, ruleId: string): Promise<RulePhoto | null> {
+    const { library } = this.req()
+    const r = await dialog.showOpenDialog(win ?? undefined as never, {
+      title: 'Choose the background image for this look',
+      filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }], properties: ['openFile'],
+    })
+    const src = r.filePaths[0]
+    if (!src) return null
+    const st = await fs.stat(src)
+    if (!st.isFile() || st.size === 0) throw new Error('That file is empty or not a regular file')
+    if (st.size > 50 * 1024 * 1024) throw new Error('Image is larger than 50 MB — pick a smaller one')
+    const ext = extname(src).toLowerCase() || '.jpg'
+    const safeId = ruleId.replace(/[^a-z0-9-]/gi, '').slice(0, 40) || 'rule'
+    const file = `${safeId}-${Date.now()}${ext}`
+    await fs.mkdir(rulePhotosDir(library), { recursive: true })
+    await fs.copyFile(src, rulePhotoPath(library, file))
+    activity.info(`Rule photo stored: ${basename(src)} → .yoosyjoosy/thumb-photos/${file}`)
+    return { file, dataUrl: await this.photoDataUrl(rulePhotoPath(library, file)) }
+  }
+
+  async getRulePhoto(file: string): Promise<RulePhoto | null> {
+    const { library } = this.req()
+    const abs = await resolveRulePhoto(library, file)
+    return abs ? { file, dataUrl: await this.photoDataUrl(abs) } : null
+  }
+
+  private async photoDataUrl(abs: string): Promise<string> {
+    const mime = { '.png': 'image/png', '.webp': 'image/webp' }[extname(abs).toLowerCase()] ?? 'image/jpeg'
+    return `data:${mime};base64,${(await fs.readFile(abs)).toString('base64')}`
+  }
+
+  /** Remove copied images no saved rule refers to any more (a replaced or discarded choice). */
+  private async sweepRulePhotos(): Promise<void> {
+    const { store, library } = this.req()
+    const used = new Set(store.thumbRules.get().rules.map((r) => r.photo).filter(Boolean))
+    let files: string[] = []
+    try { files = await fs.readdir(rulePhotosDir(library)) } catch { return }
+    for (const f of files) if (!used.has(f) && !f.startsWith('.')) await fs.rm(rulePhotoPath(library, f), { force: true }).catch(() => {})
   }
 
   // ── youtube ────────────────────────────────────────────────────────────────
@@ -462,7 +504,8 @@ class YoosyApp {
     if (!rec) throw new Error('Unknown recording')
     const reciter = this.snapshot.reciters.find((r) => r.key === rec.reciterKey)
     const surahs = effectiveSurahs(store.surahs.get())
-    const built = buildThumbnailJob(rec, reciter, surahs, this.settings.thumbnails, styleForRecord(rec, store.thumbRules.get().rules, surahs).style)
+    const look = styleForRecord(rec, store.thumbRules.get().rules, surahs)
+    const built = buildThumbnailJob(rec, reciter, surahs, this.settings.thumbnails, look.style, await resolveRulePhoto(library, look.photo, rec.id))
     if (!built.ok) return { ok: false, reason: built.reason, message: built.message }
     return toPreview(await renderJob(built.job, library, rec.id))
   }
@@ -481,7 +524,7 @@ class YoosyApp {
     const styleErrors = styleProblems(input.style)
     if (styleErrors.length) return { ok: false, reason: 'INVALID_STYLE', message: styleErrors.map((e) => `${e.key}: ${e.message}`).join('\n'), styleErrors }
     const reciter = this.snapshot.reciters.find((r) => r.folder === input.sample.folder) ?? this.snapshot.reciters[0]
-    const built = buildSampleJob(input.sample, reciter, { sheikhPrefix: input.sheikhPrefix ?? this.settings.thumbnails.sheikhPrefix }, input.style)
+    const built = buildSampleJob(input.sample, reciter, { sheikhPrefix: input.sheikhPrefix ?? this.settings.thumbnails.sheikhPrefix }, input.style, await resolveRulePhoto(library, input.photo))
     if (!built.ok) return { ok: false, reason: built.reason, message: built.message }
     const t0 = Date.now()
     const result = await renderJob(built.job, library)
@@ -499,7 +542,8 @@ class YoosyApp {
     if (!rec?.videoId) throw new Error('This recording has no YouTube video id yet')
     const reciter = this.snapshot.reciters.find((r) => r.key === rec.reciterKey)
     const surahs = effectiveSurahs(store.surahs.get())
-    const built = buildThumbnailJob(rec, reciter, surahs, this.settings.thumbnails, styleForRecord(rec, store.thumbRules.get().rules, surahs).style)
+    const look = styleForRecord(rec, store.thumbRules.get().rules, surahs)
+    const built = buildThumbnailJob(rec, reciter, surahs, this.settings.thumbnails, look.style, await resolveRulePhoto(library, look.photo, rec.id))
     if (!built.ok) throw new Error(built.message)
     const result = await renderJob(built.job, library, rec.id)
     if (!result.ok) throw new Error(result.message)

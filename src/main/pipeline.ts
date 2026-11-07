@@ -7,7 +7,7 @@ import { addToPlaylist, setThumbnail, uploadVideo } from './google/youtube'
 import { effectiveSurahs, scanLibrary, videoPath, writeMarker } from './library'
 import { activity } from './log'
 import type { LibraryStore } from './store'
-import { buildThumbnailJob, renderJob, styleForRecord } from './thumbnails'
+import { buildThumbnailJob, renderJob, resolveRulePhoto, styleForRecord } from './thumbnails'
 import { describeLook } from '@core/thumb-rules'
 
 export interface PipelineContext {
@@ -56,7 +56,7 @@ export class Pipeline extends EventEmitter {
           this.progress({ recordId: rec.id, stage: 'thumbnail', percent: 0 })
           const surahs = effectiveSurahs(ctx.store.surahs.get())
           const look = styleForRecord(rec, ctx.store.thumbRules.get().rules, surahs)
-          const built = buildThumbnailJob(rec, reciter, surahs, ctx.settings.thumbnails, look.style)
+          const built = buildThumbnailJob(rec, reciter, surahs, ctx.settings.thumbnails, look.style, await resolveRulePhoto(ctx.library, look.photo, rec.id))
           if (look.style) activity.info(`Thumbnail look: ${describeLook(look)}`, rec.id)
           const result = built.ok ? await renderJob(built.job, ctx.library, rec.id) : built
           if (result.ok) {
