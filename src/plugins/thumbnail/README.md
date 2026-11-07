@@ -27,9 +27,9 @@ const result = await render(job, { outputDir, log })
 
 ## Style
 
-An optional `style` object on the job. **Every knob is optional**; a missing knob takes the locked
-design's default, so `style: {}` (or no style) renders exactly today's look (checked by the golden
-test). Knobs are grouped, all numbers are decimals with a tested min/max, colours are strings from a
+An optional `style` object on the job. **Every knob is optional**; a missing knob takes the factory
+default — since plugin 1.4.0 (styleVersion 3) that is Umo's Default look, so `style: {}` (or no style)
+renders exactly it with no rule edits (checked by the golden test). Knobs are grouped, all numbers are decimals with a tested min/max, colours are strings from a
 colour picker (`#RGB`, `#RRGGBB`, `#RRGGBBAA`, `rgb()`, `rgba()`).
 
 `samples/style-template.json` is the full request template with every knob at its default — copy
@@ -52,7 +52,7 @@ min, max, step and a description per knob, for building sliders.
 ### Fonts (`reciter.font`, `meta.font`)
 
 A value is either a **bundled font id** or an **absolute path** to the user's own `.ttf` / `.otf` /
-`.woff` / `.woff2`. Defaults: `amiri` (reciter) and `ibm-plex-sans-arabic` (prayer · date) = the locked
+`.woff` / `.woff2`. Defaults: `tajawal` (reciter) and `reem-kufi` (prayer · date) = the Default look; `amiri` + `ibm-plex-sans-arabic` were the original locked
 look. The surah calligraphy font is fixed. `BUNDLED_FONTS` (exported) carries id, label, style tag and
 files for pickers; `STYLE_FIELDS` entries of kind `font` list the same ids under `options`.
 
@@ -151,5 +151,5 @@ look — then re-capture the goldens and bump `templateVersion`) and the sweep.
 
 `npm test`: surah table matches the app dictionary and resolves every alias; prayer wording matches
 the app; Hijri dates against real recordings; every validation reason; every knob's min/max accepted
-and one step beyond rejected by key; colour formats; defaults reproduce the locked CSS values;
+and one step beyond rejected by key; colour formats; defaults reproduce the Default look's CSS values;
 cache keys ignore style key order; `style-template.json` equals the schema defaults.

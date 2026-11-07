@@ -87,27 +87,30 @@ describe('colours', () => {
   })
 })
 
-describe('cssVars (defaults reproduce the locked design)', () => {
+describe('cssVars (defaults reproduce the Default look, styleVersion 3)', () => {
   const v = cssVars(DEFAULT_STYLE)
   it('title', () => {
-    expect(v['--title-size']).toBe('290px')
+    expect(v['--title-size']).toBe('261px')   // 290 × 0.9
     expect(v['--title-gradient']).toBe('linear-gradient(180deg, rgba(235, 210, 122, 1) 0%, rgba(214, 179, 60, 1) 55%, rgba(185, 150, 43, 1) 100%)')
     expect(v['--title-filter']).toBe('drop-shadow(0 4px 6px rgba(0, 0, 0, 0.451)) drop-shadow(0 10px 28px rgba(0, 0, 0, 0.451)) drop-shadow(0 0 22px rgba(235, 210, 122, 0.3))')
   })
   it('text group and lines', () => {
-    expect(v['--text-offset-y']).toBe('-30px')
-    expect(v['--title-max-w']).toBe('1040px')
-    expect(v['--secondary-max-w']).toBe('1000px')
+    expect(v['--text-offset-y']).toBe('-20px')
+    expect(v['--title-max-w']).toBe('1216px')   // 0.95 × 1280
+    expect(v['--secondary-max-w']).toBe('1176px')
     expect(v['--text-shadow']).toBe('2px 12px rgba(0, 0, 0, 0.55)')
-    expect(v['--meta-color']).toBe('rgba(244, 239, 227, 0.82)')
+    expect(v['--meta-color']).toBe('rgba(244, 239, 227, 1)')
+    expect(v['--sep-color']).toBe('rgba(255, 255, 255, 1)')
+    expect(v['--meta-gap']).toBe('0.37em')
+    expect(v['--photo-filter']).toBe('blur(8px) brightness(1) contrast(1.24) saturate(1) hue-rotate(0deg) sepia(0)')
     expect(v['--sep-size']).toBe('7px')
     expect(v['--reciter-pill-bg']).toBe('transparent')
     expect(v['--frame-display']).toBe('none')
     expect(v['--div-above-display']).toBe('none')
   })
   it('overlay', () => {
-    expect(v['--overlay-bg']).toContain('linear-gradient(180deg, rgba(11, 26, 38, 0.22) 0%, rgba(11, 26, 38, 0.46) 45%, rgba(11, 26, 38, 0.84) 100%)')
-    expect(v['--overlay-bg']).toContain('radial-gradient(58% 60% at calc(50% + 0px) calc(52% + 0px)')
+    expect(v['--overlay-bg']).toContain('linear-gradient(180deg, rgba(11, 26, 38, 0.25) 0%, rgba(11, 26, 38, 0.25) 45%, rgba(11, 26, 38, 0.25) 100%)')
+    expect(v['--overlay-bg']).toContain('radial-gradient(35.8% 37% at calc(50% + 0px) calc(52% + 10px)')   // scrim 37 % × 1.5
   })
   it('zero opacities hide lines', () => {
     const r = validateStyle({ reciter: { opacity: 0 }, meta: { dateOpacity: 0 } })
@@ -151,8 +154,8 @@ describe('fonts', () => {
     const v = cssVars(r.ok ? r.style : DEFAULT_STYLE)
     expect(v['--reciter-font']).toBe('"katibeh"'); expect(v['--reciter-weight']).toBe('400')
     expect(v['--meta-font']).toBe('"custom-meta"'); expect(v['--meta-weight']).toBe('500')
-    expect(cssVars(DEFAULT_STYLE)['--reciter-font']).toBe('"amiri"')
-    expect(cssVars(DEFAULT_STYLE)['--meta-font']).toBe('"ibm-plex-sans-arabic"')
+    expect(cssVars(DEFAULT_STYLE)['--reciter-font']).toBe('"tajawal"'); expect(cssVars(DEFAULT_STYLE)['--reciter-weight']).toBe('700')
+    expect(cssVars(DEFAULT_STYLE)['--meta-font']).toBe('"reem-kufi"'); expect(cssVars(DEFAULT_STYLE)['--meta-weight']).toBe('500')
   })
 })
 
@@ -176,6 +179,6 @@ describe('fit boxes respect the safe room', () => {
     expect(v['--safe']).toBe('42px')
     expect(v['--title-max-w']).toBe('1196px')          // 1280 − 2 × 42, not 0.95 × 1280 = 1216
     expect(v['--secondary-max-w']).toBe('1156px')
-    expect(cssVars(DEFAULT_STYLE)['--title-max-w']).toBe('1040px')   // default unaffected
+    expect(cssVars(DEFAULT_STYLE)['--title-max-w']).toBe('1216px')   // default (no frame) unaffected
   })
 })

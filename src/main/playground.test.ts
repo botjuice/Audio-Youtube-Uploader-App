@@ -19,7 +19,7 @@ describe('thumbnail rule sample job', () => {
   it('exposes the plugin knob table and validates patches by dotted key', () => {
     const schema = styleSchema()
     expect(schema.fields.length).toBeGreaterThan(60)
-    expect(schema.fields.find((f) => f.path === 'title.scale')?.field).toMatchObject({ kind: 'number', min: 0.5, max: 1.15, default: 1 })
+    expect(schema.fields.find((f) => f.path === 'title.scale')?.field).toMatchObject({ kind: 'number', min: 0.5, max: 1.15, default: 0.9 })
     expect(schema.defaults.title.color).toBe('#D6B33C')
     expect(styleProblems({})).toEqual([])
     expect(styleProblems({ title: { scale: 2 } }).map((e) => e.key)).toEqual(['title.scale'])
