@@ -24,6 +24,15 @@ export const PRAYER_AR: Readonly<Record<string, string>> = {
 
 export const SHEIKH = 'الشيخ'
 
+/** The hardest content the layout will see: the widest surah pair, the longest prayer, the longest
+ *  month name. The sweep renders with it; the app's editor can offer the same preview. */
+export const WORST_CASE = {
+  reciterNameAr: 'عبد الرحمن بن عبد العزيز السديس',
+  surahsAr: ['الكافرون', 'العاديات'],
+  prayer: 'Istisqa',
+  date: '2024-12-31',
+} as const
+
 /** What the HTML template consumes. */
 export interface TemplateData {
   photo: string            // file:// URL

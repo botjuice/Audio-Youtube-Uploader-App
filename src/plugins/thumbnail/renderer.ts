@@ -17,6 +17,8 @@ const ZOOM = FRAME.width / THUMB.width
 export interface LayoutReport {
   lines: number
   clamped: boolean
+  /** True when the group still exceeds the safe room after shrinking to the floor. */
+  overflow?: boolean
   inkTop?: number; inkBottom?: number; inkLeft?: number; inkRight?: number
 }
 export interface RenderReport {

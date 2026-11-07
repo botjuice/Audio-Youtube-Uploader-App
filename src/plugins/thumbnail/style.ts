@@ -306,6 +306,9 @@ const LOCKED = { title: 290, reciter: 52, meta: 36, canvasW: 1280 } as const
 const px = (n: number) => `${+n.toFixed(2)}px`
 const c = (s: string) => parseColor(s)!
 
+/** Below this shrink ratio the text is unreadable at feed size; the template stops shrinking here and the render is refused. */
+export const MIN_FIT = 0.55
+
 /** Margin the text group must keep from the canvas edge: 24px, or clear of the frame when one is drawn. */
 export function safeMargin(s: Style): number {
   const frameOn = s.frame.width > 0 && s.frame.opacity > 0
@@ -317,7 +320,8 @@ export function cssVars(s: Style): Record<string, string> {
   const overlay = c(s.overlay.color), shadow = c(s.shadow.color), title = c(s.title.color), glow = c(s.title.glowColor)
   const { light, deep } = gradientStops(title, s.title.gradient)
   const sh = (oy: number, blur: number, alphaMul: number) => `${px(oy)} ${px(blur)} ${rgba(shadow, s.shadow.opacity * alphaMul)}`
-  const titleMaxW = Math.round(LOCKED.canvasW * s.text.width)
+  // Fit boxes never exceed the room inside the safe margin, so shrink-to-fit targets what can actually be shown.
+  const titleMaxW = Math.min(Math.round(LOCKED.canvasW * s.text.width), LOCKED.canvasW - 2 * safeMargin(s))
   const scrimCx = `calc(50% + ${px(s.text.offsetX)})`, scrimCy = `calc(52% + ${px(s.text.offsetY + 30)})`
   const metaOn = s.meta.opacity > 0 && (s.meta.prayerOpacity > 0 || s.meta.dateOpacity > 0)
   const pillVars = (p: Style['reciter']['pill'], prefix: string) => ({
@@ -342,6 +346,7 @@ export function cssVars(s: Style): Record<string, string> {
 
   return {
     '--safe': px(safeMargin(s)),
+    '--min-fit': String(MIN_FIT),
     ...fontVars('reciter', s.reciter.font),
     ...fontVars('meta', s.meta.font),
     // photo

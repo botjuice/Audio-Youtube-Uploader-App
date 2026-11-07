@@ -11,19 +11,18 @@ import { bothExist, cacheKey, framePath, thumbPath, writeAtomic } from './cache'
 import { checkJob } from './job'
 import { downscale, OffscreenRenderer, toJpegUnder } from './renderer'
 import { bundledFontFaceCss } from './fonts'
-import { canonicalStyle, cssVars, customFontFiles, safeMargin, validateStyle, type Style } from './style'
+import { canonicalStyle, cssVars, customFontFiles, MIN_FIT, safeMargin, validateStyle, type Style } from './style'
 import type { PluginHost, PluginManifest, ThumbnailJob, ThumbnailResult } from './types'
 
 export type { PluginHost, PluginManifest, ThumbnailJob, ThumbnailReason, ThumbnailResult } from './types'
 export { DEFAULT_STYLE, STYLE_FIELDS, STYLE_SCHEMA, validateStyle, type Style, type StylePatch, type StyleError, type StyleFieldInfo } from './style'
 export { BUNDLED_FONTS, type BundledFont } from './fonts'
+export { WORST_CASE } from './job'
 
-export const manifest: PluginManifest = { id: 'thumbnail', version: '1.2.0', templateVersion: 3, styleVersion: 2 }
+export const manifest: PluginManifest = { id: 'thumbnail', version: '1.2.1', templateVersion: 4, styleVersion: 2 }
 
 /** YouTube's limit for custom thumbnails. */
 const THUMB_MAX_BYTES = 2 * 1024 * 1024
-/** Below this shrink ratio the text would be unreadable at feed size; refuse rather than ship it. */
-const MIN_FIT = 0.55
 /** Template canvas (template pixels, 1280×720); the safe margin comes from the style (frame-aware). */
 const CANVAS = { width: 1280, height: 720 }
 
@@ -89,24 +88,19 @@ export async function render(job: ThumbnailJob, host: PluginHost): Promise<Thumb
       const err = out.fontErrors?.[line]
       if (err) return { ok: false, reason: 'FONT_NOT_LOADED', message: `${line === 'reciter' ? 'Reciter' : 'Prayer · date'} font: ${err}${custom[line] ? ` — ${custom[line]}` : ''}` }
     }
-    const worst = Math.min(1, ...Object.values(out.fit))
-    if (worst < MIN_FIT) {
-      return { ok: false, reason: 'TEXT_OVERFLOW', message: `Text had to shrink to ${Math.round(worst * 100)}% to fit — too small to read. Shorten the reciter name or surah list, or reduce the size knobs.` }
-    }
+    // `fit` holds the effective ratio per line (its own box fit × the group scale) plus `group` itself.
+    const { group = 1, ...lines } = out.fit
+    const worst = Math.min(1, ...Object.values(lines))
     const l = out.layout
-    if (l.lines > 0 && l.inkTop !== undefined && l.inkBottom !== undefined && l.inkLeft !== undefined && l.inkRight !== undefined) {
+    if (l.overflow || worst < MIN_FIT) {
       const safe = safeMargin(style)
-      const tooTall = l.inkBottom - l.inkTop > CANVAS.height - 2 * safe
-      const tooWide = l.inkRight - l.inkLeft > CANVAS.width - 2 * safe
-      if (tooTall || tooWide) {
-        const have = tooTall ? `${Math.round(l.inkBottom - l.inkTop)}px tall` : `${Math.round(l.inkRight - l.inkLeft)}px wide`
-        const room = tooTall ? `${CANVAS.height - 2 * safe}px` : `${CANVAS.width - 2 * safe}px`
-        return { ok: false, reason: 'TEXT_OVERFLOW', message: `The text group is ${have} but only ${room} fits inside the safe area — reduce size, gap, pill or divider knobs.` }
-      }
+      const room = `${CANVAS.width - 2 * safe}×${CANVAS.height - 2 * safe}px`
+      return { ok: false, reason: 'TEXT_OVERFLOW', message: `Even at ${Math.round(MIN_FIT * 100)}% the text does not fit the ${room} safe area (it would need ${Math.round(worst * 100)}%) — shorten the reciter name or surah list, or reduce size, gap, pill or divider knobs.` }
     }
     const warnings: string[] = []
     if (l.clamped) warnings.push('Text group was pulled back inside the safe area (offset or size knobs pushed it to the edge).')
-    if (worst < 1) warnings.push(`Text shrank to ${Math.round(worst * 100)}% to fit its box.`)
+    if (group < 1) warnings.push(`The whole text group shrank to ${Math.round(group * 100)}% to fit the safe area.`)
+    else if (worst < 1) warnings.push(`Text shrank to ${Math.floor(worst * 100)}% to fit its box.`)
 
     const quality = Math.round(style.output.quality)
     const frameBuf = out.frame.toJPEG(quality)

@@ -14,6 +14,7 @@ import { app, nativeImage } from 'electron'
 import { existsSync, promises as fs } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { dispose, render } from './index'
+import { WORST_CASE } from './job'
 import { templateDir } from './renderer'
 import { BUNDLED_FONTS } from './fonts'
 import { STYLE_FIELDS, type StylePatch } from './style'
@@ -79,16 +80,13 @@ const setPath = (obj: Record<string, unknown>, path: string, value: unknown) => 
 }
 const at = (path: string, value: unknown, into: Record<string, unknown> = {}) => { setPath(into, path, value); return into }
 
-/** The hardest job the layout will ever see. */
+/** The hardest job the layout will ever see (content from WORST_CASE, exported for the app's editor). */
 function worstJob(): ThumbnailJob {
-  return {
-    reciterNameAr: 'عبد الرحمن بن عبد العزيز السديس', photoPath: join(samplesDir(), 'photos', 'mosque-dome-sign.jpg'),
-    surahsAr: ['الكافرون', 'العاديات'], prayer: 'Istisqa', date: '2024-12-31',
-    options: { sheikhPrefix: true, template: 'default' },
-  }
+  return { ...WORST_CASE, surahsAr: [...WORST_CASE.surahsAr], photoPath: join(samplesDir(), 'photos', 'mosque-dome-sign.jpg'), options: { sheikhPrefix: true, template: 'default' } }
 }
 
-interface Variant { name: string; style: StylePatch; expect: 'ok' | 'refuse' }
+/** expect: 'ok' must render; 'refuse' must be refused; 'either' may be refused only with TEXT_OVERFLOW (below the floor). */
+interface Variant { name: string; style: StylePatch; expect: 'ok' | 'refuse' | 'either'; job?: Partial<ThumbnailJob> }
 function sweepVariants(): Variant[] {
   const out: Variant[] = [{ name: 'default', style: {}, expect: 'ok' }]
   for (const f of BUNDLED_FONTS) out.push({ name: `font=${f.id}`, style: { reciter: { font: f.id }, meta: { font: f.id } }, expect: 'ok' })
@@ -106,9 +104,13 @@ function sweepVariants(): Variant[] {
   const small: Record<string, unknown> = {}
   for (const p of ['title.scale', 'reciter.scale', 'meta.scale', 'text.gapAboveTitle', 'text.gapBelowTitle', 'text.width'])
     setPath(small, p, (STYLE_FIELDS.find((f) => f.path === p)!.field as { min: number }).min)
-  // Everything at max at once is taller than the canvas: the plugin must refuse it cleanly, never clamp it.
-  out.push({ name: 'all-max', style: structuredClone(big) as StylePatch, expect: 'refuse' })
-  out.push({ name: 'all-max+width-min', style: at('text.width', 0.5, structuredClone(big)) as StylePatch, expect: 'refuse' })
+  // Everything at max at once: either the group shrinks to fit (≥ the floor) or it is refused with TEXT_OVERFLOW — never clipped.
+  out.push({ name: 'all-max', style: structuredClone(big) as StylePatch, expect: 'either' })
+  out.push({ name: 'all-max+width-min', style: at('text.width', 0.5, structuredClone(big)) as StylePatch, expect: 'either' })
+  // Reported 2026-11-07: 10px too wide for the room with a 6px frame — must shrink by ~1%, not refuse.
+  out.push({ name: 'reported-zalzalah-adiyat-frame6', job: { surahsAr: ['الزلزلة', 'العاديات'], prayer: 'Maghrib' },
+    style: { text: { width: 0.95 }, title: { scale: 1.15 }, meta: { scale: 1.38 }, frame: { width: 6 } }, expect: 'ok' })
+  out.push({ name: 'tall-but-fits-by-shrinking', style: { title: { scale: 1.15 }, reciter: { scale: 1.6, pill: { opacity: 0.6, paddingY: 30 } }, meta: { scale: 1.6, pill: { opacity: 0.6, paddingY: 30 } }, text: { gapAboveTitle: 60, gapBelowTitle: 60 } }, expect: 'ok' })
   out.push({ name: 'all-min', style: small as StylePatch, expect: 'ok' })
   // A generous but sane combination must render, including pushed into every corner (clamping allowed).
   const generous: StylePatch = {
@@ -139,11 +141,16 @@ async function sweep(outputDir: string): Promise<number> {
   const variants = sweepVariants()
   console.error(`sweep: ${variants.length} renders`)
   for (const v of variants) {
-    const r: ThumbnailResult = await render({ ...job, style: v.style }, host)
+    const r: ThumbnailResult = await render({ ...job, ...v.job, style: v.style }, host)
     const problems: string[] = []
-    if (!r.ok) { if (v.expect !== 'refuse') problems.push(`${r.reason}: ${r.message}`) }
+    if (!r.ok) {
+      if (v.expect === 'ok') problems.push(`${r.reason}: ${r.message}`)
+      else if (v.expect === 'either' && r.reason !== 'TEXT_OVERFLOW') problems.push(`${r.reason}: ${r.message}`)
+    }
     else if (v.expect === 'refuse') problems.push(`expected a refusal but rendered: ${JSON.stringify(r.layout)}`)
     else if (r.layout) {
+      const worst = Math.min(1, ...Object.entries(r.layout.fit).filter(([k]) => k !== 'group').map(([, v]) => v))
+      if (worst < 0.55 - 1e-6) problems.push(`rendered below the floor: ${JSON.stringify(r.layout.fit)}`)
       const l = r.layout
       if (l.inkTop < SAFE - 1 || l.inkBottom > H - SAFE + 1 || l.inkLeft < SAFE - 1 || l.inkRight > W - SAFE + 1) problems.push(`outside safe area: ${JSON.stringify(l)}`)
       await fs.copyFile(r.thumbnail, join(outputDir, `sweep-${v.name.replace(/[^\w.=()+-]/g, '_')}.jpg`))

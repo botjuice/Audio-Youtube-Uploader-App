@@ -18,6 +18,8 @@
     --canvas-w: 1280px;
     --canvas-h: 720px;
     --safe: 24px;
+    --min-fit: 0.55;
+    --group-scale: 1;          /* set by the fit pass when the whole group must shrink to fit the safe room */
     --canvas-bg: rgba(11, 26, 38, 1);
     /* photo */
     --photo-position: 50% 50%;
@@ -105,12 +107,11 @@
     padding: 0 40px; box-sizing: border-box;
   }
   .divider { height: var(--div-above-height); border-radius: 4px; flex: none; }
-  .divider--above { display: var(--div-above-display); width: var(--div-above-width); height: var(--div-above-height); background: var(--div-above-bg); margin-bottom: var(--gap-above-title); }
-  .divider--below { display: var(--div-below-display); width: var(--div-below-width); height: var(--div-below-height); background: var(--div-below-bg); margin-bottom: var(--gap-below-title); }
+  .divider--above { display: var(--div-above-display); width: calc(var(--div-above-width) * var(--group-scale)); height: calc(var(--div-above-height) * var(--group-scale)); background: var(--div-above-bg); margin-bottom: calc(var(--gap-above-title) * var(--group-scale)); }
+  .divider--below { display: var(--div-below-display); width: calc(var(--div-below-width) * var(--group-scale)); height: calc(var(--div-below-height) * var(--group-scale)); background: var(--div-below-bg); margin-bottom: calc(var(--gap-below-title) * var(--group-scale)); }
 
   /* Surah title: "سورة" + name on one row (two surahs: name و name, no "سورة") */
-  .title-wrap { position: relative; margin-bottom: var(--gap-below-title); }
-  .title-wrap:has(+ .divider--below) { margin-bottom: var(--gap-below-title); }
+  .title-wrap { position: relative; margin-bottom: calc(var(--gap-below-title) * var(--group-scale)); }
   .title {
     display: flex; flex-direction: row; align-items: baseline; justify-content: center;
     gap: var(--title-gap);                    /* the font's space glyph is zero-width */
@@ -140,8 +141,8 @@
     font-family: var(--reciter-font); font-weight: var(--reciter-weight); font-synthesis: none; font-size: var(--reciter-size); line-height: 1.35; white-space: nowrap;
     color: var(--reciter-color); opacity: var(--reciter-opacity); letter-spacing: var(--reciter-spacing);
     text-shadow: 0 var(--text-shadow);
-    margin: 0 0 var(--gap-above-title);
-    background: var(--reciter-pill-bg); border-radius: var(--reciter-pill-radius); padding: var(--reciter-pill-py) var(--reciter-pill-px);
+    margin: 0 0 calc(var(--gap-above-title) * var(--group-scale));
+    background: var(--reciter-pill-bg); border-radius: var(--reciter-pill-radius); padding: calc(var(--reciter-pill-py) * var(--group-scale)) calc(var(--reciter-pill-px) * var(--group-scale));
   }
   .meta {
     display: var(--meta-display); flex-direction: row; align-items: center; justify-content: center; gap: var(--meta-gap);
@@ -149,7 +150,7 @@
     font-family: var(--meta-font); font-weight: var(--meta-weight); font-synthesis: none; font-size: var(--meta-size); line-height: 1.4; white-space: nowrap;
     color: var(--meta-color); letter-spacing: var(--meta-spacing);
     text-shadow: 0 var(--meta-shadow);
-    background: var(--meta-pill-bg); border-radius: var(--meta-pill-radius); padding: var(--meta-pill-py) var(--meta-pill-px);
+    background: var(--meta-pill-bg); border-radius: var(--meta-pill-radius); padding: calc(var(--meta-pill-py) * var(--group-scale)) calc(var(--meta-pill-px) * var(--group-scale));
   }
   .meta [data-slot="prayer"] { display: var(--prayer-display); opacity: var(--prayer-opacity); }
   .meta [data-slot="date"] { display: var(--date-display); opacity: var(--date-opacity); }
@@ -238,20 +239,45 @@
 
   /* Shrink-to-fit: each data-fit element has a max box (max-width). The title is one unit. */
   const BASE = { title: "--title-size", reciter: "--reciter-size", meta: "--meta-size" };
-  function fitAll() {
+  function fitAll(groupScale) {
     const cs = getComputedStyle(root);
-    const fit = {}; window.__fit = fit;
+    const fit = { group: groupScale }; window.__fit = fit;
     root.querySelectorAll("[data-fit]").forEach((el) => {
       if (!visible(el)) { fit[el.dataset.fit] = 1; return; }
-      const base = parseFloat(cs.getPropertyValue(BASE[el.dataset.fit]));
+      const base = parseFloat(cs.getPropertyValue(BASE[el.dataset.fit])) * groupScale;
       el.style.fontSize = base + "px";
       const maxW = parseFloat(getComputedStyle(el).maxWidth);
       const w = el.scrollWidth;
       const ratio = w > maxW ? maxW / w : 1;
       if (ratio < 1) el.style.fontSize = Math.floor(base * ratio * 100) / 100 + "px";
-      fit[el.dataset.fit] = ratio;
+      fit[el.dataset.fit] = ratio * groupScale;          // effective ratio vs. the unscaled base
     });
     q(".title--outline").style.fontSize = q('.title[data-fit="title"]').style.fontSize;
+  }
+
+  /* Fit the whole group into the safe room: each line fits its own box first; if the group is still
+     wider or taller than the room, scale every line (and gaps, pills, dividers) down together, down to
+     --min-fit. Beyond that the plugin refuses the render (layout.overflow). */
+  function fitGroup() {
+    const cs = getComputedStyle(root);
+    const safe = parseFloat(cs.getPropertyValue("--safe")) || 24;
+    const minFit = parseFloat(cs.getPropertyValue("--min-fit")) || 0.55;
+    const roomW = root.clientWidth - 2 * safe, roomH = root.clientHeight - 2 * safe;
+    let scale = 1;
+    document.documentElement.style.setProperty("--group-scale", "1");
+    for (let i = 0; i < 6; i++) {
+      fitAll(scale);
+      placeGroup();
+      const l = window.__layout;
+      if (!l.lines) { l.overflow = false; return; }
+      const w = l.inkRight - l.inkLeft, h = l.inkBottom - l.inkTop;
+      const need = Math.min(1, roomW / w, roomH / h);
+      if (need >= 0.999) { l.overflow = false; return; }
+      if (scale <= minFit + 1e-6) { l.overflow = true; return; }
+      scale = Math.max(minFit, scale * need * 0.995);     // tiny margin so rounding can't leave it 1px over
+      document.documentElement.style.setProperty("--group-scale", String(scale));
+    }
+    window.__layout.overflow = true;
   }
 
   /* Visible ink of a text element: baseline from a zero-size probe, extent by drawing on a canvas. */
@@ -395,8 +421,7 @@
     window.__fontErrors = fontErrors;
     await imagesReady();
     window.__fontOk = document.fonts.check('290px "surah-name-v4-icon"');
-    fitAll();
-    placeGroup();
+    fitGroup();
     // Stamp LAST, in the same task as the final layout: any frame carrying this id shows the finished DOM.
     const id = (d.renderId | 0) & 511;
     document.getElementById("stamp").style.background = `rgb(${id & 7}, ${(id >> 3) & 7}, ${(id >> 6) & 7})`;

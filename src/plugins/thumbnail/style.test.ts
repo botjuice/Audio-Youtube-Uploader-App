@@ -168,3 +168,14 @@ describe('bundled font files', () => {
     expect(BUNDLED_FONTS.length).toBe(21)
   })
 })
+
+describe('fit boxes respect the safe room', () => {
+  it('clamps the title box to the room inside the frame', () => {
+    const r = validateStyle({ text: { width: 0.95 }, frame: { width: 6 } })
+    const v = cssVars(r.ok ? r.style : DEFAULT_STYLE)
+    expect(v['--safe']).toBe('42px')
+    expect(v['--title-max-w']).toBe('1196px')          // 1280 − 2 × 42, not 0.95 × 1280 = 1216
+    expect(v['--secondary-max-w']).toBe('1156px')
+    expect(cssVars(DEFAULT_STYLE)['--title-max-w']).toBe('1040px')   // default unaffected
+  })
+})

@@ -72,10 +72,13 @@ Rules the plugin enforces, whatever the knobs say:
 - **Validation first.** Unknown key, wrong type, out-of-range number or bad colour → `INVALID_STYLE`
   listing every problem by dotted key. Nothing is clamped silently. `validateStyle(patch)` is exported
   so the app can check while sliders move.
-- **Shrink-to-fit** still runs per line; below 55% the render is refused (`TEXT_OVERFLOW`).
+- **Shrink-to-fit works at two levels.** Each line fits its own box (boxes never exceed the room
+  inside the safe margin); if the group is still wider or taller than the room, every line plus the
+  gaps, pills and dividers scale down together (`fit.group`). Only when that would go below 55% is
+  the render refused (`TEXT_OVERFLOW`, saying what ratio it would have needed). `warnings` says how
+  much shrank; `layout.fit` has the effective ratio per line.
 - **Safe area.** The text group is kept ≥ 24 px from the edge (more when a frame is drawn). Offsets
-  that would push it out are pulled back (reported in `warnings`); a group taller or wider than the
-  safe area is refused with `TEXT_OVERFLOW` naming the knobs to reduce.
+  that would push it out are pulled back (reported in `warnings`).
 - **Fonts are fixed.** The calligraphy font breaks with letter-spacing, so none is offered on the title.
 
 ## Capture correctness (stale-frame bug, fixed 2026-11-07)
@@ -91,6 +94,9 @@ forcing repaints until one does; the stamp pixels are scrubbed from the output. 
 was bumped to 3 so existing caches re-render. Check: `npm run thumb -- --idle 390 /tmp/t` renders
 job A, idles 6.5 min, renders job B, and fails if B's pixels equal A's. Set `THUMB_DEBUG=1` to see
 each paint's stamp.
+
+`WORST_CASE` (exported) is the content the sweep uses — the widest surah pair, longest prayer and
+month, longest name — so an editor can offer the same preview.
 
 ## Integration notes for the app
 
