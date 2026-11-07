@@ -45,19 +45,29 @@ export function matchesRule(rule: PlaylistRule, t: RuleTarget, surahs: SurahDict
 /** Problems that make a rule unsaveable. Empty array = valid. */
 export function validateRule(rule: Pick<PlaylistRule, 'conditions' | 'playlistId'>, surahs: SurahDict = DEFAULT_SURAHS): string[] {
   const errors: string[] = []
-  const cs = rule.conditions
   if (!rule.playlistId) errors.push('Choose a playlist')
-  if (cs.length === 0) errors.push('Add at least one condition')
+  if (rule.conditions.length === 0) errors.push('Add at least one condition')
+  return [...errors, ...conditionProblems(rule.conditions, surahs, conditionKey)]
+}
+
+/**
+ * Checks shared by every rule kind (playlist and thumbnail): count, empty values, only-negative,
+ * impossible pairs, contradictions, unknown prayer / surah spellings. `keyOf` normalises a value for comparison.
+ */
+export function conditionProblems<C extends { kind: string; value: string; negate: boolean }>(
+  cs: readonly C[], surahs: SurahDict, keyOf: (c: C) => string, singleValued: ReadonlySet<string> = SINGLE_VALUED,
+): string[] {
+  const errors: string[] = []
   if (cs.length > MAX_CONDITIONS) errors.push(`At most ${MAX_CONDITIONS} conditions`)
   if (cs.some((c) => !c.value.trim())) errors.push('Every condition needs a value')
   if (cs.length && !cs.some((c) => !c.negate)) errors.push('At least one condition must be “is” — a rule made only of “is not” would match almost everything')
-  for (const kind of SINGLE_VALUED) {
+  for (const kind of singleValued) {
     const positives = cs.filter((c) => c.kind === kind && !c.negate)
-    if (positives.length > 1 && new Set(positives.map(conditionKey)).size > 1) errors.push(`A recording has only one ${kind} — two different “${kind} is” conditions can never both be true`)
+    if (positives.length > 1 && new Set(positives.map(keyOf)).size > 1) errors.push(`A recording has only one ${kind} — two different “${kind} is” conditions can never both be true`)
   }
   for (const c of cs) {
     if (c.negate) continue
-    const contradiction = cs.find((o) => o !== c && o.negate && o.kind === c.kind && conditionKey(o) === conditionKey(c))
+    const contradiction = cs.find((o) => o !== c && o.negate && o.kind === c.kind && keyOf(o) === keyOf(c))
     if (contradiction) { errors.push(`“${c.kind} is ${c.value}” and “${c.kind} is not ${contradiction.value}” contradict each other`); break }
   }
   if (cs.some((c) => c.kind === 'prayer' && c.value.trim() && !canonicalPrayer(c.value))) errors.push(`Unknown prayer — choose one of ${PRAYERS.join(', ')}`)

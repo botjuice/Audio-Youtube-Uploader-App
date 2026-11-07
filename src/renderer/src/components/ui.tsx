@@ -174,6 +174,29 @@ export function Modal({ open, onClose, title, children, footer, width = 'max-w-m
   )
 }
 
+/** Range slider bound to a number; the track uses the accent colour. */
+export function Slider({ value, min, max, step, onChange, disabled, className }:
+  { value: number; min: number; max: number; step: number; onChange: (v: number) => void; disabled?: boolean; className?: string }) {
+  return (
+    <input type="range" value={value} min={min} max={max} step={step} disabled={disabled}
+      onChange={(e) => onChange(Number(e.target.value))}
+      className={clsx('h-1.5 w-full cursor-pointer accent-accent no-drag disabled:opacity-40', className)} />
+  )
+}
+
+/** Native colour picker plus an editable hex field. Emits #RRGGBB (or #RRGGBBAA when the text field carries alpha). */
+export function ColorInput({ value, onChange, className }: { value: string; onChange: (v: string) => void; className?: string }) {
+  const hex6 = /^#[0-9a-fA-F]{6}$/.test(value) ? value : /^#[0-9a-fA-F]{8}$/.test(value) ? value.slice(0, 7) : /^#[0-9a-fA-F]{3}$/.test(value) ? '#' + [...value.slice(1)].map((c) => c + c).join('') : '#000000'
+  return (
+    <span className={clsx('inline-flex items-center gap-1.5', className)}>
+      <input type="color" value={hex6} onChange={(e) => onChange(e.target.value.toUpperCase())}
+        className="h-7 w-9 shrink-0 cursor-pointer rounded-md border border-border bg-surface p-0.5 no-drag" />
+      <input value={value} onChange={(e) => onChange(e.target.value)} spellCheck={false}
+        className="h-7 w-[92px] rounded-md border border-border bg-surface px-2 font-mono text-[11px] uppercase focus:outline-none focus:ring-2 focus:ring-accent/40 no-drag" />
+    </span>
+  )
+}
+
 export function Spinner({ className }: { className?: string }) {
   return <span className={clsx('inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent', className)} />
 }

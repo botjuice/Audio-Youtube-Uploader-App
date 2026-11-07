@@ -1,6 +1,6 @@
 import { safeStorage } from 'electron'
 import { promises as fs } from 'node:fs'
-import type { KeywordDef, LastError, Playlist, PlaylistOverrides, PlaylistRule, Settings, ThumbnailInfo } from '@shared/types'
+import type { KeywordDef, LastError, Playlist, PlaylistOverrides, PlaylistRule, Settings, ThumbnailInfo, ThumbnailRule } from '@shared/types'
 import type { QuotaState } from '@core/quota'
 import { JsonFile, readJson } from './jsonfile'
 import { secretFile, settingsFile, stateFile, tokenFile } from './paths'
@@ -48,6 +48,8 @@ export interface LibraryStore {
   records: JsonFile<Record<string, RecordState>>
   reciters: JsonFile<Record<string, ReciterState>>
   rules: JsonFile<{ rules: PlaylistRule[]; keywords: KeywordDef[] }>
+  /** thumbnail look rules; always holds one `origin: 'default'` rule (see normaliseThumbRules) */
+  thumbRules: JsonFile<{ rules: ThumbnailRule[] }>
   surahs: JsonFile<SurahUserLayer>
   quota: JsonFile<QuotaState>
   playlists: JsonFile<{ items: Playlist[]; fetchedAt: string | null }>
@@ -58,6 +60,7 @@ export async function openLibraryStore(library: string): Promise<LibraryStore> {
     records: new JsonFile(stateFile(library, 'records.json'), () => ({})),
     reciters: new JsonFile(stateFile(library, 'reciters.json'), () => ({})),
     rules: new JsonFile(stateFile(library, 'rules.json'), () => ({ rules: [], keywords: [] })),
+    thumbRules: new JsonFile(stateFile(library, 'thumbnail-rules.json'), () => ({ rules: [] })),
     surahs: new JsonFile(stateFile(library, 'surahs.json'), () => ({})),
     quota: new JsonFile(stateFile(library, 'quota.json'), () => ({ day: '', uploads: 0, units: 0 })),
     playlists: new JsonFile(stateFile(library, 'playlists.json'), () => ({ items: [], fetchedAt: null })),

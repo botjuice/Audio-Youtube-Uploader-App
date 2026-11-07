@@ -8,7 +8,7 @@ import Library from '@/pages/Library'
 import Playlists from '@/pages/Playlists'
 import Reciters from '@/pages/Reciters'
 import Settings from '@/pages/Settings'
-import Thumbnails from '@/pages/Thumbnails'
+import ThumbnailRules from '@/pages/ThumbnailRules'
 import Welcome from '@/pages/Welcome'
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -39,7 +39,7 @@ export default function App() {
   if (!booted || !settings) return <div className="drag flex h-full items-center justify-center text-muted"><Spinner /></div>
   if (!settings.libraryPath) return <Welcome />
 
-  const Page = { library: Library, playlists: Playlists, reciters: Reciters, thumbnails: Thumbnails, settings: Settings, activity: Activity }[page]
+  const Page = { library: Library, playlists: Playlists, reciters: Reciters, thumbnails: ThumbnailRules, settings: Settings, activity: Activity }[page]
   return (
     <ErrorBoundary>
       <div className="flex h-full">

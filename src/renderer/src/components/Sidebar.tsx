@@ -11,7 +11,7 @@ const NAV: { id: Page; label: string; icon: typeof LibraryBig }[] = [
   { id: 'library', label: 'Library', icon: LibraryBig },
   { id: 'playlists', label: 'Playlists', icon: ListMusic },
   { id: 'reciters', label: 'Reciters', icon: Users },
-  { id: 'thumbnails', label: 'Thumbnails', icon: ImageIcon },
+  { id: 'thumbnails', label: 'Thumbnail rules', icon: ImageIcon },
   { id: 'activity', label: 'Activity', icon: Activity },
   { id: 'settings', label: 'Settings', icon: SettingsIcon },
 ]

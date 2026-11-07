@@ -1,6 +1,6 @@
 import type {
   ActivityEntry, Health, KeywordDef, LibraryRecord, NewReciter, Playlist, PlaylistRule, Privacy, Progress,
-  PlaygroundInput, ReciterInfo, ReciterPatch, RecordPatch, Settings, SurahOption, ThumbnailPreview, TokenValidation, UpdateState,
+  ReciterInfo, ReciterPatch, RecordPatch, Settings, StyleRenderInput, StyleSchemaInfo, SurahOption, ThumbnailPreview, ThumbnailRule, TokenValidation, UpdateState,
 } from './types'
 
 export interface LibrarySnapshot {
@@ -8,6 +8,7 @@ export interface LibrarySnapshot {
   records: LibraryRecord[]
   rules: PlaylistRule[]
   keywords: KeywordDef[]
+  thumbnailRules: ThumbnailRule[]   // list order = priority; the last one is the default look
   playlists: Playlist[]          // cached channel playlists (may be stale until refreshed)
 }
 
@@ -40,6 +41,7 @@ export interface Api {
   // rules & keywords
   setRules(rules: PlaylistRule[]): Promise<void>
   setKeywords(keywords: KeywordDef[]): Promise<void>
+  setThumbnailRules(rules: ThumbnailRule[]): Promise<void>
   // youtube
   setClientSecretFromFile(): Promise<boolean>               // opens a file dialog
   setClientSecret(clientId: string, clientSecret: string): Promise<void>
@@ -52,7 +54,8 @@ export interface Api {
   previewThumbnail(recordId: string): Promise<ThumbnailPreview>
   previewReciterThumbnail(folder: string): Promise<ThumbnailPreview>
   retryThumbnail(recordId: string): Promise<void>
-  renderPlayground(input: PlaygroundInput): Promise<ThumbnailPreview>
+  renderStyled(input: StyleRenderInput): Promise<ThumbnailPreview>   // rule editor preview (1080p frame included)
+  getStyleSchema(): Promise<StyleSchemaInfo>
   listSurahOptions(): Promise<SurahOption[]>
   // pipeline
   startUpload(ids: string[]): Promise<void>

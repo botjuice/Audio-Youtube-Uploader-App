@@ -1,9 +1,9 @@
 import { app, BrowserWindow, dialog, nativeTheme, shell } from 'electron'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
-import type { Health, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, Settings, TokenValidation } from '@shared/types'
+import type { Health, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, Settings, StyleRenderInput, StyleSchemaInfo, ThumbnailRule, TokenValidation } from '@shared/types'
 import type { LibrarySnapshot, SurahEntry, SyncResult } from '@shared/api'
-import { DEFAULT_SURAHS, conditionKey, describeRule, nextQuotaReset, normaliseQuota, reciterKey, remainingUploads, surahKey, validateRule, validateToken } from '@core/index'
+import { DEFAULT_SURAHS, conditionKey, describeRule, describeThumbRule, nextQuotaReset, normaliseQuota, normaliseThumbRules, reciterKey, remainingUploads, surahKey, validateRule, validateThumbRule, validateToken } from '@core/index'
 import { ffmpegAvailable, ffmpegPath } from './ffmpeg'
 import { connect, disconnect, getClient, parseClientSecretJson, resetClient } from './google/oauth'
 import { createPlaylist, getChannel, listPlaylists, listUploads } from './google/youtube'
@@ -13,10 +13,10 @@ import { Pipeline } from './pipeline'
 import { mergeSettings, openLibraryStore, secrets, settings, type LibraryStore } from './store'
 import { Watcher } from './watcher'
 import { updater } from './updater'
-import { buildPlaygroundJob, buildThumbnailJob, disposeThumbnails, renderJob, sampleJobForReciter, surahOptions, toPreview } from './thumbnails'
+import { buildSampleJob, buildThumbnailJob, disposeThumbnails, renderJob, sampleJobForReciter, styleForRecord, styleProblems, styleSchema, surahOptions, toPreview } from './thumbnails'
 import { setThumbnail } from './google/youtube'
 import { THUMBNAIL_COST_UNITS, addQuota } from '@core/quota'
-import type { PlaygroundInput, SurahOption, ThumbnailPreview } from '@shared/types'
+import type { SurahOption, ThumbnailPreview } from '@shared/types'
 
 type Listener = (channel: string, payload: unknown) => void
 
@@ -105,6 +105,8 @@ class YoosyApp {
         this.store = await openLibraryStore(path)
         await this.migrateLegacy(path)
         await this.migrateV22()
+        // the thumbnail rules file always carries exactly one default rule
+        await this.store.thumbRules.update((d) => { d.rules = normaliseThumbRules(d.rules ?? []) })
         await this.rescan()
         activity.info(`Library opened: ${path}`)
       } catch (e) {
@@ -199,6 +201,7 @@ class YoosyApp {
       records: this.snapshot.records,
       rules: this.store?.rules.get().rules ?? [],
       keywords: this.store?.rules.get().keywords ?? [],
+      thumbnailRules: this.store?.thumbRules.get().rules ?? [],
       playlists: this.store?.playlists.get().items ?? [],
     }
   }
@@ -356,6 +359,21 @@ class YoosyApp {
     await this.rescan()
   }
 
+  /** Replace the thumbnail rules. Refuses invalid conditions or styles; keeps exactly one default rule. */
+  async setThumbnailRules(rules: ThumbnailRule[]): Promise<void> {
+    const { store } = this.req()
+    const surahs = effectiveSurahs(store.surahs.get())
+    const next = normaliseThumbRules(rules)
+    for (const r of next) {
+      const errs = validateThumbRule(r, surahs)
+      if (errs.length) throw new Error(`Rule “${describeThumbRule(r)}”: ${errs[0]}`)
+      const bad = styleProblems(r.style)
+      if (bad.length) throw new Error(`Rule “${describeThumbRule(r)}”: ${bad.map((b) => `${b.key} ${b.message}`).join('; ')}`)
+    }
+    await store.thumbRules.replace({ rules: next })
+    this.broadcast('evt:library', this.getLibrary())
+  }
+
   // ── youtube ────────────────────────────────────────────────────────────────
   async hasClientSecret(): Promise<boolean> { return !!(await secrets.getClient()) }
 
@@ -443,7 +461,8 @@ class YoosyApp {
     const rec = this.snapshot.records.find((r) => r.id === recordId)
     if (!rec) throw new Error('Unknown recording')
     const reciter = this.snapshot.reciters.find((r) => r.key === rec.reciterKey)
-    const built = buildThumbnailJob(rec, reciter, effectiveSurahs(store.surahs.get()), this.settings.thumbnails)
+    const surahs = effectiveSurahs(store.surahs.get())
+    const built = buildThumbnailJob(rec, reciter, surahs, this.settings.thumbnails, styleForRecord(rec, store.thumbRules.get().rules, surahs).style)
     if (!built.ok) return { ok: false, reason: built.reason, message: built.message }
     return toPreview(await renderJob(built.job, library, rec.id))
   }
@@ -456,16 +475,20 @@ class YoosyApp {
     return toPreview(await renderJob(job, library))
   }
 
-  /** Thumbnail playground: same renderer, same cache dir as uploads; returns the 1080p frame too. */
-  async renderPlayground(input: PlaygroundInput): Promise<ThumbnailPreview> {
+  /** Rule editor preview: a style on a sample, same renderer and cache dir as uploads; returns the 1080p frame too. */
+  async renderStyled(input: StyleRenderInput): Promise<ThumbnailPreview> {
     const { library } = this.req()
-    const reciter = this.snapshot.reciters.find((r) => r.folder === input.folder)
-    const built = buildPlaygroundJob(input, reciter)
+    const styleErrors = styleProblems(input.style)
+    if (styleErrors.length) return { ok: false, reason: 'INVALID_STYLE', message: styleErrors.map((e) => `${e.key}: ${e.message}`).join('\n'), styleErrors }
+    const reciter = this.snapshot.reciters.find((r) => r.folder === input.sample.folder) ?? this.snapshot.reciters[0]
+    const built = buildSampleJob(input.sample, reciter, { sheikhPrefix: input.sheikhPrefix ?? this.settings.thumbnails.sheikhPrefix }, input.style)
     if (!built.ok) return { ok: false, reason: built.reason, message: built.message }
     const t0 = Date.now()
     const result = await renderJob(built.job, library)
     return toPreview(result, { withFrame: true, ms: Date.now() - t0 })
   }
+
+  getStyleSchema(): StyleSchemaInfo { return styleSchema() }
 
   listSurahOptions(): SurahOption[] { return surahOptions() }
 
@@ -475,7 +498,8 @@ class YoosyApp {
     const rec = this.snapshot.records.find((r) => r.id === recordId)
     if (!rec?.videoId) throw new Error('This recording has no YouTube video id yet')
     const reciter = this.snapshot.reciters.find((r) => r.key === rec.reciterKey)
-    const built = buildThumbnailJob(rec, reciter, effectiveSurahs(store.surahs.get()), this.settings.thumbnails)
+    const surahs = effectiveSurahs(store.surahs.get())
+    const built = buildThumbnailJob(rec, reciter, surahs, this.settings.thumbnails, styleForRecord(rec, store.thumbRules.get().rules, surahs).style)
     if (!built.ok) throw new Error(built.message)
     const result = await renderJob(built.job, library, rec.id)
     if (!result.ok) throw new Error(result.message)

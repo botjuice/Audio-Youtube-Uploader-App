@@ -5,6 +5,7 @@ import type { LibraryRecord, ThumbnailPreview } from '@shared/types'
 import { Badge, Button, Chip, IconButton, Input, Modal, Select } from '@/components/ui'
 import { statusMeta, fmtBytes, fmtRel, parseVideoId } from '@/lib/format'
 import { describeRule } from '@core/rules'
+import { describeThumbRule, resolveThumbnailRule } from '@core/thumb-rules'
 import { useStore } from '@/store'
 
 export function RecordDetail({ record: r, onClose }: { record: LibraryRecord; onClose: () => void }) {
@@ -234,7 +235,11 @@ function LeftoverModal({ record, action, onClose }: { record: LibraryRecord; act
 
 function ThumbnailSection({ record: r }: { record: LibraryRecord }) {
   const settings = useStore((s) => s.settings)
+  const library = useStore((s) => s.library)
   const call = useStore((s) => s.call)
+  const look = resolveThumbnailRule({ reciter: r.reciterKey, tokens: r.tokens, playlists: r.playlists.final }, library.thumbnailRules)
+  const lookName = look ? describeThumbRule(look, (id) => library.playlists.find((p) => p.id === id)?.title ?? id) : null
+  const rulesKey = JSON.stringify(library.thumbnailRules)
   const [preview, setPreview] = useState<ThumbnailPreview | null>(null)
   const [full, setFull] = useState(false)
   const enabled = !!settings?.thumbnails.enabled
@@ -245,11 +250,11 @@ function ThumbnailSection({ record: r }: { record: LibraryRecord }) {
     let live = true
     void window.api.previewThumbnail(r.id).then((p) => { if (live) setPreview(p) }).catch((e) => { if (live) setPreview({ ok: false, reason: 'RENDER_FAILED', message: String(e) }) })
     return () => { live = false }
-  }, [r.id, r.fileName, r.titleOverride, canPreview, settings?.thumbnails.sheikhPrefix])
+  }, [r.id, r.fileName, r.titleOverride, canPreview, settings?.thumbnails.sheikhPrefix, rulesKey, JSON.stringify(r.playlists.final)])
   if (!enabled) return null
   const t = r.thumbnail
   return (
-    <Section label="Thumbnail" hint={r.status === 'uploaded' ? (t?.set ? 'Set on YouTube' : t?.setError ? 'Not set on YouTube' : 'Uploaded before thumbnails existed') : 'Rendered on upload; also used as the video frame'}>
+    <Section label="Thumbnail" hint={<>{r.status === 'uploaded' ? (t?.set ? 'Set on YouTube' : t?.setError ? 'Not set on YouTube' : 'Uploaded before thumbnails existed') : 'Rendered on upload; also used as the video frame'}{lookName && <> · look: <b>{lookName}</b></>}</>}>
       {!r.parsed ? <div className="text-xs text-muted">Fix the filename first.</div>
         : !preview ? <div className="h-[135px] rounded-lg bg-surface-2 animate-pulse" />
         : preview.ok ? (
@@ -278,7 +283,7 @@ function ThumbnailSection({ record: r }: { record: LibraryRecord }) {
   )
 }
 
-function Section({ label, hint, action, children }: { label: string; hint?: string; action?: React.ReactNode; children: React.ReactNode }) {
+function Section({ label, hint, action, children }: { label: string; hint?: React.ReactNode; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section>
       <div className="flex items-center justify-between mb-1.5">

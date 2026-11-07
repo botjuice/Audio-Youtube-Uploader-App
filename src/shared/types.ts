@@ -22,6 +22,9 @@ export interface Parsed {
 
 export type ParseReason = 'NO_DATE' | 'NO_PRAYER' | 'NO_SURAH' | 'LEFTOVER'
 
+import type { Style, StyleFieldInfo, StylePatch } from '../plugins/thumbnail/style'
+export type { Style, StyleFieldInfo, StylePatch }
+
 export type ReasonCode =
   | ParseReason
   | 'NO_RECITER' | 'FILE_CONFLICT' | 'WRONG_FOLDER'
@@ -114,6 +117,39 @@ export interface PlaylistRule {
 
 export interface PlaylistOverrides { include: string[]; exclude: string[] }
 
+// ── Thumbnail rules ──────────────────────────────────────────────────────────
+
+/** Conditions a thumbnail rule may use: everything a playlist rule can, plus the playlists a recording ends up in. */
+export type ThumbConditionKind = ConditionKind | 'playlist'
+export interface ThumbCondition { kind: ThumbConditionKind; value: string; negate: boolean }
+
+/** What the rule's preview card renders: a real reciter folder plus made-up surahs / prayer / date. */
+export interface ThumbnailSample { folder: string; surahsAr: string[]; prayer: string; date: string }
+
+/**
+ * Picks a thumbnail look for a recording. Rules are tried in list order and the first enabled one whose
+ * conditions ALL hold wins; the `origin: 'default'` rule (no conditions) applies when none matches.
+ * `style` holds only the knobs the user changed (a patch over the plugin's defaults).
+ */
+export interface ThumbnailRule {
+  id: string
+  label?: string
+  enabled: boolean
+  conditions: ThumbCondition[]
+  style: StylePatch
+  sample: ThumbnailSample
+  origin?: 'default'
+}
+
+export interface StyleError { key: string; message: string }
+
+/** What the editor sends to render a preview of a style on a sample. */
+export interface StyleRenderInput { sample: ThumbnailSample; style: StylePatch; sheikhPrefix?: boolean }
+
+/** The plugin's knob table, so the editor builds its controls from data (ranges, steps, defaults, descriptions). */
+export interface StyleSchemaInfo { fields: StyleFieldInfo[]; defaults: Style; styleVersion: number }
+
+
 export interface Playlist {
   id: string
   title: string
@@ -201,21 +237,16 @@ export interface ThumbnailPreview {
   ok: boolean
   reason?: string
   message?: string
+  /** INVALID_STYLE details, one per knob */
+  styleErrors?: StyleError[]
+  /** non-fatal notes from the plugin (text shrank, group pulled inside the safe area…) */
+  warnings?: string[]
   /** data: URL of the 1280×720 thumbnail (renderer can't load file:// in dev) */
   dataUrl?: string
   /** data: URL of the 1920×1080 frame — only when asked for (playground) */
   frameDataUrl?: string
   cached?: boolean
   ms?: number
-}
-
-/** Playground input: everything a user can vary; photo + Arabic name come from the reciter folder. */
-export interface PlaygroundInput {
-  folder: string
-  surahsAr: string[]      // 1–3 Arabic names from the 114
-  prayer: string
-  date: string            // YYYY-MM-DD
-  sheikhPrefix: boolean
 }
 
 export interface SurahOption { n: number; ar: string; label: string }

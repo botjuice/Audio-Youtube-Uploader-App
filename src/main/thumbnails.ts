@@ -5,11 +5,12 @@
  */
 import { promises as fs } from 'node:fs'
 
-import type { LibraryRecord, PlaygroundInput, ReciterInfo, Settings, SurahOption, ThumbnailPreview } from '@shared/types'
+import type { LibraryRecord, ReciterInfo, Settings, StyleError, StylePatch, StyleSchemaInfo, SurahOption, ThumbnailPreview, ThumbnailRule, ThumbnailSample } from '@shared/types'
+import { resolveThumbnailStyle, type ThumbTarget } from '@core/thumb-rules'
 import { DEFAULT_SURAHS, translateSurah, type SurahDict } from '@core/surahs'
 import { SURAHS_AR } from '../plugins/thumbnail/surahs'
 import { PRAYERS } from '@core/prayers'
-import { render, dispose as disposePlugin, type ThumbnailJob, type ThumbnailResult } from '../plugins/thumbnail/index'
+import { DEFAULT_STYLE, STYLE_FIELDS, dispose as disposePlugin, manifest, render, validateStyle, type ThumbnailJob, type ThumbnailResult } from '../plugins/thumbnail/index'
 import { activity } from './log'
 import { stateFile } from './paths'
 
@@ -27,6 +28,7 @@ export function buildThumbnailJob(
   reciter: Pick<ReciterInfo, 'nameAr' | 'imagePath'> | undefined,
   surahs: SurahDict,
   options: Settings['thumbnails'],
+  style?: StylePatch,
 ): { ok: true; job: ThumbnailJob } | { ok: false; reason: string; message: string } {
   if (!rec.parsed) return { ok: false, reason: 'INVALID_JOB', message: 'Filename is not fully parsed yet.' }
   if (!reciter?.nameAr) return { ok: false, reason: 'INVALID_JOB', message: 'Reciter has no Arabic name.' }
@@ -40,8 +42,18 @@ export function buildThumbnailJob(
       prayer: rec.parsed.prayer,
       date: isoDate(rec.parsed.date),
       options: { sheikhPrefix: options.sheikhPrefix, template: 'default' },
+      ...(style ? { style } : {}),
     },
   }
+}
+
+/** What the rules engine needs to know about a recording. */
+export const thumbTarget = (rec: Pick<LibraryRecord, 'reciterKey' | 'tokens' | 'playlists'>): ThumbTarget =>
+  ({ reciter: rec.reciterKey, tokens: rec.tokens, playlists: rec.playlists.final })
+
+/** The style patch a recording gets from the thumbnail rules (undefined = plugin defaults). */
+export function styleForRecord(rec: Pick<LibraryRecord, 'reciterKey' | 'tokens' | 'playlists'>, rules: readonly ThumbnailRule[], surahs: SurahDict): { rule: ThumbnailRule | null; style: StylePatch | undefined } {
+  return resolveThumbnailStyle(thumbTarget(rec), rules, surahs)
 }
 
 /** A representative job for a reciter page preview (their photo + name, a fixed surah/prayer/date). */
@@ -63,25 +75,40 @@ export async function renderJob(job: ThumbnailJob, library: string, recordId?: s
 export async function toPreview(result: ThumbnailResult, opts: { withFrame?: boolean; ms?: number } = {}): Promise<ThumbnailPreview> {
   if (!result.ok) return { ok: false, reason: result.reason, message: result.message, ...(opts.ms !== undefined ? { ms: opts.ms } : {}) }
   const thumb = await fs.readFile(result.thumbnail)
-  const out: ThumbnailPreview = { ok: true, dataUrl: `data:image/jpeg;base64,${thumb.toString('base64')}`, cached: result.cached }
+  const out: ThumbnailPreview = { ok: true, dataUrl: `data:image/jpeg;base64,${thumb.toString('base64')}`, cached: result.cached, warnings: result.warnings ?? [] }
   if (opts.withFrame) out.frameDataUrl = `data:image/jpeg;base64,${(await fs.readFile(result.frame)).toString('base64')}`
   if (opts.ms !== undefined) out.ms = opts.ms
   return out
 }
 
-/** Playground: user-chosen surahs/prayer/date on a real reciter. Same job shape the pipeline builds. */
-export function buildPlaygroundJob(
-  input: PlaygroundInput,
+/** A rule's preview: user-chosen surahs/prayer/date on a real reciter, with the rule's style. Same job shape the pipeline builds. */
+export function buildSampleJob(
+  sample: ThumbnailSample,
   reciter: Pick<ReciterInfo, 'nameAr' | 'imagePath'> | undefined,
+  options: Pick<Settings['thumbnails'], 'sheikhPrefix'>,
+  style?: StylePatch,
 ): { ok: true; job: ThumbnailJob } | { ok: false; reason: string; message: string } {
-  if (!reciter) return { ok: false, reason: 'INVALID_JOB', message: 'Choose a reciter.' }
+  if (!reciter) return { ok: false, reason: 'INVALID_JOB', message: 'Choose a reciter for the preview.' }
   if (!reciter.nameAr) return { ok: false, reason: 'INVALID_JOB', message: 'This reciter has no Arabic name — set it in Reciters.' }
   if (!reciter.imagePath) return { ok: false, reason: 'PHOTO_UNREADABLE', message: 'This reciter folder has no photo.' }
-  const surahs = input.surahsAr.map((s) => s.trim()).filter(Boolean)
+  const surahs = sample.surahsAr.map((s) => s.trim()).filter(Boolean)
   if (surahs.length < 1 || surahs.length > 3) return { ok: false, reason: 'INVALID_JOB', message: 'Choose between 1 and 3 surahs.' }
-  if (!PRAYERS.includes(input.prayer)) return { ok: false, reason: 'UNKNOWN_PRAYER', message: `Unknown prayer "${input.prayer}".` }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) return { ok: false, reason: 'BAD_DATE', message: 'Date must be YYYY-MM-DD.' }
-  return { ok: true, job: { reciterNameAr: reciter.nameAr, photoPath: reciter.imagePath, surahsAr: surahs, prayer: input.prayer, date: input.date, options: { sheikhPrefix: input.sheikhPrefix, template: 'default' } } }
+  if (!PRAYERS.includes(sample.prayer)) return { ok: false, reason: 'UNKNOWN_PRAYER', message: `Unknown prayer "${sample.prayer}".` }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sample.date)) return { ok: false, reason: 'BAD_DATE', message: 'Date must be YYYY-MM-DD.' }
+  const job: ThumbnailJob = { reciterNameAr: reciter.nameAr, photoPath: reciter.imagePath, surahsAr: surahs, prayer: sample.prayer, date: sample.date, options: { sheikhPrefix: options.sheikhPrefix, template: 'default' } }
+  if (style && Object.keys(style).length) job.style = style
+  return { ok: true, job }
+}
+
+/** The plugin's knob table for the editor (ranges, steps, defaults, descriptions). */
+export function styleSchema(): StyleSchemaInfo {
+  return { fields: [...STYLE_FIELDS], defaults: DEFAULT_STYLE, styleVersion: manifest.styleVersion }
+}
+
+/** Every problem in a style patch, by dotted key. Empty = valid. */
+export function styleProblems(patch: unknown): StyleError[] {
+  const v = validateStyle(patch ?? {})
+  return v.ok ? [] : v.errors
 }
 
 /** The 114 surahs in order, with a Latin label taken from the app dictionary. */

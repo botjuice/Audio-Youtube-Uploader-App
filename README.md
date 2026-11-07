@@ -63,7 +63,27 @@ bundled template in `src/plugins/thumbnail` (no internet), cached in `<library>/
 - On by default; Settings → Thumbnails turns it off (then: plain photo at 720p, no custom thumbnail, exactly as before) or drops the «الشيخ» prefix.
 - A thumbnail problem **never blocks an upload**: the recording shows the reason, the plain photo is used.
 - Setting the thumbnail costs 50 API units (an upload is 1,600; a playlist add 50); the sidebar shows units next to uploads. Custom thumbnails require a **phone-verified** channel — otherwise the recording shows "Thumbnail not set" with a Retry button.
-- Previews: the record detail panel, the reciter page (updates when you change the photo), and the **Thumbnails** page — a playground where you pick a reciter, up to 3 surahs, prayer, date and the «الشيخ» prefix and see the exact 1920×1080 frame an upload would get, rendered by the same code and cache.
+- Previews: the record detail panel (which also names the look that will apply) and the reciter page (updates when you change the photo).
+
+## Thumbnail rules
+
+**Thumbnail rules** decides how each recording's frame looks. Every rule is a card with a live
+preview and its conditions; click the preview to open the editor.
+
+- **Conditions** work like playlist rules (reciter / prayer / surah / keyword, "is" / "is not",
+  1–3 per rule, at least one "is") plus **Playlist is …**: the playlists the recording will be added
+  to, so a playlist can have its own look.
+- **First match wins.** Rules are tried top to bottom; the arrows on a card change its priority.
+  The **Default look** card (no conditions, cannot be deleted) applies when nothing matches and is
+  editable like any other rule.
+- **The editor** shows every knob the plugin offers, grouped (photo, overlay, text layout, shadow,
+  surah title, reciter line, prayer · date line, dividers, border frame, output) as sliders and
+  colour pickers with their defaults; only changed knobs are saved. The 1920×1080 frame re-renders
+  on every change, with the plugin's warnings (text shrank, group pulled inside the safe area) and
+  refusals (a look that cannot render blocks Save). Each rule keeps its own **preview sample**
+  (reciter, up to 3 surahs, prayer, date). The editor closes only with **Discard** or **Save**.
+- Stored in `<library>/.yoosyjoosy/thumbnail-rules.json`. A changed look re-renders the thumbnail
+  on the next run and re-encodes pending videos; uploaded videos are never touched.
 
 ## Playlist rules
 
