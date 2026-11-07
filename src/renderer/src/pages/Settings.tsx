@@ -134,7 +134,7 @@ export default function Settings() {
             </Field>
             <div className="col-span-2">
               <Field label="Description">
-                <Textarea value={desc} onChange={(e) => setDesc(e.target.value)} onBlur={() => void save({ upload: { ...settings.upload, description: desc } })} placeholder="Shown under every video" />
+                <Textarea value={desc} onChange={(e) => setDesc(e.target.value)} onBlur={() => void save({ upload: { ...settings.upload, description: desc } })} placeholder="Added under every video, after the title and the thumbnail details (reciter, surah, prayer · Hijri date)" />
               </Field>
             </div>
           </div>

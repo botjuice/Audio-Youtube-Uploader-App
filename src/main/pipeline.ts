@@ -9,6 +9,7 @@ import { activity } from './log'
 import type { LibraryStore } from './store'
 import { buildThumbnailJob, renderJob, resolveRulePhoto, styleForRecord } from './thumbnails'
 import { describeLook } from '@core/thumb-rules'
+import { buildDescription } from '@core/description'
 
 export interface PipelineContext {
   library: string
@@ -94,7 +95,8 @@ export class Pipeline extends EventEmitter {
         let videoId: string
         try {
           videoId = await uploadVideo(mp4, {
-            title: rec.title!, description: ctx.settings.upload.description, tags: ctx.settings.upload.tags,
+            title: rec.title!, tags: ctx.settings.upload.tags,
+            description: buildDescription({ title: rec.title!, reciterAr: reciter.nameAr ?? rec.reciterFolder, sheikhPrefix: ctx.settings.thumbnails.sheikhPrefix, parsed: rec.parsed!, extra: ctx.settings.upload.description }, effectiveSurahs(ctx.store.surahs.get())),
             categoryId: ctx.settings.upload.categoryId, privacy: ctx.settings.upload.privacy, madeForKids: ctx.settings.upload.madeForKids,
           }, { signal, onProgress: (percent) => this.progress({ recordId: rec.id, stage: 'upload', percent }) })
         } catch (e) {

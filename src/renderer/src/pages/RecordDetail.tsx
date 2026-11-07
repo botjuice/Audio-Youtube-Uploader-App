@@ -6,6 +6,7 @@ import { Badge, Button, Checkbox, Chip, IconButton, Input, Modal, Select } from 
 import { statusMeta, fmtBytes, fmtRel, parseVideoId } from '@/lib/format'
 import { describeRule } from '@core/rules'
 import { describeLook, resolveThumbnailLook } from '@core/thumb-rules'
+import { buildDescription } from '@core/description'
 import { useStore } from '@/store'
 
 export function RecordDetail({ record: r, onClose }: { record: LibraryRecord; onClose: () => void }) {
@@ -123,6 +124,11 @@ export function RecordDetail({ record: r, onClose }: { record: LibraryRecord; on
           )}
         </Section>
 
+        {r.parsed && r.title && settings && (
+          <Section label="YouTube description" hint="Title again, then what the thumbnail shows, then your default text from Settings">
+            <pre className="whitespace-pre-wrap rounded-lg border border-border bg-surface-2/40 p-2 text-[12px] leading-5" dir="auto">{buildDescription({ title: r.title, reciterAr: library.reciters.find((x) => x.key === r.reciterKey)?.nameAr ?? r.reciterFolder, sheikhPrefix: settings.thumbnails.sheikhPrefix, parsed: r.parsed, extra: settings.upload.description })}</pre>
+          </Section>
+        )}
         {/* thumbnail */}
         <ThumbnailSection record={r} />
 

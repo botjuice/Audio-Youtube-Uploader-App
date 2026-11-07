@@ -53,6 +53,12 @@ It bumps the version, runs typecheck + tests, commits, tags `vX.Y.Z`, pushes, an
 GitHub Actions publishes the Windows/macOS installers plus the update feed
 (`latest.yml`, `latest-mac.yml`). Users pick it up within 6 hours.
 
+## Video description
+
+Every upload's description is the title again, then the lines the thumbnail shows (reciter with
+«الشيخ» if that setting is on, «سورة …», «صلاة … · Hijri date»), then the default text from
+Settings → Upload defaults. The record detail panel shows the exact text before upload.
+
 ## Thumbnails
 
 Each recording gets a designed 1920×1080 frame — reciter name (with «الشيخ»), the surah name
