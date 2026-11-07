@@ -9,15 +9,30 @@
  * colour picker as #RGB, #RRGGBB, #RRGGBBAA, rgb(...) or rgba(...).
  */
 
+import { BUNDLED_FONTS, FONT_BY_ID, FONT_FILE_EXTS, customFamily } from './fonts'
+
 // ── Schema types ─────────────────────────────────────────────────────────────
 
 export interface NumberField { kind: 'number'; min: number; max: number; default: number; step: number; desc: string }
 export interface ColorField { kind: 'color'; default: string; desc: string }
-export type Field = NumberField | ColorField
+/** A bundled font id, or an absolute path to the user's own font file. `options` lists the bundled ids for pickers. */
+export interface FontField { kind: 'font'; default: string; desc: string; options: readonly { id: string; label: string; style: string }[] }
+export type Field = NumberField | ColorField | FontField
 export interface Group { readonly [key: string]: Field | Group }
 
 const num = (min: number, max: number, def: number, desc: string, step = 0.01): NumberField => ({ kind: 'number', min, max, default: def, step, desc })
 const color = (def: string, desc: string): ColorField => ({ kind: 'color', default: def, desc })
+const font = (def: string, desc: string): FontField => ({ kind: 'font', default: def, desc, options: BUNDLED_FONTS.map((f) => ({ id: f.id, label: f.label, style: f.style })) })
+
+/** Is this a usable font value: a bundled id, or an absolute path to a font file? (Existence is checked at render.)
+ *  No Node imports here: the app's renderer type-checks this file too. */
+export function isFontValue(v: unknown): v is string {
+  if (typeof v !== 'string' || !v.trim()) return false
+  if (FONT_BY_ID.has(v)) return true
+  const absolute = v.startsWith('/') || /^[A-Za-z]:[\\/]/.test(v)
+  const ext = (/\.[^./\\]+$/.exec(v)?.[0] ?? '').toLowerCase()
+  return absolute && (FONT_FILE_EXTS as readonly string[]).includes(ext)
+}
 
 const pill = (desc: string) => ({
   opacity: num(0, 1, 0, `${desc}: backdrop pill opacity; 0 = no pill`),
@@ -86,6 +101,7 @@ export const STYLE_SCHEMA = {
     joinScale: num(0.2, 0.6, 0.38, 'Size of the «و» between two surahs, relative to the names'),
   },
   reciter: {
+    font: font('amiri', 'Reciter name font: a bundled font id, or an absolute path to your own .ttf/.otf/.woff/.woff2'),
     color: color('#F4EFE3', 'Reciter name colour'),
     scale: num(0.5, 1.6, 1, 'Reciter name size multiplier'),
     opacity: num(0, 1, 1, 'Reciter line opacity; 0 hides it and the group re-centres'),
@@ -93,6 +109,7 @@ export const STYLE_SCHEMA = {
     pill: pill('Reciter'),
   },
   meta: {
+    font: font('ibm-plex-sans-arabic', 'Prayer · date font: a bundled font id, or an absolute path to your own font file'),
     color: color('#F4EFE3', 'Prayer · date colour'),
     scale: num(0.5, 1.6, 1, 'Prayer · date size multiplier'),
     opacity: num(0, 1, 0.82, 'Whole line opacity; 0 hides it'),
@@ -122,7 +139,7 @@ export const STYLE_SCHEMA = {
 
 // ── Types derived from the schema ────────────────────────────────────────────
 
-type FieldValue<F> = F extends NumberField ? number : F extends ColorField ? string : F extends Group ? Resolve<F> : never
+type FieldValue<F> = F extends NumberField ? number : F extends ColorField | FontField ? string : F extends Group ? Resolve<F> : never
 type Resolve<G> = { -readonly [K in keyof G]: FieldValue<G[K]> }
 type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] }
 
@@ -251,6 +268,9 @@ export function validateStyle(input: unknown): { ok: true; style: Style } | { ok
         if (typeof v !== 'number' || !Number.isFinite(v)) errors.push({ key, message: `must be a number between ${f.min} and ${f.max}, got ${JSON.stringify(v)}` })
         else if (v < f.min || v > f.max) errors.push({ key, message: `must be between ${f.min} and ${f.max}, got ${v}` })
         else out[k] = v
+      } else if (f.kind === 'font') {
+        if (!isFontValue(v)) errors.push({ key, message: `must be a bundled font id (${BUNDLED_FONTS.map((b) => b.id).join(', ')}) or an absolute path to a .ttf/.otf/.woff/.woff2 file, got ${JSON.stringify(v)}` })
+        else out[k] = (v as string).trim()
       } else {
         if (!parseColor(v)) errors.push({ key, message: `must be a colour like #RRGGBB, #RRGGBBAA or rgba(r, g, b, a), got ${JSON.stringify(v)}` })
         else out[k] = (v as string).trim()
@@ -263,6 +283,14 @@ export function validateStyle(input: unknown): { ok: true; style: Style } | { ok
 }
 
 /** Schema-ordered JSON of a resolved style, so key order in the input never changes the cache key. */
+/** Custom font files referenced by a style (absolute paths), per line. Empty when only bundled fonts are used. */
+export function customFontFiles(s: Style): Partial<Record<'reciter' | 'meta', string>> {
+  const out: Partial<Record<'reciter' | 'meta', string>> = {}
+  if (!FONT_BY_ID.has(s.reciter.font)) out.reciter = s.reciter.font
+  if (!FONT_BY_ID.has(s.meta.font)) out.meta = s.meta.font
+  return out
+}
+
 export function canonicalStyle(style: Style): string {
   const order = (group: Group, value: Record<string, unknown>): Record<string, unknown> => {
     const out: Record<string, unknown> = {}
@@ -305,8 +333,17 @@ export function cssVars(s: Style): Record<string, string> {
     [`--${prefix}-bg`]: `linear-gradient(90deg, transparent, ${rgba(c(d.color), d.opacity)}, transparent)`,
   })
 
+  const fontVars = (line: 'reciter' | 'meta', value: string) => {
+    const b = FONT_BY_ID.get(value)
+    const family = b ? b.id : customFamily(line)
+    const weight = b ? (line === 'reciter' ? b.reciterWeight : b.metaWeight) : (line === 'reciter' ? 700 : 500)
+    return { [`--${line}-font`]: `"${family}"`, [`--${line}-weight`]: String(weight) }
+  }
+
   return {
     '--safe': px(safeMargin(s)),
+    ...fontVars('reciter', s.reciter.font),
+    ...fontVars('meta', s.meta.font),
     // photo
     '--photo-position': `${s.photo.focusX}% ${s.photo.focusY}%`,
     '--photo-transform': `scale(${s.photo.zoom})`,

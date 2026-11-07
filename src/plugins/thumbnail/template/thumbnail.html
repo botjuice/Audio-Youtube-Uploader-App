@@ -6,8 +6,10 @@
 <style>
   /* ---------- Fonts ---------- */
   @font-face { font-family: "surah-name-v4-icon"; src: url("fonts/surah-name-v4.ttf") format("truetype"); font-display: block; }   /* V4 Surah Name Font (QUL / Tarteel) — ligature font */
-  @font-face { font-family: "Amiri"; src: url("fonts/Amiri-Bold.ttf") format("truetype"); font-weight: 700; font-display: block; }   /* Google Fonts, OFL */
-  @font-face { font-family: "IBM Plex Sans Arabic"; src: url("fonts/IBMPlexSansArabic-Medium.ttf") format("truetype"); font-weight: 500; font-display: block; }   /* Google Fonts, OFL */
+  /* Bundled text fonts are declared by the plugin (fonts.ts → bundledFontFaceCss) into #bundled-fonts;
+     the two below are the locked defaults so the template also renders on its own. */
+  @font-face { font-family: "amiri"; src: url("fonts/Amiri-Bold.ttf") format("truetype"); font-weight: 700; font-display: block; }
+  @font-face { font-family: "ibm-plex-sans-arabic"; src: url("fonts/IBMPlexSansArabic-Medium.ttf") format("truetype"); font-weight: 500; font-display: block; }
 
   /* ---------- Style variables ----------
      Every value below is set by the plugin from the style knobs (style.ts → cssVars). The
@@ -48,6 +50,8 @@
     --outline-display: none;
     --outline-stroke: 0px transparent;
     /* reciter */
+    --reciter-font: "amiri"; --reciter-weight: 700;
+    --meta-font: "ibm-plex-sans-arabic"; --meta-weight: 500;
     --reciter-display: block;
     --reciter-color: rgba(244, 239, 227, 1);
     --reciter-size: 52px;
@@ -133,7 +137,7 @@
 
   .reciter {
     display: var(--reciter-display); max-width: var(--secondary-max-w);
-    font-family: "Amiri", serif; font-weight: 700; font-size: var(--reciter-size); line-height: 1.35; white-space: nowrap;
+    font-family: var(--reciter-font); font-weight: var(--reciter-weight); font-synthesis: none; font-size: var(--reciter-size); line-height: 1.35; white-space: nowrap;
     color: var(--reciter-color); opacity: var(--reciter-opacity); letter-spacing: var(--reciter-spacing);
     text-shadow: 0 var(--text-shadow);
     margin: 0 0 var(--gap-above-title);
@@ -142,7 +146,7 @@
   .meta {
     display: var(--meta-display); flex-direction: row; align-items: center; justify-content: center; gap: var(--meta-gap);
     max-width: var(--secondary-max-w);
-    font-family: "IBM Plex Sans Arabic", sans-serif; font-weight: 500; font-size: var(--meta-size); line-height: 1.4; white-space: nowrap;
+    font-family: var(--meta-font); font-weight: var(--meta-weight); font-synthesis: none; font-size: var(--meta-size); line-height: 1.4; white-space: nowrap;
     color: var(--meta-color); letter-spacing: var(--meta-spacing);
     text-shadow: 0 var(--meta-shadow);
     background: var(--meta-pill-bg); border-radius: var(--meta-pill-radius); padding: var(--meta-pill-py) var(--meta-pill-px);
@@ -154,6 +158,7 @@
   .stamp { position: absolute; right: 0; bottom: 0; width: 2px; height: 2px; z-index: 99; background: #000; }
   .meta__dot { display: var(--sep-display); width: var(--sep-size); height: var(--sep-size); border-radius: 50%; background: var(--sep-color); flex: none; }
 </style>
+<style id="bundled-fonts"></style>
 </head>
 <body>
 
@@ -326,6 +331,41 @@
     };
   }
 
+  /* Load the plugin's bundled @font-face block once, and any custom font files for this render. */
+  const customFaces = {};   // line → FontFace
+  async function loadFonts(d) {
+    const errors = {};
+    if (d.bundledCss && !window.__bundledLoaded) { document.getElementById("bundled-fonts").textContent = d.bundledCss; window.__bundledLoaded = true; }
+    for (const line of ["reciter", "meta"]) {
+      const url = d.customFonts && d.customFonts[line];
+      const family = `custom-${line}`;
+      if (customFaces[line]) { document.fonts.delete(customFaces[line]); delete customFaces[line]; }
+      if (!url) continue;
+      try {
+        const face = new FontFace(family, `url("${url}")`);
+        await face.load();
+        document.fonts.add(face); customFaces[line] = face;
+      } catch (e) { errors[line] = `could not load the font file (${e && e.message ? e.message : e})`; }
+    }
+    return errors;
+  }
+
+  /* Does the family actually draw Arabic? Compare against a family that does not exist (pure fallback). */
+  const probeCv = document.createElement("canvas"), probeCtx = probeCv.getContext("2d", { willReadFrequently: true });
+  function drawsArabic(family, weight) {
+    const sample = "الشيخعبدالله١٤٤٦";   // letters + digits only: a space glyph would make any font "differ"
+    const paint = (fam) => {
+      probeCv.width = 420; probeCv.height = 90;
+      probeCtx.clearRect(0, 0, 420, 90);
+      probeCtx.font = `${weight} 40px ${fam}`; probeCtx.direction = "rtl"; probeCtx.textAlign = "right"; probeCtx.fillStyle = "#000";
+      probeCtx.fillText(sample, 410, 60);
+      return probeCtx.getImageData(0, 0, 420, 90).data;
+    };
+    const a = paint(`"${family}", "no-such-family-zz"`), b = paint(`"no-such-family-zz"`);
+    for (let i = 3; i < a.length; i += 4) if (a[i] !== b[i]) return true;
+    return false;
+  }
+
   function imagesReady() {
     return Promise.all([...root.querySelectorAll("img")].map((img) =>
       img.complete && img.naturalWidth ? Promise.resolve() : new Promise((res) => { img.onload = img.onerror = res; })));
@@ -338,9 +378,21 @@
     await document.fonts.ready;
     await Promise.all([
       document.fonts.load('290px "surah-name-v4-icon"'),
-      document.fonts.load('700 52px "Amiri"'),
-      document.fonts.load('500 36px "IBM Plex Sans Arabic"'),
+      document.fonts.load('700 52px "amiri"'),
+      document.fonts.load('500 36px "ibm-plex-sans-arabic"'),
     ]);
+    const fontErrors = await loadFonts(d);
+    await document.fonts.ready;
+    const cs = getComputedStyle(root);
+    for (const line of ["reciter", "meta"]) {
+      if (fontErrors[line]) continue;
+      const fam = cs.getPropertyValue(`--${line}-font`).trim().replace(/^"|"$/g, "");
+      const weight = cs.getPropertyValue(`--${line}-weight`).trim() || "400";
+      try { await document.fonts.load(`${weight} 40px "${fam}"`); } catch (e) { /* reported below */ }
+      if (!document.fonts.check(`${weight} 40px "${fam}"`)) fontErrors[line] = `font "${fam}" is not available`;
+      else if (!drawsArabic(fam, weight)) fontErrors[line] = `font "${fam}" has no Arabic glyphs`;
+    }
+    window.__fontErrors = fontErrors;
     await imagesReady();
     window.__fontOk = document.fonts.check('290px "surah-name-v4-icon"');
     fitAll();

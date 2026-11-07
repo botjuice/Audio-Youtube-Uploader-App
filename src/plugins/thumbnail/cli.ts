@@ -11,10 +11,11 @@
  * exit code 1 if any job failed or any check did not pass.
  */
 import { app, nativeImage } from 'electron'
-import { promises as fs } from 'node:fs'
+import { existsSync, promises as fs } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { dispose, render } from './index'
 import { templateDir } from './renderer'
+import { BUNDLED_FONTS } from './fonts'
 import { STYLE_FIELDS, type StylePatch } from './style'
 import type { PluginHost, ThumbnailJob, ThumbnailResult } from './types'
 
@@ -90,6 +91,10 @@ function worstJob(): ThumbnailJob {
 interface Variant { name: string; style: StylePatch; expect: 'ok' | 'refuse' }
 function sweepVariants(): Variant[] {
   const out: Variant[] = [{ name: 'default', style: {}, expect: 'ok' }]
+  for (const f of BUNDLED_FONTS) out.push({ name: `font=${f.id}`, style: { reciter: { font: f.id }, meta: { font: f.id } }, expect: 'ok' })
+  out.push({ name: 'font=custom-path', style: { reciter: { font: join(templateDir(), 'fonts', 'Mirza-Bold.ttf') }, meta: { font: join(templateDir(), 'fonts', 'Tajawal-Regular.ttf') } }, expect: 'ok' })
+  out.push({ name: 'font=missing-file', style: { reciter: { font: '/nowhere/NoSuchFont.ttf' } }, expect: 'refuse' })
+  if (existsSync('/System/Library/Fonts/Supplemental/Impact.ttf')) out.push({ name: 'font=no-arabic-glyphs', style: { meta: { font: '/System/Library/Fonts/Supplemental/Impact.ttf' } }, expect: 'refuse' })
   for (const { path, field } of STYLE_FIELDS) {
     if (field.kind !== 'number') continue
     out.push({ name: `${path}=min(${field.min})`, style: at(path, field.min), expect: 'ok' })

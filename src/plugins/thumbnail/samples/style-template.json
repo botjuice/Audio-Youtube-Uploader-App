@@ -1,6 +1,5 @@
 {
-  "_comment": "Every style knob at its default (= the locked design). Pass any subset under `style` in a job; omit what you don't change. Colours: #RGB, #RRGGBB, #RRGGBBAA, rgb(), rgba(). Ranges in README.md / style.ts.",
-
+  "_comment": "Every style knob at its default (= the locked design). Pass any subset under `style` in a job; omit what you don't change. Colours: #RGB, #RRGGBB, #RRGGBBAA, rgb(), rgba(). Ranges in README.md / style.ts. Fonts: a bundled id (see README) or an absolute path to your own .ttf/.otf/.woff/.woff2.",
   "photo": {
     "focusX": 50,
     "focusY": 50,
@@ -13,7 +12,6 @@
     "sepia": 0,
     "grain": 0
   },
-
   "overlay": {
     "color": "#0B1A26",
     "top": 0.22,
@@ -25,7 +23,6 @@
     "scrimStrength": 1,
     "scrimSize": 60
   },
-
   "text": {
     "offsetX": 0,
     "offsetY": -30,
@@ -33,14 +30,12 @@
     "gapAboveTitle": 10,
     "gapBelowTitle": 24
   },
-
   "shadow": {
     "color": "#000000",
     "opacity": 0.55,
     "blur": 12,
     "offsetY": 2
   },
-
   "title": {
     "color": "#D6B33C",
     "gradient": 1,
@@ -56,16 +51,22 @@
     "surahWordGap": 0.14,
     "joinScale": 0.38
   },
-
   "reciter": {
+    "font": "amiri",
     "color": "#F4EFE3",
     "scale": 1,
     "opacity": 1,
     "letterSpacing": 0,
-    "pill": { "opacity": 0, "color": "#0B1A26", "radius": 16, "paddingX": 24, "paddingY": 8 }
+    "pill": {
+      "opacity": 0,
+      "color": "#0B1A26",
+      "radius": 16,
+      "paddingX": 24,
+      "paddingY": 8
+    }
   },
-
   "meta": {
+    "font": "ibm-plex-sans-arabic",
     "color": "#F4EFE3",
     "scale": 1,
     "opacity": 0.82,
@@ -75,14 +76,28 @@
     "gap": 0.55,
     "separatorColor": "#EBD27A",
     "separatorSize": 7,
-    "pill": { "opacity": 0, "color": "#0B1A26", "radius": 16, "paddingX": 24, "paddingY": 8 }
+    "pill": {
+      "opacity": 0,
+      "color": "#0B1A26",
+      "radius": 16,
+      "paddingX": 24,
+      "paddingY": 8
+    }
   },
-
   "dividers": {
-    "aboveTitle": { "opacity": 0, "width": 120, "thickness": 3, "color": "#EBD27A" },
-    "belowTitle": { "opacity": 0, "width": 120, "thickness": 3, "color": "#EBD27A" }
+    "aboveTitle": {
+      "opacity": 0,
+      "width": 120,
+      "thickness": 3,
+      "color": "#EBD27A"
+    },
+    "belowTitle": {
+      "opacity": 0,
+      "width": 120,
+      "thickness": 3,
+      "color": "#EBD27A"
+    }
   },
-
   "frame": {
     "width": 0,
     "color": "#EBD27A",
@@ -90,7 +105,6 @@
     "inset": 24,
     "radius": 0
   },
-
   "output": {
     "quality": 90
   }

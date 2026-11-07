@@ -21,6 +21,8 @@ export interface LayoutReport {
 }
 export interface RenderReport {
   fontOk: boolean
+  /** Per-line font problems (reciter / meta), empty when all fonts loaded and draw Arabic. */
+  fontErrors: Partial<Record<'reciter' | 'meta', string>>
   /** Shrink ratio applied per text block (1 = no shrink). */
   fit: Record<string, number>
   layout: LayoutReport
@@ -80,7 +82,7 @@ export class OffscreenRenderer {
     const renderId = (this.renderSeq = (this.renderSeq + 1) & 511)
     const report = (await win.webContents.executeJavaScript(
       `window.renderThumbnail(${JSON.stringify({ ...data, renderId })}, ${JSON.stringify(vars)})
-         .then(() => ({ fontOk: window.__fontOk === true, fit: window.__fit || {}, layout: window.__layout || { lines: 0, clamped: false } }))`,
+         .then(() => ({ fontOk: window.__fontOk === true, fontErrors: window.__fontErrors || {}, fit: window.__fit || {}, layout: window.__layout || { lines: 0, clamped: false } }))`,
       true,
     )) as RenderReport
     const frame = await this.captureStamped(win, renderId)

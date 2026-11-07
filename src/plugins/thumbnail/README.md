@@ -43,11 +43,30 @@ min, max, step and a description per knob, for building sliders.
 | `text` | offsetX (−250–250), offsetY (−120–120, negative = up), width (0.5–0.95), gapAboveTitle, gapBelowTitle (0–90) |
 | `shadow` | color, opacity (0–1), blur (0–40), offsetY (−20–20) — shared by all text |
 | `title` | color, gradient (0–1), gradientAngle, scale (0.5–1.15), opacity, glow (0–2), glowColor, glowSize (0–60), outlineWidth (0–6), outlineColor, surahWordScale (0–1.2; 0 hides «سورة»), surahWordGap (0–0.4 em), joinScale (0.2–0.6) |
-| `reciter` | color, scale (0.5–1.6), opacity (0 hides the line), letterSpacing (−0.05–0.3 em), pill { opacity, color, radius, paddingX, paddingY } |
-| `meta` | color, scale (0.5–1.6), opacity, prayerOpacity, dateOpacity (0 hides), letterSpacing, gap (0.1–1.5 em), separatorColor, separatorSize (0–16; 0 hides), pill {…} |
+| `reciter` | **font**, color, scale (0.5–1.6), opacity (0 hides the line), letterSpacing (−0.05–0.3 em), pill { opacity, color, radius, paddingX, paddingY } |
+| `meta` | **font**, color, scale (0.5–1.6), opacity, prayerOpacity, dateOpacity (0 hides), letterSpacing, gap (0.1–1.5 em), separatorColor, separatorSize (0–16; 0 hides), pill {…} |
 | `dividers` | aboveTitle / belowTitle { opacity (0 = hidden), width (40–800), thickness (1–8), color } — a gap applies on both sides of a visible divider |
 | `frame` | width (0–40; 0 = none), color, opacity, inset (0–60), radius (0–40) |
 | `output` | quality (60–100) |
+
+### Fonts (`reciter.font`, `meta.font`)
+
+A value is either a **bundled font id** or an **absolute path** to the user's own `.ttf` / `.otf` /
+`.woff` / `.woff2`. Defaults: `amiri` (reciter) and `ibm-plex-sans-arabic` (prayer · date) = the locked
+look. The surah calligraphy font is fixed. `BUNDLED_FONTS` (exported) carries id, label, style tag and
+files for pickers; `STYLE_FIELDS` entries of kind `font` list the same ids under `options`.
+
+Bundled (all SIL OFL, licences in `template/fonts/licences/`): `amiri`, `ibm-plex-sans-arabic`,
+`scheherazade-new`, `noto-naskh-arabic`, `lateef`, `harmattan`, `markazi-text`, `aref-ruqaa`, `katibeh`,
+`mirza`, `gulzar`, `reem-kufi`, `noto-kufi-arabic`, `cairo`, `tajawal`, `almarai`, `el-messiri`,
+`changa`, `lalezar`, `rakkas`, `vibes`. See `~/Projects/Yoosy Joosy/thumbnail-preview/fonts/` for how
+each looks on a thumbnail.
+
+Custom files: the plugin loads the file in the render window, checks it actually draws Arabic (a
+Latin-only font is refused), and includes the file's size + mtime in the cache key so a replaced file
+re-renders. Problems come back as `FONT_NOT_LOADED` with the line and file named. Weight: bundled fonts
+use their own bold for the reciter line where the family has one; single-weight fonts are never
+faux-bolded (`font-synthesis: none`); custom files are requested at 700 / 500.
 
 Rules the plugin enforces, whatever the knobs say:
 - **Validation first.** Unknown key, wrong type, out-of-range number or bad colour → `INVALID_STYLE`

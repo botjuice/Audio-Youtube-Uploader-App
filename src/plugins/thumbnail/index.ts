@@ -10,13 +10,15 @@ import { pathToFileURL } from 'node:url'
 import { bothExist, cacheKey, framePath, thumbPath, writeAtomic } from './cache'
 import { checkJob } from './job'
 import { downscale, OffscreenRenderer, toJpegUnder } from './renderer'
-import { canonicalStyle, cssVars, safeMargin, validateStyle, type Style } from './style'
+import { bundledFontFaceCss } from './fonts'
+import { canonicalStyle, cssVars, customFontFiles, safeMargin, validateStyle, type Style } from './style'
 import type { PluginHost, PluginManifest, ThumbnailJob, ThumbnailResult } from './types'
 
 export type { PluginHost, PluginManifest, ThumbnailJob, ThumbnailReason, ThumbnailResult } from './types'
 export { DEFAULT_STYLE, STYLE_FIELDS, STYLE_SCHEMA, validateStyle, type Style, type StylePatch, type StyleError, type StyleFieldInfo } from './style'
+export { BUNDLED_FONTS, type BundledFont } from './fonts'
 
-export const manifest: PluginManifest = { id: 'thumbnail', version: '1.1.1', templateVersion: 3, styleVersion: 1 }
+export const manifest: PluginManifest = { id: 'thumbnail', version: '1.2.0', templateVersion: 3, styleVersion: 2 }
 
 /** YouTube's limit for custom thumbnails. */
 const THUMB_MAX_BYTES = 2 * 1024 * 1024
@@ -55,7 +57,21 @@ export async function render(job: ThumbnailJob, host: PluginHost): Promise<Thumb
     return { ok: false, reason: 'PHOTO_UNREADABLE', message: `Photo cannot be read: ${job.photoPath} (${errMsg(e)})` }
   }
 
-  const key = cacheKey(job, manifest.templateVersion, photo, canonicalStyle(style))
+  // Custom font files are part of the picture too: a replaced file at the same path must re-render.
+  const custom = customFontFiles(style)
+  const fontStamp: string[] = []
+  for (const line of ['reciter', 'meta'] as const) {
+    const file = custom[line]
+    if (!file) continue
+    try {
+      const st = await fs.stat(file)
+      if (!st.isFile() || st.size === 0) throw new Error('not a file or empty')
+      fontStamp.push(`${line}:${file}:${st.size}:${Math.round(st.mtimeMs)}`)
+    } catch (e) {
+      return { ok: false, reason: 'FONT_NOT_LOADED', message: `${line === 'reciter' ? 'Reciter' : 'Prayer · date'} font file cannot be read: ${file} (${errMsg(e)})` }
+    }
+  }
+  const key = cacheKey(job, manifest.templateVersion, photo, canonicalStyle(style) + '|' + fontStamp.join('|'))
   const frame = framePath(host.outputDir, key)
   const thumbnail = thumbPath(host.outputDir, key)
   if (await bothExist(host.outputDir, key)) return { ok: true, frame, thumbnail, cacheKey: key, cached: true, warnings: [] }
@@ -63,9 +79,16 @@ export async function render(job: ThumbnailJob, host: PluginHost): Promise<Thumb
   try {
     await fs.mkdir(host.outputDir, { recursive: true })
     // Freshness is guaranteed by the renderer: a frame is only accepted when it carries this render's stamp.
-    const out = await getRenderer().render({ ...check.data, photo: pathToFileURL(job.photoPath).href }, cssVars(style))
+    const customFonts: Partial<Record<'reciter' | 'meta', string>> = {}
+    if (custom.reciter) customFonts.reciter = pathToFileURL(custom.reciter).href
+    if (custom.meta) customFonts.meta = pathToFileURL(custom.meta).href
+    const out = await getRenderer().render({ ...check.data, photo: pathToFileURL(job.photoPath).href, bundledCss: bundledFontFaceCss(), customFonts }, cssVars(style))
 
     if (!out.fontOk) return { ok: false, reason: 'FONT_NOT_LOADED', message: 'The surah calligraphy font did not load — refusing to render the surah name as plain code.' }
+    for (const line of ['reciter', 'meta'] as const) {
+      const err = out.fontErrors?.[line]
+      if (err) return { ok: false, reason: 'FONT_NOT_LOADED', message: `${line === 'reciter' ? 'Reciter' : 'Prayer · date'} font: ${err}${custom[line] ? ` — ${custom[line]}` : ''}` }
+    }
     const worst = Math.min(1, ...Object.values(out.fit))
     if (worst < MIN_FIT) {
       return { ok: false, reason: 'TEXT_OVERFLOW', message: `Text had to shrink to ${Math.round(worst * 100)}% to fit — too small to read. Shorten the reciter name or surah list, or reduce the size knobs.` }

@@ -22,6 +22,7 @@ describe('schema', () => {
   it('every default is inside its own range and validates', () => {
     for (const { path, field } of STYLE_FIELDS) {
       if (field.kind === 'number') { expect(field.default, path).toBeGreaterThanOrEqual(field.min); expect(field.default, path).toBeLessThanOrEqual(field.max) }
+      else if (field.kind === 'font') expect(field.options.some((o) => o.id === field.default), path).toBe(true)
       else expect(parseColor(field.default), path).not.toBeNull()
     }
     expect(validateStyle(DEFAULT_STYLE)).toEqual({ ok: true, style: DEFAULT_STYLE })
@@ -131,5 +132,39 @@ describe('samples/style-template.json', () => {
     const raw = JSON.parse(readFileSync(new URL('./samples/style-template.json', import.meta.url), 'utf8')) as Record<string, unknown>
     delete raw['_comment']
     expect(raw).toEqual(DEFAULT_STYLE)
+  })
+})
+
+describe('fonts', () => {
+  it('accepts bundled ids and absolute font paths, rejects the rest', () => {
+    expect(validateStyle({ reciter: { font: 'cairo' }, meta: { font: 'aref-ruqaa' } }).ok).toBe(true)
+    expect(validateStyle({ reciter: { font: '/Users/me/fonts/MyFont.ttf' } }).ok).toBe(true)
+    expect(validateStyle({ meta: { font: '/x/y.WOFF2' } }).ok).toBe(true)
+    for (const bad of ['Cairo', 'fonts/x.ttf', '/x/y.txt', '', 42]) {
+      const r = validateStyle({ reciter: { font: bad } })
+      expect(r.ok, String(bad)).toBe(false)
+      if (!r.ok) expect(r.errors[0]!.key).toBe('reciter.font')
+    }
+  })
+  it('maps fonts to CSS family + weight', () => {
+    const r = validateStyle({ reciter: { font: 'katibeh' }, meta: { font: '/x/My.ttf' } })
+    const v = cssVars(r.ok ? r.style : DEFAULT_STYLE)
+    expect(v['--reciter-font']).toBe('"katibeh"'); expect(v['--reciter-weight']).toBe('400')
+    expect(v['--meta-font']).toBe('"custom-meta"'); expect(v['--meta-weight']).toBe('500')
+    expect(cssVars(DEFAULT_STYLE)['--reciter-font']).toBe('"amiri"')
+    expect(cssVars(DEFAULT_STYLE)['--meta-font']).toBe('"ibm-plex-sans-arabic"')
+  })
+})
+
+describe('bundled font files', () => {
+  it('every declared file exists in template/fonts and every id is unique', async () => {
+    const { BUNDLED_FONTS } = await import('./fonts')
+    const { existsSync } = await import('node:fs')
+    const ids = new Set<string>()
+    for (const f of BUNDLED_FONTS) {
+      expect(ids.has(f.id), f.id).toBe(false); ids.add(f.id)
+      for (const [file] of f.files) expect(existsSync(new URL(`./template/fonts/${file}`, import.meta.url)), file).toBe(true)
+    }
+    expect(BUNDLED_FONTS.length).toBe(21)
   })
 })

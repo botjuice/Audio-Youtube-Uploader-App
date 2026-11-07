@@ -31,6 +31,10 @@ export interface TemplateData {
   reciter_name: string
   prayer: string           // "صلاة العشاء"
   date: string             // "١ رمضان ١٤٤٦ هـ"
+  /** @font-face block for the bundled fonts (sent once per window). */
+  bundledCss?: string
+  /** file:// URLs of custom font files per line. */
+  customFonts?: Partial<Record<'reciter' | 'meta', string>>
 }
 
 export type JobCheck =
