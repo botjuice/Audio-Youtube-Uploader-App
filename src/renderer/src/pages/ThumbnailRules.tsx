@@ -2,13 +2,14 @@ import { clsx } from 'clsx'
 import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, FolderOpen, Image as ImageIcon, Layers, Maximize2, Plus, RotateCcw, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStyledPreview } from '@/lib/preview'
+import { enumerateLooks, overlayPreview, resolveSampleLook } from '@core/thumb-variants'
 import type { RulePhoto, StyleFieldInfo, StylePatch, StyleSchemaInfo, SurahOption, ThumbCondition, ThumbConditionKind, ThumbnailPreview, ThumbnailRule, ThumbnailSample } from '@shared/types'
 import { PRAYERS } from '@core/prayers'
 import { MAX_CONDITIONS } from '@core/rules'
 import { THUMB_KIND_LABEL, countKnobs, defaultSample, describeThumbRule, effectiveStyle, getKnob, mergePatches, newThumbnailRule, prunePatch, resolveThumbnailLook, setKnob, validateThumbRule, worstCaseSample } from '@core/thumb-rules'
 import { Badge, Button, ColorInput, Empty, IconButton, Input, Modal, Select, Slider, Spinner, Switch } from '@/components/ui'
 import { errText, useStore } from '@/store'
-import { SurahSelect, useSurahOptions } from '@/components/SurahSelect'
+import { SurahSelect, useSurahDict, useSurahOptions } from '@/components/SurahSelect'
 
 const KINDS = Object.keys(THUMB_KIND_LABEL) as ThumbConditionKind[]
 const GROUP_TITLES: Record<string, string> = {
@@ -18,6 +19,18 @@ const GROUP_TITLES: Record<string, string> = {
 const humanise = (seg: string) => seg.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase())
 
 type Draft = { rule: ThumbnailRule; isNew: boolean }
+
+/** For an overlay: every final look it is part of (per reciter, on top of whichever base wins) and the one its sample shows. */
+function useOverlayPreview(rule: ThumbnailRule | null, rules: ThumbnailRule[], plName: (id: string) => string) {
+  const reciters = useStore((s) => s.library.reciters)
+  const playlistRules = useStore((s) => s.library.rules)
+  const dict = useSurahDict()
+  return useMemo(() => {
+    if (!rule) return null
+    const all = enumerateLooks(reciters, rules, playlistRules, dict, plName)
+    return overlayPreview(all, rule, reciters, rules, playlistRules, dict)
+  }, [rule, rules, reciters, playlistRules, dict])  // eslint-disable-line react-hooks/exhaustive-deps
+}
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
@@ -105,12 +118,16 @@ function RuleCard({ rule, count, plName, index, total, onEdit, onToggle, onMove,
 }) {
   const rules = useStore((s) => s.library.thumbnailRules)
   const isDefault = rule.origin === 'default'
-  const { result, rendering } = useStyledPreview(rule.sample, effectiveStyle(rule, rules), rule.overlay || isDefault ? undefined : rule.photo)
+  // An overlay is previewed on the real final look it is part of (its saved sample's, else the first reachable one).
+  const ov = useOverlayPreview(rule.overlay ? rule : null, rules, plName)
+  const unreachable = !!ov && !ov.current
+  const { result, rendering } = useStyledPreview(ov?.current?.sample ?? rule.sample, ov?.current ? ov.current.style ?? {} : effectiveStyle(rule, rules), ov ? ov.current?.photo : isDefault ? undefined : rule.photo, !unreachable)
   const knobs = countKnobs(rule.style)
   return (
     <section className={clsx('rounded-xl border border-border bg-surface shadow-xs overflow-hidden flex flex-col', !rule.enabled && !isDefault && 'opacity-60')}>
       <button type="button" onClick={onEdit} title="Click to edit this look" className="group relative block w-full aspect-video bg-surface-2 text-left no-drag">
-        {result?.ok ? <img src={result.dataUrl} alt="" className="h-full w-full object-cover" />
+        {unreachable ? <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-4 text-center text-xs text-warn"><AlertTriangle size={18} /><span>No recording can get this overlay</span><span className="text-muted">Its conditions can't all hold for any reciter.</span></div>
+          : result?.ok ? <img src={result.dataUrl} alt="" className="h-full w-full object-cover" />
           : result ? <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-4 text-center text-xs text-warn"><AlertTriangle size={18} /><span>{result.reason}</span><span className="text-muted">{result.message}</span></div>
           : <div className="absolute inset-0 flex items-center justify-center text-muted"><ImageIcon size={26} /></div>}
         {rendering && <span className="absolute top-2 right-2"><Spinner className="text-white drop-shadow" /></span>}
@@ -130,6 +147,7 @@ function RuleCard({ rule, count, plName, index, total, onEdit, onToggle, onMove,
               <Badge key={i} tone={c.negate ? 'warn' : 'info'}>{THUMB_KIND_LABEL[c.kind]} {c.negate ? 'is not' : 'is'} {c.kind === 'playlist' ? plName(c.value) : c.value || '…'}</Badge>
             ))}
         </div>
+        {ov?.current && <div className="truncate text-[11px] text-muted" title={`Look: ${ov.current.look}`}>Shown on {ov.current.reciter} · {ov.current.when}</div>}
         <div className="flex items-center gap-2 text-xs text-muted">
           <span>{knobs ? `${knobs} knob${knobs === 1 ? '' : 's'} changed` : isDefault ? 'plugin default look' : 'same as the Default look'}</span>
           {rule.photo && !rule.overlay && <><span>·</span><span title={rule.photo}>own image</span></>}
@@ -156,6 +174,9 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
   const library = useStore((s) => s.library)
   const saving = useStore((s) => !!s.busy['thumbRules'])
   const [rule, setRule] = useState<ThumbnailRule>(draft.rule)
+  const [baseRule, setBaseRule] = useState<ThumbnailRule>(draft.rule)   // what "unchanged" means; moves on save and on auto-picked samples
+  useEffect(() => setBaseRule(draft.rule), [draft])
+  const [sampleTouched, setSampleTouched] = useState(false)
   const [schema, setSchema] = useState<StyleSchemaInfo | null>(null)
   const surahOptions = useSurahOptions()
   const [full, setFull] = useState(false)
@@ -174,7 +195,7 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
     const picked = await window.api.chooseRulePhoto(rule.id)
     if (picked) { setPhoto(picked); setRule((r) => ({ ...r, photo: picked.file })) }
   })
-  const dirty = draft.isNew || JSON.stringify(rule) !== JSON.stringify(draft.rule)
+  const dirty = draft.isNew || JSON.stringify(rule) !== JSON.stringify(baseRule)
   // X / Esc: close straight away when nothing changed, otherwise ask first
   const requestClose = () => { if (full) { setFull(false); return } if (dirty) setConfirmClose(true); else onDiscard() }
   useEffect(() => {
@@ -188,13 +209,30 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
   // Every rule inherits the Default look: knobs show its values as their defaults, resets return to it,
   // and only differences from it are stored. In the Default look's own editor, "default" is the plugin's.
   const defaultStyle = rules.find((x) => x.origin === 'default' && x.id !== rule.id)?.style ?? {}
-  const previewStyle = isDefault ? rule.style : mergePatches(defaultStyle, rule.style)
+  // Overlays are previewed as the real final look of the sample recording: base rule (or default) + every overlay it matches,
+  // with this draft standing in for its saved version. The "Preview on" chips list every final look the overlay is part of.
+  const draftRules = useMemo(() => {
+    const live = { ...rule, enabled: true }
+    return rules.some((x) => x.id === rule.id) ? rules.map((x) => (x.id === rule.id ? live : x)) : [...rules.filter((x) => x.origin !== 'default'), live, ...rules.filter((x) => x.origin === 'default')]
+  }, [rule, rules])
+  const ov = useOverlayPreview(rule.overlay && !isDefault ? rule : null, draftRules, plName)
+  const dict = useSurahDict()
+  const sampleLook = useMemo(() => (ov ? resolveSampleLook(rule.sample, library.reciters, draftRules, library.rules, dict) : null), [ov, rule.sample, library.reciters, draftRules, library.rules, dict])
+  useEffect(() => {   // sample no longer triggers this overlay (opened, or conditions changed) → move to the first reachable look, without counting as an edit
+    if (!ov || ov.sampleFits || !ov.options[0] || sampleTouched) return
+    const sample = ov.options[0].sample
+    const wasClean = JSON.stringify(rule) === JSON.stringify(baseRule)
+    setRule((r) => ({ ...r, sample }))
+    if (wasClean) setBaseRule((b) => ({ ...b, sample }))
+  }, [ov, sampleTouched])  // eslint-disable-line react-hooks/exhaustive-deps
+  const previewStyle = sampleLook ? (sampleLook.style ?? {}) : isDefault ? rule.style : mergePatches(defaultStyle, rule.style)
+  const previewPhoto = sampleLook ? sampleLook.photo : rule.overlay || isDefault ? undefined : rule.photo
   const baseline = useMemo(() => (schema ? (isDefault ? schema.defaults : mergePatches(schema.defaults as unknown as StylePatch, defaultStyle)) : null) as Record<string, unknown> | null, [schema, isDefault, defaultStyle])
-  const { result, rendering } = useStyledPreview(rule.sample, previewStyle, rule.overlay || isDefault ? undefined : rule.photo)
+  const { result, rendering } = useStyledPreview(rule.sample, previewStyle, previewPhoto)
   // The sample can hide an overflow (one short surah fits anything), so the widest content is always checked too.
   const worst = useMemo(() => worstCaseSample(library.reciters, rule.sample.folder || undefined), [library.reciters, rule.sample.folder])
   const isWorst = JSON.stringify({ ...rule.sample, folder: '' }) === JSON.stringify({ ...worst, folder: '' })
-  const { result: worstResult, rendering: worstRendering } = useStyledPreview(worst, previewStyle, rule.overlay || isDefault ? undefined : rule.photo, !isWorst, 900)
+  const { result: worstResult, rendering: worstRendering } = useStyledPreview(worst, previewStyle, previewPhoto, !isWorst, 900)
   const worstFails = !isWorst && !!worstResult && !worstResult.ok && worstResult.reason === 'TEXT_OVERFLOW'
   const styleBlocks = !!result && !result.ok && (result.reason === 'INVALID_STYLE' || result.reason === 'TEXT_OVERFLOW' || result.reason === 'FONT_NOT_LOADED')
   const canSave = errors.length === 0 && !styleBlocks && !rendering && !saving
@@ -208,7 +246,8 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
     setRule({ ...rule, style: prunePatch(next, baseline) as StylePatch })
   }
   const resetGroup = (group: string) => { const next = { ...(rule.style as Record<string, unknown>) }; delete next[group]; setRule({ ...rule, style: next as StylePatch }) }
-  const setSample = (p: Partial<ThumbnailSample>) => setRule({ ...rule, sample: { ...rule.sample, ...p } })
+  const setSample = (p: Partial<ThumbnailSample>) => { setSampleTouched(true); setRule({ ...rule, sample: { ...rule.sample, ...p } }) }
+  const showOn = (sample: ThumbnailSample) => { setSampleTouched(false); setRule({ ...rule, sample }) }
   const setCond = (i: number, c: Partial<ThumbCondition>) => setRule({ ...rule, conditions: rule.conditions.map((x, j) => (j === i ? { ...x, ...c } : x)) })
 
   const groups = useMemo(() => {
@@ -280,6 +319,24 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
             )}
             <Section title="Preview sample" hint={rule.photo && !rule.overlay ? 'Saved with the rule. The Arabic name comes from the reciter folder; the background is the image above.' : 'Saved with the rule. Photo and Arabic name come from the reciter folder, exactly as in an upload.'}>
               <div className="space-y-2">
+                {ov && (
+                  <div className="space-y-1.5">
+                    <div className="text-[11px] text-muted">Preview on — every final look this overlay is part of, per reciter</div>
+                    {ov.options.length === 0
+                      ? <div className="rounded-lg border border-warn/40 bg-warn/6 p-2 text-[11px]"><b>No recording can get this overlay.</b> Its conditions can't all hold for any reciter: check for a reciter that exists, a prayer and surah mix that can happen together, and a playlist that a playlist rule actually grants.</div>
+                      : <div className="flex flex-wrap gap-1">
+                        {ov.options.map((v) => (
+                          <button key={v.id} type="button" onClick={() => showOn(v.sample)} title={`Look: ${v.look}`}
+                            className={clsx('max-w-full truncate rounded-full border px-2.5 h-6.5 text-xs no-drag transition-colors',
+                              ov.sampleFits && ov.current?.id === v.id ? 'bg-accent/12 border-accent/40 text-accent' : 'bg-surface border-border text-muted hover:text-text')}>
+                            {v.reciter} · {v.when}
+                          </button>
+                        ))}
+                      </div>}
+                    {ov.options.length > 0 && !ov.sampleFits && <div className="text-[11px] text-warn">This sample doesn't trigger this overlay — pick one of the looks above.</div>}
+                    {ov.sampleFits && ov.current && <div className="text-[11px] text-muted" title={ov.current.look}>Look: {ov.current.look}</div>}
+                  </div>
+                )}
                 <Select value={rule.sample.folder} onChange={(e) => setSample({ folder: e.target.value })} className="h-7.5 w-full text-xs">
                   {!library.reciters.some((r) => r.folder === rule.sample.folder) && <option value={rule.sample.folder}>{rule.sample.folder ? `⚠ ${rule.sample.folder} (not found)` : '(first reciter)'}</option>}
                   {library.reciters.map((r) => <option key={r.folder} value={r.folder}>{r.folder}{r.nameAr ? ` · ${r.nameAr}` : ' · ⚠ no Arabic name'}</option>)}
@@ -326,7 +383,7 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
           {/* right: big preview */}
           <main className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
             <div className="flex items-center gap-2 text-xs text-muted">
-              {rendering ? <><Spinner className="text-accent" /> Rendering…</> : result?.ok ? <>{result.cached ? 'From cache' : 'Rendered'}{result.ms !== undefined ? ` in ${result.ms} ms` : ''} · 1920×1080 frame; the YouTube thumbnail is the same at 1280×720{rule.overlay ? ' · shown on top of the Default look' : ''}</> : 'Change anything on the left — the frame updates by itself'}
+              {rendering ? <><Spinner className="text-accent" /> Rendering…</> : result?.ok ? <>{result.cached ? 'From cache' : 'Rendered'}{result.ms !== undefined ? ` in ${result.ms} ms` : ''} · 1920×1080 frame; the YouTube thumbnail is the same at 1280×720{rule.overlay ? ' · the final look of the sample recording, every matching rule included' : ''}</> : 'Change anything on the left — the frame updates by itself'}
               {result?.ok && <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setFull(true)}><Maximize2 size={13} /> Full size</Button>}
             </div>
             {result?.ok ? (

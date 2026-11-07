@@ -1,9 +1,9 @@
 import { app, BrowserWindow, dialog, nativeTheme, shell } from 'electron'
 import { promises as fs } from 'node:fs'
 import { basename, extname, join } from 'node:path'
-import type { CustomFont, Health, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, RulePhoto, Settings, StyleRenderInput, StyleSchemaInfo, ThumbnailRule, ThumbnailVariant, TokenValidation } from '@shared/types'
+import type { CustomFont, Health, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, RulePhoto, Settings, StyleRenderInput, StyleSchemaInfo, ThumbnailRule, TokenValidation } from '@shared/types'
 import type { LibrarySnapshot, SurahEntry, SyncResult } from '@shared/api'
-import { DEFAULT_SURAHS, conditionKey, describeRule, describeThumbRule, nextQuotaReset, normaliseQuota, normaliseThumbRules, reciterKey, reciterVariants, remainingUploads, surahKey, validateRule, validateThumbRule, validateToken } from '@core/index'
+import { DEFAULT_SURAHS, conditionKey, describeRule, describeThumbRule, nextQuotaReset, normaliseQuota, normaliseThumbRules, reciterKey, remainingUploads, surahKey, validateRule, validateThumbRule, validateToken } from '@core/index'
 import { ffmpegAvailable, ffmpegPath } from './ffmpeg'
 import { connect, disconnect, getClient, parseClientSecretJson, resetClient } from './google/oauth'
 import { createPlaylist, getChannel, listPlaylists, listUploads } from './google/youtube'
@@ -536,15 +536,6 @@ class YoosyApp {
     return toPreview(await renderJob(built.job, library, rec.id))
   }
 
-  /** Every distinct look this reciter's videos can get (everyday look first), with the sample that shows it. */
-  listReciterVariants(folder: string): ThumbnailVariant[] {
-    const { store } = this.req()
-    const reciter = this.snapshot.reciters.find((r) => r.folder === folder)
-    if (!reciter) return []
-    const surahs = effectiveSurahs(store.surahs.get())
-    const plName = (id: string) => store.playlists.get().items.find((p) => p.id === id)?.title ?? id
-    return reciterVariants(reciter, store.thumbRules.get().rules, store.rules.get().rules, surahs, plName)
-  }
 
   /** Rule editor preview: a style on a sample, same renderer and cache dir as uploads; returns the 1080p frame too. */
   async renderStyled(input: StyleRenderInput): Promise<ThumbnailPreview> {

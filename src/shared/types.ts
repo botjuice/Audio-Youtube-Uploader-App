@@ -126,14 +126,20 @@ export type ThumbConditionKind = ConditionKind | 'playlist'
 export interface ThumbCondition { kind: ThumbConditionKind; value: string; negate: boolean }
 
 /** What the rule's preview card renders: a real reciter folder plus made-up surahs / prayer / date. */
-export interface ThumbnailSample { folder: string; surahsAr: string[]; prayer: string; date: string }
+export interface ThumbnailSample {
+  folder: string; surahsAr: string[]; prayer: string; date: string
+  /** keywords the sample recording carries — only for matching rules, never drawn */
+  keywords?: string[]
+}
 
-/** One distinct look a reciter's videos can get, with a sample situation that produces it (see core/thumb-variants). */
+/** One final look a recording can get: a reciter, the base rule that won and the overlays on top (see core/thumb-variants). */
 export interface ThumbnailVariant {
-  id: string          // 'base' (everyday look) or the id of the rule this variant demonstrates
-  title: string       // 'Everyday look' or the rule's description
-  look: string        // the resolved chain, e.g. "Default look + Taraweeh nights"
-  when: string        // the sample situation, e.g. "Taraweeh · الكهف · in “Ramadan”"
+  id: string             // reciter key + base id + overlay ids
+  reciter: string        // reciter folder
+  baseId: string | null
+  overlayIds: string[]
+  look: string           // the chain, e.g. "Reciter is X + Taraweeh nights"
+  when: string           // the sample situation, e.g. "Taraweeh · الكهف · in “Ramadan”"
   sample: ThumbnailSample
   style?: StylePatch
   photo?: string

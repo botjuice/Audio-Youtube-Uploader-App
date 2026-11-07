@@ -1,8 +1,10 @@
 import { clsx } from 'clsx'
 import { ChevronLeft, ChevronRight, FolderOpen, ImageOff, Layers, Plus, Users } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReciterInfo, ThumbnailVariant, TokenValidation } from '@shared/types'
 import { Badge, Button, Card, Empty, Field, IconButton, Input, Modal, Select } from '@/components/ui'
+import { enumerateLooks, looksForReciter } from '@core/thumb-variants'
+import { useSurahDict } from '@/components/SurahSelect'
 import { useStyledPreview } from '@/lib/preview'
 import { useBusy, useStore } from '@/store'
 
@@ -69,16 +71,14 @@ function ReciterCard({ r, libraryPath }: { r: ReciterInfo; libraryPath: string }
   const settings = useStore((s) => s.settings)
   const library = useStore((s) => s.library)
   const thumbsOn = !!settings?.thumbnails.enabled
-  // Every look this reciter's videos can get: recomputed when the thumbnail or playlist rules change.
-  const [variants, setVariants] = useState<ThumbnailVariant[] | null>(null)
+  // Every final look this reciter's videos can get (everyday look first); follows the thumbnail and playlist rules live.
+  const dict = useSurahDict()
   const [showAll, setShowAll] = useState(false)
-  const rulesKey = JSON.stringify([library.thumbnailRules, library.rules, library.playlists.map((p) => [p.id, p.title])])
-  useEffect(() => {
-    if (!thumbsOn || !r.nameAr || !r.imagePath) { setVariants(null); return }
-    let live = true
-    void window.api.listReciterVariants(r.folder).then((v) => { if (live) setVariants(v) }).catch(() => { if (live) setVariants([]) })
-    return () => { live = false }
-  }, [r.folder, r.imagePath, r.nameAr, thumbsOn, rulesKey])
+  const variants = useMemo<ThumbnailVariant[] | null>(() => {
+    if (!thumbsOn || !r.nameAr || !r.imagePath) return null
+    const plName = (id: string) => library.playlists.find((p) => p.id === id)?.title ?? id
+    return looksForReciter(enumerateLooks(library.reciters, library.thumbnailRules, library.rules, dict, plName), r.folder)
+  }, [thumbsOn, r.nameAr, r.imagePath, r.folder, library.reciters, library.thumbnailRules, library.rules, library.playlists, dict])
   const [nameAr, setNameAr] = useState(r.nameAr ?? '')
   const [aliases, setAliases] = useState(r.aliases.join(', '))
   useEffect(() => { setNameAr(r.nameAr ?? ''); setAliases(r.aliases.join(', ')) }, [r.nameAr, r.aliases])
@@ -103,7 +103,7 @@ function ReciterCard({ r, libraryPath }: { r: ReciterInfo; libraryPath: string }
           <Field label="Thumbnail preview" hint={variants?.[0] ? `The everyday look from the thumbnail rules · sample: ${variants[0].when}, today` : 'How this reciter\'s thumbnails will look with the current photo, name and thumbnail rules'}>
             {!r.nameAr || !r.imagePath ? <div className="text-xs text-muted">Set the Arabic name and a photo to see a preview.</div>
               : !variants?.[0] ? <div className="aspect-video rounded-lg bg-surface-2 animate-pulse" />
-              : <VariantPreview v={variants[0]} />}
+              : <VariantPreview v={variants[0]} title="Everyday look" />}
             {variants && variants.length > 0 && (
               <div className="mt-2 flex items-center justify-between gap-3">
                 <span className="text-xs text-muted">
@@ -127,12 +127,14 @@ function ReciterCard({ r, libraryPath }: { r: ReciterInfo; libraryPath: string }
 }
 
 /** One rendered look (same renderer and cache as the rule editor). */
-function VariantPreview({ v, className }: { v: ThumbnailVariant; className?: string }) {
+function VariantPreview({ v, title, className }: { v: ThumbnailVariant; title: string; className?: string }) {
   const { result, rendering } = useStyledPreview(v.sample, v.style ?? {}, v.photo, true, 0)
   if (!result || (rendering && !result.ok)) return <div className={clsx('aspect-video rounded-lg bg-surface-2 animate-pulse', className)} />
   if (!result.ok) return <div className={clsx('aspect-video rounded-lg border border-border bg-surface-2 flex items-center justify-center p-4 text-xs text-warn text-center', className)}>Can't render: {result.message}</div>
-  return <img src={result.dataUrl} alt={v.title} className={clsx('w-full aspect-video rounded-lg border border-border object-cover', rendering && 'opacity-60', className)} />
+  return <img src={result.dataUrl} alt={title} className={clsx('w-full aspect-video rounded-lg border border-border object-cover', rendering && 'opacity-60', className)} />
 }
+
+const titleOf = (i: number, v: ThumbnailVariant) => (i === 0 ? 'Everyday look' : v.look)
 
 /** Slideshow of every look the reciter's videos can get. All slides render up front; arrows and ←/→ move between them. */
 function VariantsModal({ open, onClose, folder, variants }: { open: boolean; onClose: () => void; folder: string; variants: ThumbnailVariant[] }) {
@@ -153,20 +155,20 @@ function VariantsModal({ open, onClose, folder, variants }: { open: boolean; onC
       <div className="flex items-center gap-2">
         <IconButton label="Previous look" onClick={() => go(-1)} disabled={n < 2} className="shrink-0"><ChevronLeft size={18} /></IconButton>
         <div className="flex-1 min-w-0">
-          {variants.map((v, j) => <VariantPreview key={v.id} v={v} className={j === i ? '' : 'hidden'} />)}
+          {variants.map((v, j) => <VariantPreview key={v.id} v={v} title={titleOf(j, v)} className={j === i ? '' : 'hidden'} />)}
         </div>
         <IconButton label="Next look" onClick={() => go(1)} disabled={n < 2} className="shrink-0"><ChevronRight size={18} /></IconButton>
       </div>
       <div className="mt-3 flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <div className="font-medium truncate">{cur.title}</div>
+          <div className="font-medium truncate">{titleOf(i, cur)}</div>
           <div className="text-xs text-muted truncate" title={cur.look}>Look: {cur.look}</div>
           <div className="text-xs text-muted truncate" title={cur.when}>Sample: {cur.when}</div>
         </div>
         <div className="shrink-0 flex items-center gap-2">
           <span className="text-xs text-muted tabular-nums">{i + 1} of {n}</span>
           <div className="flex gap-1">
-            {variants.map((v, j) => <button key={v.id} aria-label={v.title} onClick={() => setI(j)} className={clsx('h-1.5 w-1.5 rounded-full transition-colors no-drag', j === i ? 'bg-accent' : 'bg-border hover:bg-muted')} />)}
+            {variants.map((v, j) => <button key={v.id} aria-label={titleOf(j, v)} onClick={() => setI(j)} className={clsx('h-1.5 w-1.5 rounded-full transition-colors no-drag', j === i ? 'bg-accent' : 'bg-border hover:bg-muted')} />)}
           </div>
         </div>
       </div>

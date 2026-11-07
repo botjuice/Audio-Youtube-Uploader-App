@@ -37,7 +37,6 @@ export function registerIpc(): void {
     createPlaylist: (_w, t, p) => yoosy.createPlaylist(t, p),
     syncWithYouTube: () => yoosy.syncWithYouTube(),
     previewThumbnail: (_w, id) => yoosy.previewThumbnail(id),
-    listReciterVariants: async (_w, f) => yoosy.listReciterVariants(f),
     retryThumbnail: (_w, id) => yoosy.retryThumbnail(id),
     renderStyled: (_w, input) => yoosy.renderStyled(input),
     getStyleSchema: async () => yoosy.getStyleSchema(),

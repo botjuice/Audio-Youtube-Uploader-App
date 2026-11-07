@@ -5,7 +5,7 @@ const methods = [
   'renameRecord', 'applyFix', 'applyAllFixes', 'markUploaded', 'markNotUploaded', 'patchReciter', 'addReciter', 'validateToken',
   'listSurahs', 'setSurah', 'deleteSurah', 'setRules', 'setKeywords', 'setThumbnailRules',
   'setClientSecretFromFile', 'setClientSecret', 'connectYouTube', 'disconnectYouTube',
-  'refreshPlaylists', 'createPlaylist', 'syncWithYouTube', 'previewThumbnail', 'listReciterVariants', 'retryThumbnail', 'renderStyled', 'getStyleSchema', 'chooseRulePhoto', 'getRulePhoto', 'chooseFontFile', 'listSurahOptions', 'startUpload', 'cancelUpload',
+  'refreshPlaylists', 'createPlaylist', 'syncWithYouTube', 'previewThumbnail', 'retryThumbnail', 'renderStyled', 'getStyleSchema', 'chooseRulePhoto', 'getRulePhoto', 'chooseFontFile', 'listSurahOptions', 'startUpload', 'cancelUpload',
   'getUpdateState', 'checkForUpdates', 'downloadUpdate', 'installUpdate',
   'getHealth', 'getActivity', 'openExternal', 'showInFolder',
 ] as const
