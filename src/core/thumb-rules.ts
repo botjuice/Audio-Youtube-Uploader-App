@@ -32,23 +32,59 @@ export function matchesThumbRule(rule: ThumbnailRule, t: ThumbTarget, surahs: Su
   return rule.conditions.every((c) => thumbConditionHolds(c, t, surahs))
 }
 
-/** First matching rule in list order, else the default rule, else null (no rules at all). */
+/** The base look: first matching non-overlay rule in list order, else the default rule, else null (no rules at all). */
 export function resolveThumbnailRule(t: ThumbTarget, rules: readonly ThumbnailRule[], surahs: SurahDict = DEFAULT_SURAHS): ThumbnailRule | null {
-  return rules.find((r) => r.origin !== 'default' && matchesThumbRule(r, t, surahs)) ?? rules.find((r) => r.origin === 'default') ?? null
+  return rules.find((r) => r.origin !== 'default' && !r.overlay && matchesThumbRule(r, t, surahs)) ?? rules.find((r) => r.origin === 'default') ?? null
+}
+
+/** Every matching overlay rule, in list order (later ones win on the same knob). */
+export function matchingOverlays(t: ThumbTarget, rules: readonly ThumbnailRule[], surahs: SurahDict = DEFAULT_SURAHS): ThumbnailRule[] {
+  return rules.filter((r) => r.overlay && r.origin !== 'default' && matchesThumbRule(r, t, surahs))
+}
+
+export interface ThumbnailLook {
+  base: ThumbnailRule | null
+  overlays: ThumbnailRule[]
+  /** base patch with every overlay's changed knobs layered on top; undefined = plugin defaults */
+  style: StylePatch | undefined
+}
+
+/** Deep-merge style patches: knobs set in `over` replace those in `base`; groups are merged, not replaced. */
+export function mergePatches(base: StylePatch, over: StylePatch): StylePatch {
+  const out: Record<string, unknown> = { ...(base as Record<string, unknown>) }
+  for (const [k, v] of Object.entries(over as Record<string, unknown>)) {
+    const b = out[k]
+    out[k] = v !== null && typeof v === 'object' && b !== null && typeof b === 'object' ? mergePatches(b as StylePatch, v as StylePatch) : v
+  }
+  return out as StylePatch
+}
+
+/** The look a recording gets: base rule (first match or default) + matching overlays. */
+export function resolveThumbnailLook(t: ThumbTarget, rules: readonly ThumbnailRule[], surahs: SurahDict = DEFAULT_SURAHS): ThumbnailLook {
+  const base = resolveThumbnailRule(t, rules, surahs)
+  const overlays = matchingOverlays(t, rules, surahs)
+  const merged = overlays.reduce((acc, r) => mergePatches(acc, r.style), base?.style ?? {})
+  return { base, overlays, style: isEmptyPatch(merged) ? undefined : merged }
 }
 
 /** The style patch to send with a recording's job (undefined = plugin defaults). */
 export function resolveThumbnailStyle(t: ThumbTarget, rules: readonly ThumbnailRule[], surahs: SurahDict = DEFAULT_SURAHS): { rule: ThumbnailRule | null; style: StylePatch | undefined } {
-  const rule = resolveThumbnailRule(t, rules, surahs)
-  const style = rule && !isEmptyPatch(rule.style) ? rule.style : undefined
-  return { rule, style }
+  const look = resolveThumbnailLook(t, rules, surahs)
+  return { rule: look.base, style: look.style }
+}
+
+/** "Default look + Taraweeh gold" */
+export function describeLook(look: Pick<ThumbnailLook, 'base' | 'overlays'>, playlistName?: (id: string) => string): string | null {
+  if (!look.base && !look.overlays.length) return null
+  return [...(look.base ? [look.base] : []), ...look.overlays].map((r) => describeThumbRule(r, playlistName)).join(' + ')
 }
 
 /** Problems that make a thumbnail rule unsaveable (conditions and shape; the style is checked by the plugin). */
-export function validateThumbRule(rule: Pick<ThumbnailRule, 'conditions' | 'origin' | 'sample' | 'style'>, surahs: SurahDict = DEFAULT_SURAHS): string[] {
+export function validateThumbRule(rule: Pick<ThumbnailRule, 'conditions' | 'origin' | 'sample' | 'style' | 'overlay'>, surahs: SurahDict = DEFAULT_SURAHS): string[] {
   const errors: string[] = []
   if (rule.origin === 'default') {
     if (rule.conditions.length) errors.push('The default look has no conditions — it applies when no other rule matches')
+    if (rule.overlay) errors.push('The default look cannot be an overlay')
   } else if (rule.conditions.length === 0) errors.push('Add at least one condition')
   errors.push(...conditionProblems(rule.conditions, surahs, thumbConditionKey))
   if (!rule.style || typeof rule.style !== 'object' || Array.isArray(rule.style)) errors.push('Style must be an object')
@@ -123,5 +159,5 @@ export function newThumbnailRule(conditions: ThumbCondition[], sample: Thumbnail
 export function normaliseThumbRules(rules: readonly ThumbnailRule[]): ThumbnailRule[] {
   const others = rules.filter((r) => r.origin !== 'default')
   const def = rules.find((r) => r.origin === 'default') ?? defaultThumbnailRule()
-  return [...others, { ...def, id: DEFAULT_RULE_ID, conditions: [] }]
+  return [...others, { ...def, id: DEFAULT_RULE_ID, conditions: [], overlay: false }]
 }

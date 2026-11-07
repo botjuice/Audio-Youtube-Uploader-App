@@ -5,7 +5,7 @@ import type { LibraryRecord, ThumbnailPreview } from '@shared/types'
 import { Badge, Button, Chip, IconButton, Input, Modal, Select } from '@/components/ui'
 import { statusMeta, fmtBytes, fmtRel, parseVideoId } from '@/lib/format'
 import { describeRule } from '@core/rules'
-import { describeThumbRule, resolveThumbnailRule } from '@core/thumb-rules'
+import { describeLook, resolveThumbnailLook } from '@core/thumb-rules'
 import { useStore } from '@/store'
 
 export function RecordDetail({ record: r, onClose }: { record: LibraryRecord; onClose: () => void }) {
@@ -237,8 +237,7 @@ function ThumbnailSection({ record: r }: { record: LibraryRecord }) {
   const settings = useStore((s) => s.settings)
   const library = useStore((s) => s.library)
   const call = useStore((s) => s.call)
-  const look = resolveThumbnailRule({ reciter: r.reciterKey, tokens: r.tokens, playlists: r.playlists.final }, library.thumbnailRules)
-  const lookName = look ? describeThumbRule(look, (id) => library.playlists.find((p) => p.id === id)?.title ?? id) : null
+  const lookName = describeLook(resolveThumbnailLook({ reciter: r.reciterKey, tokens: r.tokens, playlists: r.playlists.final }, library.thumbnailRules), (id) => library.playlists.find((p) => p.id === id)?.title ?? id)
   const rulesKey = JSON.stringify(library.thumbnailRules)
   const [preview, setPreview] = useState<ThumbnailPreview | null>(null)
   const [full, setFull] = useState(false)

@@ -76,6 +76,10 @@ preview and its conditions; click the preview to open the editor.
 - **First match wins.** Rules are tried top to bottom; the arrows on a card change its priority.
   The **Default look** card (no conditions, cannot be deleted) applies when nothing matches and is
   editable like any other rule.
+- **Overlay rules** (toggle in the editor) don't compete for the base look: every matching overlay
+  adds its changed knobs on top of whichever rule won, in list order. One overlay "Prayer is
+  Taraweeh" with a gold frame therefore restyles every reciter's Taraweeh thumbnails while each
+  reciter's own rule keeps its other settings.
 - **The editor** shows every knob the plugin offers, grouped (photo, overlay, text layout, shadow,
   surah title, reciter line, prayer · date line, dividers, border frame, output) as sliders and
   colour pickers with their defaults; only changed knobs are saved. The 1920×1080 frame re-renders

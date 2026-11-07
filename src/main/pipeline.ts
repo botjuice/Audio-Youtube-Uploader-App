@@ -8,6 +8,7 @@ import { effectiveSurahs, scanLibrary, videoPath, writeMarker } from './library'
 import { activity } from './log'
 import type { LibraryStore } from './store'
 import { buildThumbnailJob, renderJob, styleForRecord } from './thumbnails'
+import { describeLook } from '@core/thumb-rules'
 
 export interface PipelineContext {
   library: string
@@ -54,9 +55,9 @@ export class Pipeline extends EventEmitter {
         if (ctx.settings.thumbnails.enabled) {
           this.progress({ recordId: rec.id, stage: 'thumbnail', percent: 0 })
           const surahs = effectiveSurahs(ctx.store.surahs.get())
-          const { rule, style } = styleForRecord(rec, ctx.store.thumbRules.get().rules, surahs)
-          const built = buildThumbnailJob(rec, reciter, surahs, ctx.settings.thumbnails, style)
-          if (rule && style) activity.info(`Thumbnail look: “${rule.label?.trim() || rule.id}”`, rec.id)
+          const look = styleForRecord(rec, ctx.store.thumbRules.get().rules, surahs)
+          const built = buildThumbnailJob(rec, reciter, surahs, ctx.settings.thumbnails, look.style)
+          if (look.style) activity.info(`Thumbnail look: ${describeLook(look)}`, rec.id)
           const result = built.ok ? await renderJob(built.job, ctx.library, rec.id) : built
           if (result.ok) {
             frame = result.frame; frameKey = result.cacheKey; thumbFile = result.thumbnail

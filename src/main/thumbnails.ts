@@ -6,7 +6,7 @@
 import { promises as fs } from 'node:fs'
 
 import type { LibraryRecord, ReciterInfo, Settings, StyleError, StylePatch, StyleSchemaInfo, SurahOption, ThumbnailPreview, ThumbnailRule, ThumbnailSample } from '@shared/types'
-import { resolveThumbnailStyle, type ThumbTarget } from '@core/thumb-rules'
+import { resolveThumbnailLook, type ThumbTarget, type ThumbnailLook } from '@core/thumb-rules'
 import { DEFAULT_SURAHS, translateSurah, type SurahDict } from '@core/surahs'
 import { SURAHS_AR } from '../plugins/thumbnail/surahs'
 import { PRAYERS } from '@core/prayers'
@@ -52,8 +52,8 @@ export const thumbTarget = (rec: Pick<LibraryRecord, 'reciterKey' | 'tokens' | '
   ({ reciter: rec.reciterKey, tokens: rec.tokens, playlists: rec.playlists.final })
 
 /** The style patch a recording gets from the thumbnail rules (undefined = plugin defaults). */
-export function styleForRecord(rec: Pick<LibraryRecord, 'reciterKey' | 'tokens' | 'playlists'>, rules: readonly ThumbnailRule[], surahs: SurahDict): { rule: ThumbnailRule | null; style: StylePatch | undefined } {
-  return resolveThumbnailStyle(thumbTarget(rec), rules, surahs)
+export function styleForRecord(rec: Pick<LibraryRecord, 'reciterKey' | 'tokens' | 'playlists'>, rules: readonly ThumbnailRule[], surahs: SurahDict): ThumbnailLook {
+  return resolveThumbnailLook(thumbTarget(rec), rules, surahs)
 }
 
 /** A representative job for a reciter page preview (their photo + name, a fixed surah/prayer/date). */

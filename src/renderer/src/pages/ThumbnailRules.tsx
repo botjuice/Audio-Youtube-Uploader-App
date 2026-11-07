@@ -1,11 +1,11 @@
 import { clsx } from 'clsx'
-import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, ChevronRight, Image as ImageIcon, Maximize2, Plus, RotateCcw, Trash2, X } from 'lucide-react'
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, ChevronRight, Image as ImageIcon, Layers, Maximize2, Plus, RotateCcw, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { StyleFieldInfo, StylePatch, StyleSchemaInfo, SurahOption, ThumbCondition, ThumbConditionKind, ThumbnailPreview, ThumbnailRule, ThumbnailSample } from '@shared/types'
 import { PRAYERS } from '@core/prayers'
 import { DEFAULT_SURAHS } from '@core/surahs'
 import { MAX_CONDITIONS } from '@core/rules'
-import { THUMB_KIND_LABEL, countKnobs, defaultSample, describeThumbRule, getKnob, newThumbnailRule, prunePatch, resolveThumbnailRule, setKnob, validateThumbRule } from '@core/thumb-rules'
+import { THUMB_KIND_LABEL, countKnobs, defaultSample, describeThumbRule, getKnob, mergePatches, newThumbnailRule, prunePatch, resolveThumbnailLook, setKnob, validateThumbRule } from '@core/thumb-rules'
 import { Badge, Button, ColorInput, Empty, IconButton, Input, Select, Slider, Spinner, Switch } from '@/components/ui'
 import { errText, useStore } from '@/store'
 
@@ -59,15 +59,8 @@ export default function ThumbnailRules() {
   const persist = (next: ThumbnailRule[]) => call('thumbRules', () => window.api.setThumbnailRules(next), { success: 'Thumbnail rules saved' })
   const plName = (id: string) => library.playlists.find((p) => p.id === id)?.title ?? `(unknown playlist ${id.slice(0, 8)}…)`
 
-  // which rule each recording would get (first match wins) → counts per rule
-  const counts = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const r of library.records) {
-      const hit = resolveThumbnailRule({ reciter: r.reciterKey, tokens: r.tokens, playlists: r.playlists.final }, rules)
-      if (hit) m.set(hit.id, (m.get(hit.id) ?? 0) + 1)
-    }
-    return m
-  }, [library.records, rules])
+  // base rule per recording (first match wins) and every overlay that applies → counts per rule
+  const counts = useMemo(() => countLooks(library.records, rules), [library.records, rules])
 
   const others = rules.filter((r) => r.origin !== 'default')
   const def = rules.find((r) => r.origin === 'default')
@@ -93,7 +86,7 @@ export default function ThumbnailRules() {
     <div className="h-full overflow-auto">
       <div className="drag h-13 flex items-center gap-3 px-6 border-b border-border">
         <h1 className="font-semibold">Thumbnail rules</h1>
-        <span className="text-xs text-muted">Each recording gets the look of the first rule it matches, top to bottom; otherwise the default look.</span>
+        <span className="text-xs text-muted">Each recording gets the look of the first rule it matches, top to bottom (otherwise the default look); overlay rules then add their changed knobs on top.</span>
         {settings && !settings.thumbnails.enabled && <Badge tone="warn">Thumbnails are off in Settings — uploads use the plain photo</Badge>}
         <Button variant="primary" size="sm" className="ml-auto no-drag" onClick={startNew} disabled={!library.reciters.length}><Plus size={14} /> New rule</Button>
       </div>
@@ -121,13 +114,25 @@ export default function ThumbnailRules() {
   )
 }
 
+/** How many recordings each rule touches: base rules count the recordings they win, overlays the ones they layer onto. */
+function countLooks(records: { reciterKey: string | null; tokens: import('@shared/types').Tokens; playlists: { final: string[] } }[], rules: ThumbnailRule[]): Map<string, number> {
+  const m = new Map<string, number>()
+  for (const r of records) {
+    const look = resolveThumbnailLook({ reciter: r.reciterKey, tokens: r.tokens, playlists: r.playlists.final }, rules)
+    for (const hit of [...(look.base ? [look.base] : []), ...look.overlays]) m.set(hit.id, (m.get(hit.id) ?? 0) + 1)
+  }
+  return m
+}
+
 // ── Card ──────────────────────────────────────────────────────────────────────
 
 function RuleCard({ rule, count, plName, index, total, onEdit, onToggle, onMove, onDelete }: {
   rule: ThumbnailRule; count: number; plName: (id: string) => string; index: number; total: number
   onEdit: () => void; onToggle?: (v: boolean) => void; onMove?: (d: -1 | 1) => void; onDelete?: () => void
 }) {
-  const { result, rendering } = useStyledPreview(rule.sample, rule.style)
+  const rules = useStore((s) => s.library.thumbnailRules)
+  const defaultStyle = rules.find((x) => x.origin === 'default')?.style ?? {}
+  const { result, rendering } = useStyledPreview(rule.sample, rule.overlay ? mergePatches(defaultStyle, rule.style) : rule.style)
   const isDefault = rule.origin === 'default'
   const knobs = countKnobs(rule.style)
   return (
@@ -144,6 +149,7 @@ function RuleCard({ rule, count, plName, index, total, onEdit, onToggle, onMove,
       <div className="p-3 space-y-2">
         <div className="flex items-center gap-2">
           <div className="min-w-0 flex-1 truncate text-[13px] font-medium" title={describeThumbRule({ ...rule, label: undefined }, plName)}>{describeThumbRule(rule, plName)}</div>
+          {rule.overlay && <Badge tone="accent" className="shrink-0"><Layers size={10} /> overlay</Badge>}
           {isDefault ? <Badge tone="accent">default</Badge> : onToggle && <Switch checked={rule.enabled} onChange={onToggle} label="Enabled" />}
         </div>
         <div className="flex flex-wrap gap-1">
@@ -184,12 +190,14 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
 
   const isDefault = rule.origin === 'default'
   const errors = validateThumbRule(rule)
-  const { result, rendering } = useStyledPreview(rule.sample, rule.style)
+  // an overlay is previewed on top of the default look, which is what most recordings would combine it with
+  const defaultStyle = rules.find((x) => x.origin === 'default' && x.id !== rule.id)?.style ?? {}
+  const previewStyle = rule.overlay ? mergePatches(defaultStyle, rule.style) : rule.style
+  const { result, rendering } = useStyledPreview(rule.sample, previewStyle)
   const styleBlocks = !!result && !result.ok && (result.reason === 'INVALID_STYLE' || result.reason === 'TEXT_OVERFLOW')
   const canSave = errors.length === 0 && !styleBlocks && !rendering && !saving
   const knobs = countKnobs(rule.style)
-  const matches = useMemo(() => library.records.filter((r) => resolveThumbnailRule({ reciter: r.reciterKey, tokens: r.tokens, playlists: r.playlists.final },
-    rules.some((x) => x.id === rule.id) ? rules.map((x) => (x.id === rule.id ? rule : x)) : [...rules.filter((x) => x.origin !== 'default'), rule, ...rules.filter((x) => x.origin === 'default')])?.id === rule.id).length, [library.records, rules, rule])
+  const matches = useMemo(() => countLooks(library.records, rules.some((x) => x.id === rule.id) ? rules.map((x) => (x.id === rule.id ? rule : x)) : [...rules.filter((x) => x.origin !== 'default'), rule, ...rules.filter((x) => x.origin === 'default')]).get(rule.id) ?? 0, [library.records, rules, rule])
 
   const patchStyle = (path: string, value: unknown) => {
     if (!schema) return
@@ -214,6 +222,12 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
           <ImageIcon size={16} className="text-accent" />
           <Input value={rule.label ?? ''} onChange={(e) => setRule({ ...rule, label: e.target.value || undefined })} placeholder={describeThumbRule({ ...rule, label: undefined }, plName)} className="h-8 max-w-md text-[13px]" />
           {isDefault && <Badge tone="accent">default look</Badge>}
+          {!isDefault && (
+            <label className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-2.5 h-8 text-xs" title="An overlay never wins the base look by itself: every matching overlay adds its changed knobs on top of whichever rule won (or the default look), in list order.">
+              <Layers size={13} className={rule.overlay ? 'text-accent' : 'text-muted'} /> Overlay rule
+              <Switch checked={!!rule.overlay} onChange={(overlay) => setRule({ ...rule, overlay })} label="Overlay rule" />
+            </label>
+          )}
           {draft.isNew && <Badge>new rule</Badge>}
           <Badge tone={knobs ? 'info' : 'muted'}>{knobs ? `${knobs} knob${knobs === 1 ? '' : 's'} changed` : 'plugin defaults'}</Badge>
           <span className="text-xs text-muted tabular-nums">{matches} recording{matches === 1 ? '' : 's'} would get this look</span>
@@ -225,7 +239,7 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
         <div className="flex min-h-0 flex-1">
           {/* left: conditions, sample, knobs */}
           <aside className="w-[400px] shrink-0 overflow-y-auto border-r border-border">
-            <Section title="When" hint={isDefault ? 'The default look has no conditions — it applies when no other rule matches.' : 'All conditions must be true. The first matching rule in the list wins.'}>
+            <Section title="When" hint={isDefault ? 'The default look has no conditions — it applies when no other rule matches.' : rule.overlay ? 'All conditions must be true. This overlay adds only its changed knobs on top of whichever rule won the base look.' : 'All conditions must be true. The first matching rule in the list wins; overlays are added on top.'}>
               {!isDefault && (
                 <div className="space-y-1.5">
                   {rule.conditions.map((c, i) => (
@@ -277,7 +291,7 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
           {/* right: big preview */}
           <main className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
             <div className="flex items-center gap-2 text-xs text-muted">
-              {rendering ? <><Spinner className="text-accent" /> Rendering…</> : result?.ok ? <>{result.cached ? 'From cache' : 'Rendered'}{result.ms !== undefined ? ` in ${result.ms} ms` : ''} · 1920×1080 frame; the YouTube thumbnail is the same at 1280×720</> : 'Change anything on the left — the frame updates by itself'}
+              {rendering ? <><Spinner className="text-accent" /> Rendering…</> : result?.ok ? <>{result.cached ? 'From cache' : 'Rendered'}{result.ms !== undefined ? ` in ${result.ms} ms` : ''} · 1920×1080 frame; the YouTube thumbnail is the same at 1280×720{rule.overlay ? ' · shown on top of the Default look' : ''}</> : 'Change anything on the left — the frame updates by itself'}
               {result?.ok && <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setFull(true)}><Maximize2 size={13} /> Full size</Button>}
             </div>
             {result?.ok ? (

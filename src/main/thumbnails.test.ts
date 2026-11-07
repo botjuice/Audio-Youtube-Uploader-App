@@ -21,7 +21,7 @@ describe('thumbnail job builder', () => {
     const parsed = { date: '1.1.2025', prayer: 'Taraweeh', reciter: null, surahs: ['Mulk'], keywords: [] }
     const rules = [{ id: 't', enabled: true, conditions: [{ kind: 'prayer' as const, value: 'Taraweeh', negate: false }], style: { frame: { width: 4 } }, sample: { folder: '', surahsAr: ['الملك'], prayer: 'Isha', date: '2025-01-01' } }]
     const rec = { reciterKey: 'x', tokens: { prayer: 'Taraweeh', surahs: ['Mulk'], keywords: [], leftovers: [], date: null, dateDirty: false, reciter: null }, playlists: { auto: [], final: [] } }
-    const { rule, style } = styleForRecord(rec, rules, DEFAULT_SURAHS)
+    const { base: rule, style } = styleForRecord(rec, rules, DEFAULT_SURAHS)
     expect(rule?.id).toBe('t')
     const r = buildThumbnailJob({ fileName: 'x', parsed }, { nameAr: 'a', imagePath: '/p' }, DEFAULT_SURAHS, opts, style)
     expect(r.ok && r.job.style).toEqual({ frame: { width: 4 } })

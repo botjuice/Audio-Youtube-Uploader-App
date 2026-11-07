@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ThumbnailRule } from '@shared/types'
-import { countKnobs, defaultThumbnailRule, describeThumbRule, normaliseThumbRules, prunePatch, resolveThumbnailRule, resolveThumbnailStyle, setKnob, validateThumbRule } from './thumb-rules'
+import { countKnobs, defaultThumbnailRule, describeLook, describeThumbRule, mergePatches, normaliseThumbRules, prunePatch, resolveThumbnailLook, resolveThumbnailRule, resolveThumbnailStyle, setKnob, validateThumbRule } from './thumb-rules'
 
 const sample = { folder: 'AbdullahAlMousa', surahsAr: ['الفاتحة'], prayer: 'Isha', date: '2026-01-01' }
 const R = (id: string, conditions: ThumbnailRule['conditions'], style: ThumbnailRule['style'] = { title: { color: '#ff0000' } }): ThumbnailRule => ({ id, enabled: true, conditions, style, sample })
@@ -29,6 +29,33 @@ describe('thumbnail rule resolution', () => {
     expect(resolveThumbnailStyle(target('Taraweeh'), [tara]).style).toEqual({ overlay: { bottom: 1 } })
     expect(resolveThumbnailStyle(target('Isha'), [defaultThumbnailRule()]).style).toBeUndefined()
     expect(resolveThumbnailStyle(target('Isha'), [def]).style).toEqual({ photo: { blur: 2 } })
+  })
+})
+
+describe('overlay rules', () => {
+  const taraOverlay: ThumbnailRule = { ...R('tara-ov', [{ kind: 'prayer', value: 'Taraweeh', negate: false }], { title: { color: '#00FF00' }, frame: { width: 8 } }), overlay: true, label: 'Taraweeh gold' }
+  const second: ThumbnailRule = { ...R('ov2', [{ kind: 'reciter', value: 'Abdullah Al Mousa', negate: false }], { frame: { width: 2, radius: 10 } }), overlay: true }
+  it('overlays never win the base, they layer on top of whichever rule did (or the default)', () => {
+    const rules = [taraOverlay, mousa, def]
+    const look = resolveThumbnailLook(target('Taraweeh'), rules)
+    expect(look.base?.id).toBe('mousa'); expect(look.overlays.map((r) => r.id)).toEqual(['tara-ov'])
+    expect(look.style).toEqual({ title: { color: '#00FF00' }, frame: { width: 8 } })   // mousa's title.color replaced by the overlay
+    const noBase = resolveThumbnailLook({ ...target('Taraweeh'), reciter: 'other' }, rules)
+    expect(noBase.base?.id).toBe('default'); expect(noBase.style).toEqual({ photo: { blur: 2 }, title: { color: '#00FF00' }, frame: { width: 8 } })
+    expect(resolveThumbnailLook(target('Isha'), rules).style).toEqual({ title: { color: '#ff0000' } })   // overlay didn't match
+  })
+  it('several overlays apply in list order, later wins per knob; groups merge', () => {
+    const look = resolveThumbnailLook(target('Taraweeh'), [taraOverlay, second, def])
+    expect(look.overlays.map((r) => r.id)).toEqual(['tara-ov', 'ov2'])
+    expect(look.style).toEqual({ photo: { blur: 2 }, title: { color: '#00FF00' }, frame: { width: 2, radius: 10 } })
+    expect(resolveThumbnailLook(target('Taraweeh'), [second, taraOverlay, def]).style?.frame).toEqual({ width: 8, radius: 10 })
+    expect(mergePatches({ a: { x: 1, y: 2 } } as never, { a: { y: 3 }, b: { z: 1 } } as never)).toEqual({ a: { x: 1, y: 3 }, b: { z: 1 } })
+  })
+  it('describes the combined look and refuses an overlay default', () => {
+    expect(describeLook(resolveThumbnailLook(target('Taraweeh'), [taraOverlay, mousa, def]))).toBe('Reciter is Abdullah Al Mousa + Taraweeh gold')
+    expect(describeLook({ base: null, overlays: [] })).toBeNull()
+    expect(validateThumbRule({ ...def, overlay: true })[0]).toMatch(/cannot be an overlay/)
+    expect(normaliseThumbRules([{ ...def, overlay: true }])[0]!.overlay).toBe(false)
   })
 })
 

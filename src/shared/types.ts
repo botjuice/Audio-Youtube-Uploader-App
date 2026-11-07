@@ -129,6 +129,7 @@ export interface ThumbnailSample { folder: string; surahsAr: string[]; prayer: s
 /**
  * Picks a thumbnail look for a recording. Rules are tried in list order and the first enabled one whose
  * conditions ALL hold wins; the `origin: 'default'` rule (no conditions) applies when none matches.
+ * Matching `overlay` rules are then layered on top of that base.
  * `style` holds only the knobs the user changed (a patch over the plugin's defaults).
  */
 export interface ThumbnailRule {
@@ -139,6 +140,9 @@ export interface ThumbnailRule {
   style: StylePatch
   sample: ThumbnailSample
   origin?: 'default'
+  /** Overlay rules don't compete for "first match": every matching overlay layers its changed knobs
+   *  on top of whatever rule won (or the default look), in list order. */
+  overlay?: boolean
 }
 
 export interface StyleError { key: string; message: string }
