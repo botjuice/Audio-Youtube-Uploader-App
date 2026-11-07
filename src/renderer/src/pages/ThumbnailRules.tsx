@@ -79,7 +79,7 @@ export default function ThumbnailRules() {
     const exists = rules.some((r) => r.id === rule.id)
     const next = exists ? rules.map((r) => (r.id === rule.id ? rule : r)) : [...others, rule, ...(def ? [def] : [])]
     const ok = await persist(next)
-    if (ok) setDraft(null)
+    if (ok) setDraft({ rule, isNew: false })   // stay open; what is on screen is now the saved version
   }
 
   return (
