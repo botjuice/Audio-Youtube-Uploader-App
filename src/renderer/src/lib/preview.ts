@@ -7,7 +7,9 @@ const previewCache = new Map<string, ThumbnailPreview>()
 
 export function useStyledPreview(sample: ThumbnailSample, style: StylePatch, photo?: string, enabled = true, delay = 250) {
   const sheikh = useStore((s) => s.settings?.thumbnails.sheikhPrefix ?? true)
-  const key = JSON.stringify([sample, style, sheikh, photo ?? null])
+  // The reciter's photo and name are part of the render, so a new photo in the folder re-renders too.
+  const reciter = useStore((s) => s.library.reciters.find((r) => r.folder === sample.folder) ?? s.library.reciters[0])
+  const key = JSON.stringify([sample, style, sheikh, photo ?? null, reciter?.imagePath ?? null, reciter?.nameAr ?? null])
   const [result, setResult] = useState<ThumbnailPreview | null>(() => previewCache.get(key) ?? null)
   const [rendering, setRendering] = useState(false)
   const seq = useRef(0)

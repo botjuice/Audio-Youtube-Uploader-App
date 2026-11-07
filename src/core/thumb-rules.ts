@@ -178,6 +178,13 @@ export function newThumbnailRule(conditions: ThumbCondition[], sample: Thumbnail
   return { id: crypto.randomUUID(), enabled: true, conditions, style: {}, sample }
 }
 
+/** The sample a card/editor should use: a base rule with a "Reciter is X" condition previews on X (its own photo and name), unless X doesn't exist. */
+export function preferredSample(rule: Pick<ThumbnailRule, 'conditions' | 'sample' | 'overlay' | 'origin'>, reciters: readonly { folder: string }[]): ThumbnailSample {
+  if (rule.overlay || rule.origin === 'default') return rule.sample
+  const folder = rule.conditions.find((c) => c.kind === 'reciter' && !c.negate && reciters.some((r) => r.folder === c.value))?.value
+  return folder && folder !== rule.sample.folder ? { ...rule.sample, folder } : rule.sample
+}
+
 /** Exactly one default rule, always present, always last (so list order of the others is the priority). */
 export function normaliseThumbRules(rules: readonly ThumbnailRule[]): ThumbnailRule[] {
   const others = rules.filter((r) => r.origin !== 'default')

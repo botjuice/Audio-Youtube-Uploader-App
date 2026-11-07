@@ -8,7 +8,7 @@ import { enumerateLooks, overlayPreview, resolveSampleLook } from '@core/thumb-v
 import type { RulePhoto, StyleFieldInfo, StylePatch, StyleSchemaInfo, SurahOption, ThumbCondition, ThumbConditionKind, ThumbnailPreview, ThumbnailRule, ThumbnailSample } from '@shared/types'
 import { PRAYERS } from '@core/prayers'
 import { MAX_CONDITIONS } from '@core/rules'
-import { THUMB_KIND_LABEL, countKnobs, defaultSample, describeThumbRule, effectiveStyle, getKnob, mergePatches, newThumbnailRule, prunePatch, resolveThumbnailLook, setKnob, validateThumbRule, worstCaseSample } from '@core/thumb-rules'
+import { THUMB_KIND_LABEL, countKnobs, defaultSample, describeThumbRule, effectiveStyle, getKnob, mergePatches, newThumbnailRule, preferredSample, prunePatch, resolveThumbnailLook, setKnob, validateThumbRule, worstCaseSample } from '@core/thumb-rules'
 import { Badge, Button, ColorInput, Empty, IconButton, Input, Modal, Select, Slider, Spinner, Switch } from '@/components/ui'
 import { errText, useStore } from '@/store'
 import { SurahSelect, useSurahDict, useSurahOptions } from '@/components/SurahSelect'
@@ -180,8 +180,9 @@ function RuleCard({ rule, count, plName, index, total, onEdit, onToggle, onMove,
   const isDefault = rule.origin === 'default'
   // An overlay is previewed on the real final look it is part of (its saved sample's, else the first reachable one).
   const ov = useOverlayPreview(rule.overlay ? rule : null, rules, plName)
+  const reciters = useStore((s) => s.library.reciters)
   const unreachable = !!ov && !ov.current
-  const { result, rendering } = useStyledPreview(ov?.current?.sample ?? rule.sample, ov?.current ? ov.current.style ?? {} : effectiveStyle(rule, rules), ov ? ov.current?.photo : isDefault ? undefined : rule.photo, !unreachable)
+  const { result, rendering } = useStyledPreview(ov?.current?.sample ?? preferredSample(rule, reciters), ov?.current ? ov.current.style ?? {} : effectiveStyle(rule, rules), ov ? ov.current?.photo : isDefault ? undefined : rule.photo, !unreachable)
   const knobs = countKnobs(rule.style)
   return (
     <section className={clsx('rounded-xl border border-border bg-surface shadow-xs overflow-hidden flex flex-col', !rule.enabled && !isDefault && 'opacity-60')}>
@@ -285,6 +286,14 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
     setRule((r) => ({ ...r, sample }))
     if (wasClean) setBaseRule((b) => ({ ...b, sample }))
   }, [ov, sampleTouched])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {   // a base rule for "Reciter is X" previews on X — unless the sample was chosen by hand
+    if (sampleTouched) return
+    const sample = preferredSample(rule, library.reciters)
+    if (sample === rule.sample) return
+    const wasClean = JSON.stringify(rule) === JSON.stringify(baseRule)
+    setRule((r) => ({ ...r, sample }))
+    if (wasClean) setBaseRule((b) => ({ ...b, sample }))
+  }, [rule.conditions, rule.overlay, library.reciters, sampleTouched])  // eslint-disable-line react-hooks/exhaustive-deps
   const previewStyle = sampleLook ? (sampleLook.style ?? {}) : isDefault ? rule.style : mergePatches(defaultStyle, rule.style)
   const previewPhoto = sampleLook ? sampleLook.photo : rule.overlay || isDefault ? undefined : rule.photo
   const baseline = useMemo(() => (schema ? (isDefault ? schema.defaults : mergePatches(schema.defaults as unknown as StylePatch, defaultStyle)) : null) as Record<string, unknown> | null, [schema, isDefault, defaultStyle])

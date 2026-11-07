@@ -4,7 +4,8 @@ import { AUDIO_EXTS, STATE_DIR } from './paths'
 
 export interface WatcherOptions {
   library: string
-  intervalMinutes: number
+  /** Minutes between upload runs; null = watch the folder for changes but never upload by itself. */
+  intervalMinutes: number | null
   /** Files changed on disk — caller should rescan + notify UI. */
   onChange: () => void
   /** Time to upload whatever is ready. */
@@ -19,16 +20,21 @@ export class Watcher {
   private _nextRunAt: Date | null = null
   private opts: WatcherOptions | null = null
 
+  /** Auto-upload timer on. */
   get running(): boolean { return this.interval !== null }
+  /** Folder changes are being picked up (always, while a library is open). */
+  get watching(): boolean { return this.fsw !== null }
   get nextRunAt(): Date | null { return this._nextRunAt }
 
   start(opts: WatcherOptions): void {
     this.stop()
     this.opts = opts
-    const ms = Math.max(1, opts.intervalMinutes) * 60_000
-    const schedule = () => { this._nextRunAt = new Date(Date.now() + ms) }
-    this.interval = setInterval(() => { schedule(); void opts.onTick() }, ms)
-    schedule()
+    if (opts.intervalMinutes !== null) {
+      const ms = Math.max(1, opts.intervalMinutes) * 60_000
+      const schedule = () => { this._nextRunAt = new Date(Date.now() + ms) }
+      this.interval = setInterval(() => { schedule(); void opts.onTick() }, ms)
+      schedule()
+    }
 
     this.fsw = chokidar.watch(opts.library, {
       depth: 1, ignoreInitial: true, persistent: true,
@@ -41,7 +47,7 @@ export class Watcher {
     }
     this.fsw.on('add', (p) => {
       changed()
-      if (AUDIO_EXTS.has(extname(p).toLowerCase())) {
+      if (this.interval && AUDIO_EXTS.has(extname(p).toLowerCase())) {
         // New audio landed — give the user a moment, then upload without waiting for the full interval.
         if (this.newFileDebounce) clearTimeout(this.newFileDebounce)
         this.newFileDebounce = setTimeout(() => void opts.onTick(), 20_000)
@@ -63,7 +69,7 @@ export class Watcher {
   }
 
   /** Restart with the same callbacks but a new interval (settings change). */
-  reconfigure(intervalMinutes: number): void {
+  reconfigure(intervalMinutes: number | null): void {
     if (this.opts) this.start({ ...this.opts, intervalMinutes })
   }
 }

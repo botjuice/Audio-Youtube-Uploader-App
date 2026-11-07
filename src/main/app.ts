@@ -591,20 +591,19 @@ class YoosyApp {
   }
   cancelUpload(): void { this.pipeline.cancel() }
 
+  /** The library folder is always watched (new audio, photos, reciter folders show up by themselves); the upload timer only runs with auto-upload on. */
   private syncWatcher(): void {
     const w = this.settings.watcher
-    if (w.enabled && this.store && this.settings.libraryPath) {
-      this.watcher.start({
-        library: this.settings.libraryPath,
-        intervalMinutes: w.intervalMinutes,
-        onChange: () => void this.rescan(),
-        onTick: () => this.watcherTick(),
-      })
-      activity.info(`Watcher on — checking every ${w.intervalMinutes} min.`)
-    } else {
-      if (this.watcher.running) activity.info('Watcher off.')
-      this.watcher.stop()
-    }
+    if (!this.store || !this.settings.libraryPath) { this.watcher.stop(); return }
+    const wasRunning = this.watcher.running
+    this.watcher.start({
+      library: this.settings.libraryPath,
+      intervalMinutes: w.enabled ? w.intervalMinutes : null,
+      onChange: () => void this.rescan(),
+      onTick: () => this.watcherTick(),
+    })
+    if (w.enabled) activity.info(`Watcher on — checking every ${w.intervalMinutes} min.`)
+    else if (wasRunning) activity.info('Watcher off.')
   }
 
   private async watcherTick(): Promise<void> {

@@ -124,3 +124,18 @@ describe('describe / normalise / patch helpers', () => {
     expect(setKnob({ title: { scale: 0.9, color: '#fff' } }, 'title.scale', undefined)).toEqual({ title: { color: '#fff' } })
   })
 })
+
+describe('preferredSample', () => {
+  it('a base rule for "Reciter is X" previews on X when X exists; overlays and the default keep their sample', async () => {
+    const { preferredSample, defaultThumbnailRule, newThumbnailRule, defaultSample } = await import('./thumb-rules')
+    const reciters = [{ folder: 'A' }, { folder: 'B' }]
+    const base = newThumbnailRule([{ kind: 'reciter', value: 'B', negate: false }], defaultSample('A'))
+    expect(preferredSample(base, reciters).folder).toBe('B')
+    expect(preferredSample({ ...base, conditions: [{ kind: 'reciter', value: 'Nobody', negate: false }] }, reciters).folder).toBe('A')
+    expect(preferredSample({ ...base, conditions: [{ kind: 'reciter', value: 'B', negate: true }] }, reciters).folder).toBe('A')
+    expect(preferredSample({ ...base, overlay: true }, reciters).folder).toBe('A')
+    expect(preferredSample({ ...defaultThumbnailRule(), sample: defaultSample('A') }, reciters).folder).toBe('A')
+    const already = { ...base, sample: defaultSample('B') }
+    expect(preferredSample(already, reciters)).toBe(already.sample)   // nothing to change → same object, so React sees no edit
+  })
+})
