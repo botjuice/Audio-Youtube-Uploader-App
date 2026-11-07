@@ -19,7 +19,7 @@ export { DEFAULT_STYLE, STYLE_FIELDS, STYLE_SCHEMA, validateStyle, type Style, t
 export { BUNDLED_FONTS, type BundledFont } from './fonts'
 export { WORST_CASE } from './job'
 
-export const manifest: PluginManifest = { id: 'thumbnail', version: '1.2.1', templateVersion: 4, styleVersion: 2 }
+export const manifest: PluginManifest = { id: 'thumbnail', version: '1.3.0', templateVersion: 4, styleVersion: 2 }
 
 /** YouTube's limit for custom thumbnails. */
 const THUMB_MAX_BYTES = 2 * 1024 * 1024
@@ -97,7 +97,7 @@ export async function render(job: ThumbnailJob, host: PluginHost): Promise<Thumb
       const room = `${CANVAS.width - 2 * safe}×${CANVAS.height - 2 * safe}px`
       return { ok: false, reason: 'TEXT_OVERFLOW', message: `Even at ${Math.round(MIN_FIT * 100)}% the text does not fit the ${room} safe area (it would need ${Math.round(worst * 100)}%) — shorten the reciter name or surah list, or reduce size, gap, pill or divider knobs.` }
     }
-    const warnings: string[] = []
+    const warnings: string[] = [...out.warnings]
     if (l.clamped) warnings.push('Text group was pulled back inside the safe area (offset or size knobs pushed it to the edge).')
     if (group < 1) warnings.push(`The whole text group shrank to ${Math.round(group * 100)}% to fit the safe area.`)
     else if (worst < 1) warnings.push(`Text shrank to ${Math.floor(worst * 100)}% to fit its box.`)

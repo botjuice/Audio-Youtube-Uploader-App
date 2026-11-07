@@ -81,19 +81,45 @@ Rules the plugin enforces, whatever the knobs say:
   that would push it out are pulled back (reported in `warnings`).
 - **Fonts are fixed.** The calligraphy font breaks with letter-spacing, so none is offered on the title.
 
-## Capture correctness (stale-frame bug, fixed 2026-11-07)
+## Capture correctness (stale frames, zoom, display scaling)
 
 On an offscreen window, `capturePage` returns the most recent *composited* frame, and even the
 first `paint` after `invalidate()` can be a frame that was already in flight. After the hidden
-window has sat idle (every recording in an upload run follows an idle gap) the old timer-based
-capture could return the previous job's picture, which then got cached under the new key.
+window has sat idle (every recording in an upload run follows an idle gap) a timer-based capture
+could return the previous job's picture, which then got cached under the new key.
 
-Fix: every render paints a colour-coded render id into a 2px corner stamp as the **last** DOM
-change, and the renderer accepts a frame only when its stamp matches (`renderer.captureStamped`),
-forcing repaints until one does; the stamp pixels are scrubbed from the output. `templateVersion`
-was bumped to 3 so existing caches re-render. Check: `npm run thumb -- --idle 390 /tmp/t` renders
-job A, idles 6.5 min, renders job B, and fails if B's pixels equal A's. Set `THUMB_DEBUG=1` to see
-each paint's stamp.
+**Stamp.** Every render paints its id into two 6×6 template-px blocks at the bottom-right corner
+as the **last** DOM change — the id's colour, then its complement (`stamp.ts`: 2 bits per channel at
+levels {0, 85, 170, 255}, 63 ids, decoded by nearest level with ±40 tolerance so colour management
+or dithering cannot lose it; black = "no stamp"). `renderer.captureStamped` accepts a frame only when
+both blocks decode to the current id, forcing repaints until one does, then scrubs the pixels.
+
+**Zoom and size are verified, never assumed.** The hidden window has its own in-memory session
+(`partition: 'thumbnail'`): Chromium keeps zoom per origin *and per session*, and the app window is
+the same `file://` origin, so without this a user zooming the app re-zoomed the template (seen on
+Windows 3.0.x: stamp off the corner, every render refused). After each render the template reports
+`innerWidth/innerHeight`, `devicePixelRatio` and the stamp's rect; if the viewport is not 1280×720
+CSS px with the stamp ending at (1280, 720), the plugin resets zoom 1.5 and the 1920×1080 content
+size, waits for the page to see them, and renders again — failing with the measured values only if
+that does not help. The template root is `overflow: hidden` so a rounding pixel can never grow a
+scrollbar. `devicePixelRatio` is reported but not required to be 1.5: under Windows display scaling
+it is 1.5 × scale and frames arrive at e.g. 2400×1350; the stamp is read at the scaled position and
+the frame is downscaled to 1920×1080 after scrubbing.
+
+**Fallback.** If no stamped frame arrives within 3 s but the last two paints are byte-identical *and*
+differ both from what the window showed before the render and from the previous render's frame, that
+frame is stable and new and is used with the warning "Render stamp not readable on this machine —
+frame accepted because it is stable and new." A frame identical to the previous render's is never
+returned. Failure messages carry the diagnostics: paint count, last frame size, raw BGRA at the two
+sample points, content size, zoom factor, primary display scale, platform and the page measurements;
+`THUMB_DEBUG=1` logs the same once per window creation and per paint.
+
+Checks: `npm run thumb:hostile` (zoom 1.0 + 1600×900 resize between renders must still match the
+golden; a hidden stamp must fall back to a fresh picture with the warning and refuse the previous
+picture; a normal render afterwards carries no warning), `npm run thumb -- --idle 390 /tmp/t` (job A,
+6.5 min idle, job B: B's pixels must differ from A's), `stamp.test.ts` (every id decodes after ±30
+per channel at 1080p and under 125/150/175 % scaling; black, uniform regions and a wrong complement
+are refused).
 
 `WORST_CASE` (exported) is the content the sweep uses — the widest surah pair, longest prayer and
 month, longest name — so an editor can offer the same preview.
@@ -113,8 +139,9 @@ month, longest name — so an editor can offer the same preview.
 npm run build
 npm run thumb -- src/plugins/thumbnail/samples/jobs.json /tmp/thumbs   # 4 good jobs (one styled) + 2 bad ones
 npm run thumb:golden     # empty style must reproduce samples/golden/*.jpg (mean diff < 1.5)
-npm run thumb:sweep      # worst-case job × every knob at min/max + combos; asserts bounds (147 renders)
+npm run thumb:sweep      # worst-case job × every knob at min/max + combos; asserts bounds (173 renders)
 npm run thumb -- --idle 390 /tmp/thumb-idle   # stale-capture check (6.5 min idle between two renders)
+npm run thumb:hostile    # zoom/size drift and an unreadable stamp must still give fresh pictures
 ```
 
 After any template change: run the golden check (should still match unless you meant to change the

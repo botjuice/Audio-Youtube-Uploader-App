@@ -6,11 +6,12 @@
  *   npm run thumb -- --golden [outDir]        empty style must reproduce samples/golden/*.jpg
  *   npm run thumb -- --sweep [outDir]         worst-case job × every knob at min/max + combos; asserts safe bounds
  *   npm run thumb -- --idle <seconds> [outDir]  render job A, sit idle, render job B: B's pixels must differ from A's
+ *   npm run thumb -- --hostile [outDir]       zoom/size drift between renders and an unreadable stamp must still give fresh pictures
  *
  * Relative photo paths resolve against the JSON file's folder. Results print as JSON lines;
  * exit code 1 if any job failed or any check did not pass.
  */
-import { app, nativeImage } from 'electron'
+import { app, BrowserWindow, nativeImage } from 'electron'
 import { existsSync, promises as fs } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { dispose, render } from './index'
@@ -180,16 +181,58 @@ async function idle(seconds: number, outputDir: string): Promise<number> {
   return same ? 1 : 0
 }
 
+/** Windows-report checks (2026-11-07): the capture must not depend on the window's zoom or size
+ *  staying what the plugin asked for, and must still give a fresh picture when the stamp cannot be
+ *  read — but never the previous render's picture. */
+async function hostile(outputDir: string): Promise<number> {
+  const jobs = (await loadJobs(join(samplesDir(), 'jobs.json'))).slice(0, 3).map((j) => ({ ...j, style: {} }))
+  const host: PluginHost = { outputDir, log }
+  const golden = (i: number) => join(samplesDir(), 'golden', `job${i}.thumb.jpg`)
+  let failed = 0
+  const check = (name: string, ok: boolean, detail: unknown) => { if (!ok) failed++; console.log(JSON.stringify({ hostile: name, ok, detail })) }
+
+  const a = await render(jobs[0]!, host)
+  check('baseline', a.ok && meanDiff(a.thumbnail, golden(0)) < 1.5, a)
+  const win = BrowserWindow.getAllWindows()[0]
+  if (!win) { check('window', false, 'no hidden window'); return failed }
+
+  // 1. A persisted zoom level and a resize (what a user zooming the app on Windows used to do to the
+  //    shared file:// origin): the next render must notice, reset, and still match the golden picture.
+  win.webContents.setZoomFactor(1)
+  win.setContentSize(1600, 900)
+  const b = await render(jobs[1]!, host)
+  check('zoom-and-size-drift', b.ok && meanDiff(b.thumbnail, golden(1)) < 1.5, b)
+
+  // 2. The stamp cannot be read: the fallback must return the (stable, new) picture with a warning.
+  const css = await win.webContents.insertCSS('#stamp { visibility: hidden !important }')
+  const c = await render(jobs[2]!, host)
+  check('no-stamp-fallback', c.ok && c.warnings.some((w) => w.includes('stamp not readable')) && meanDiff(c.thumbnail, golden(2)) < 1.5, c)
+
+  // 3. Same picture again under another cache key with the stamp still unreadable: the only stable
+  //    frame is the previous render's, so it must be refused rather than handed back.
+  const d = await render({ ...jobs[2]!, style: { output: { quality: 89 } } }, host)
+  check('no-stamp-refuses-previous-frame', !d.ok && d.reason === 'RENDER_FAILED' && d.message.includes('stale'), d)
+  await win.webContents.removeInsertedCSS(css)
+
+  // 4. Stamp back: a normal render again, no warning.
+  const e = await render({ ...jobs[0]!, style: { output: { quality: 89 } } }, host)
+  check('recovered', e.ok && e.warnings.length === 0 && meanDiff(e.thumbnail, golden(0)) < 1.5, e)
+  console.error(failed ? `hostile: ${failed} check(s) FAILED` : 'hostile: all checks pass')
+  return failed
+}
+
 async function main(): Promise<number> {
-  const args = process.argv.slice(app.isPackaged ? 1 : 2)
+  // Chromium switches may be passed through for scaling checks (e.g. --force-device-scale-factor=1.25).
+  const args = process.argv.slice(app.isPackaged ? 1 : 2).filter((a) => !a.startsWith('--force-device-scale-factor'))
   const [first, second] = args
-  if (!first) { console.error('usage: thumbnail-cli <jobs.json> [outDir] | --golden [outDir] | --sweep [outDir] | --idle <seconds> [outDir]'); return 2 }
+  if (!first) { console.error('usage: thumbnail-cli <jobs.json> [outDir] | --golden [outDir] | --sweep [outDir] | --idle <seconds> [outDir] | --hostile [outDir]'); return 2 }
   const outputDir = resolve((first === '--idle' ? args[2] : second) ?? 'thumbnail-out')
   await fs.mkdir(outputDir, { recursive: true })
   let failed: number
   if (first === '--golden') failed = await golden(outputDir)
   else if (first === '--sweep') failed = await sweep(outputDir)
   else if (first === '--idle') failed = await idle(Number(second) || 390, outputDir)
+  else if (first === '--hostile') failed = await hostile(outputDir)
   else failed = await runJobs(resolve(first), outputDir)
   dispose()
   return failed ? 1 : 0

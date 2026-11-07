@@ -77,7 +77,8 @@
     --frame-display: none; --frame-border: 0 solid transparent; --frame-inset: 24px; --frame-radius: 0px;
   }
 
-  html, body { margin: 0; padding: 0; background: #000; }
+  /* overflow hidden: a rounding pixel must never grow a scrollbar that shifts the stamp (Windows). */
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
 
   /* ---------- Canvas ---------- */
   .thumb {
@@ -154,9 +155,11 @@
   }
   .meta [data-slot="prayer"] { display: var(--prayer-display); opacity: var(--prayer-opacity); }
   .meta [data-slot="date"] { display: var(--date-display); opacity: var(--date-opacity); }
-  /* Render stamp: a 2px block in the corner whose colour encodes the render id. The plugin accepts a
-     captured frame only when it carries the current id, then scrubs these pixels from the output. */
-  .stamp { position: absolute; right: 0; bottom: 0; width: 2px; height: 2px; z-index: 99; background: #000; }
+  /* Render stamp: two 6px blocks in the corner — the render id's colour, then its complement (see
+     stamp.ts). The plugin accepts a captured frame only when both decode to the current id, then
+     scrubs these pixels from the output. LTR so block order does not depend on the page direction. */
+  .stamp { position: absolute; right: 0; bottom: 0; width: 12px; height: 6px; z-index: 99; display: flex; direction: ltr; }
+  .stamp i { display: block; width: 6px; height: 6px; background: #000; }
   .meta__dot { display: var(--sep-display); width: var(--sep-size); height: var(--sep-size); border-radius: 50%; background: var(--sep-color); flex: none; }
 </style>
 <style id="bundled-fonts"></style>
@@ -168,7 +171,7 @@
   <div class="thumb__grain"></div>
   <div class="thumb__overlay"></div>
   <div class="thumb__frame"></div>
-  <div class="stamp" id="stamp"></div>
+  <div class="stamp" id="stamp"><i id="stamp-main"></i><i id="stamp-inverse"></i></div>
 
   <div class="thumb__content">
     <div class="reciter line" dir="rtl" data-slot="reciter_name" data-fit="reciter"></div>
@@ -423,8 +426,12 @@
     window.__fontOk = document.fonts.check('290px "surah-name-v4-icon"');
     fitGroup();
     // Stamp LAST, in the same task as the final layout: any frame carrying this id shows the finished DOM.
-    const id = (d.renderId | 0) & 511;
-    document.getElementById("stamp").style.background = `rgb(${id & 7}, ${(id >> 3) & 7}, ${(id >> 6) & 7})`;
+    const stamp = document.getElementById("stamp");
+    document.getElementById("stamp-main").style.background = d.stamp ? d.stamp.main : "#000";
+    document.getElementById("stamp-inverse").style.background = d.stamp ? d.stamp.inverse : "#000";
+    // The plugin verifies these instead of assuming the zoom and size it asked for are in effect.
+    const r = stamp.getBoundingClientRect();
+    window.__page = { innerWidth, innerHeight, devicePixelRatio, stamp: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } };
     root.setAttribute("data-ready", "true");
   }
 
