@@ -36,10 +36,35 @@ function createWindow(): BrowserWindow {
     if (isMac) { e.preventDefault(); w.hide() }
   })
   w.on('hide', () => yoosy.onWindowHidden())
+  lockZoom(w)
   w.webContents.setWindowOpenHandler(({ url }) => { void shell.openExternal(url); return { action: 'deny' } })
   if (process.env['ELECTRON_RENDERER_URL']) void w.loadURL(process.env['ELECTRON_RENDERER_URL'])
   else void w.loadFile(join(here, '../renderer/index.html'))
   return w
+}
+
+/** The app window is never zoomed: Electron persists zoom per origin, and the thumbnail renderer's
+ *  hidden page shares the file:// origin, so a Ctrl+wheel / Ctrl+= zoom here would shift its layout. */
+function lockZoom(w: BrowserWindow): void {
+  const wc = w.webContents
+  const reset = () => { if (!wc.isDestroyed() && wc.getZoomFactor() !== 1) wc.setZoomFactor(1) }
+  wc.on('did-finish-load', reset)
+  wc.on('zoom-changed', reset)
+  void wc.setVisualZoomLevelLimits(1, 1).catch(() => {})
+  wc.on('before-input-event', (e, input) => {
+    const mod = isMac ? input.meta : input.control
+    if (mod && (input.key === '=' || input.key === '+' || input.key === '-' || input.key === '0')) e.preventDefault()
+  })
+}
+
+/** No View menu (so no zoom accelerators). macOS keeps the app/Edit/Window roles for copy & paste. */
+function installMenu(): void {
+  if (!isMac) { Menu.setApplicationMenu(null); return }
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { role: 'appMenu' },
+    { role: 'editMenu' },
+    { role: 'windowMenu' },
+  ]))
 }
 
 function showWindow(): void {
@@ -73,6 +98,7 @@ function buildTray(): void {
 }
 
 void app.whenReady().then(async () => {
+  installMenu()
   if (isMac) app.dock?.setIcon(nativeImage.createFromPath(join(here, '../../resources/icon.png')))
   await yoosy.init()
   registerIpc()
