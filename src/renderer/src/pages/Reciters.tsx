@@ -95,7 +95,7 @@ function ReciterCard({ r, libraryPath }: { r: ReciterInfo; libraryPath: string }
           )}
         </Field>
         {thumbsOn && (
-          <Field label="Thumbnail preview" hint="How this reciter's thumbnails will look with the current photo and name">
+          <Field label="Thumbnail preview" hint="How this reciter's thumbnails will look with the current photo, name and thumbnail rules (sample: Jumuah, al-Kahf, today)">
             {!r.nameAr || !r.imagePath ? <div className="text-xs text-muted">Set the Arabic name and a photo to see a preview.</div>
               : !preview ? <div className="aspect-video rounded-lg bg-surface-2 animate-pulse" />
               : preview.ok ? <img src={preview.dataUrl} alt="preview" className="w-full aspect-video rounded-lg border border-border object-cover" />

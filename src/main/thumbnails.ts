@@ -6,8 +6,9 @@
 import { promises as fs } from 'node:fs'
 import { basename, join } from 'node:path'
 
-import type { LibraryRecord, ReciterInfo, Settings, StyleError, StylePatch, StyleSchemaInfo, SurahOption, ThumbnailPreview, ThumbnailRule, ThumbnailSample } from '@shared/types'
+import type { LibraryRecord, PlaylistRule, ReciterInfo, Settings, StyleError, StylePatch, StyleSchemaInfo, SurahOption, ThumbnailPreview, ThumbnailRule, ThumbnailSample } from '@shared/types'
 import { resolveThumbnailLook, type ThumbTarget, type ThumbnailLook } from '@core/thumb-rules'
+import { resolvePlaylists } from '@core/rules'
 import { DEFAULT_SURAHS, translateSurah, type SurahDict } from '@core/surahs'
 import { SURAHS_AR } from '../plugins/thumbnail/surahs'
 import { PRAYERS } from '@core/prayers'
@@ -78,6 +79,12 @@ export function buildThumbnailJob(
 /** What the rules engine needs to know about a recording. */
 export const thumbTarget = (rec: Pick<LibraryRecord, 'reciterKey' | 'tokens' | 'playlists'>): ThumbTarget =>
   ({ reciter: rec.reciterKey, tokens: rec.tokens, playlists: rec.playlists.final })
+
+/** What the thumbnail rules see for a reciter-page sample: the reciter, the sample's prayer/surahs, and the playlists the playlist rules would give it. */
+export function reciterSampleTarget(reciter: Pick<ReciterInfo, 'key'>, job: Pick<ThumbnailJob, 'prayer' | 'surahsAr'>, playlistRules: readonly PlaylistRule[], surahs: SurahDict): ThumbTarget {
+  const tokens = { prayer: job.prayer, surahs: [...job.surahsAr], keywords: [] as string[] }
+  return { reciter: reciter.key, tokens, playlists: resolvePlaylists({ reciter: reciter.key, tokens }, playlistRules, surahs).final }
+}
 
 /** The style patch a recording gets from the thumbnail rules (undefined = plugin defaults). */
 export function styleForRecord(rec: Pick<LibraryRecord, 'reciterKey' | 'tokens' | 'playlists'>, rules: readonly ThumbnailRule[], surahs: SurahDict): ThumbnailLook {

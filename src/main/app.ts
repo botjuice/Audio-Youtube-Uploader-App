@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import type { CustomFont, Health, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, RulePhoto, Settings, StyleRenderInput, StyleSchemaInfo, ThumbnailRule, TokenValidation } from '@shared/types'
 import type { LibrarySnapshot, SurahEntry, SyncResult } from '@shared/api'
-import { DEFAULT_SURAHS, conditionKey, describeRule, describeThumbRule, nextQuotaReset, normaliseQuota, normaliseThumbRules, reciterKey, remainingUploads, surahKey, validateRule, validateThumbRule, validateToken } from '@core/index'
+import { DEFAULT_SURAHS, conditionKey, describeRule, describeThumbRule, nextQuotaReset, normaliseQuota, normaliseThumbRules, reciterKey, resolveThumbnailLook, remainingUploads, surahKey, validateRule, validateThumbRule, validateToken } from '@core/index'
 import { ffmpegAvailable, ffmpegPath } from './ffmpeg'
 import { connect, disconnect, getClient, parseClientSecretJson, resetClient } from './google/oauth'
 import { createPlaylist, getChannel, listPlaylists, listUploads } from './google/youtube'
@@ -13,7 +13,7 @@ import { Pipeline } from './pipeline'
 import { mergeSettings, openLibraryStore, secrets, settings, type LibraryStore } from './store'
 import { Watcher } from './watcher'
 import { updater } from './updater'
-import { buildSampleJob, buildThumbnailJob, disposeThumbnails, fontPathsInRules, renderJob, resolveRulePhoto, ruleFontsDir, rulePhotoPath, rulePhotosDir, sampleJobForReciter, styleForRecord, styleProblems, styleSchema, surahOptions, toPreview } from './thumbnails'
+import { buildSampleJob, buildThumbnailJob, disposeThumbnails, fontPathsInRules, renderJob, resolveRulePhoto, ruleFontsDir, rulePhotoPath, rulePhotosDir, reciterSampleTarget, sampleJobForReciter, styleForRecord, styleProblems, styleSchema, surahOptions, toPreview } from './thumbnails'
 import { setThumbnail } from './google/youtube'
 import { THUMBNAIL_COST_UNITS, addQuota } from '@core/quota'
 import type { SurahOption, ThumbnailPreview } from '@shared/types'
@@ -537,11 +537,15 @@ class YoosyApp {
   }
 
   async previewReciterThumbnail(folder: string): Promise<ThumbnailPreview> {
-    const { library } = this.req()
+    const { store, library } = this.req()
     const reciter = this.snapshot.reciters.find((r) => r.folder === folder)
     const job = reciter && sampleJobForReciter(reciter, this.settings.thumbnails)
-    if (!job) return { ok: false, reason: 'INVALID_JOB', message: 'Set the Arabic name and add a photo to see a preview.' }
-    return toPreview(await renderJob(job, library))
+    if (!reciter || !job) return { ok: false, reason: 'INVALID_JOB', message: 'Set the Arabic name and add a photo to see a preview.' }
+    // Same look a real recording of this reciter would get (thumbnail rules + any rule photo), on the sample surah/prayer.
+    const surahs = effectiveSurahs(store.surahs.get())
+    const look = resolveThumbnailLook(reciterSampleTarget(reciter, job, store.rules.get().rules, surahs), store.thumbRules.get().rules, surahs)
+    const photo = await resolveRulePhoto(library, look.photo)
+    return toPreview(await renderJob({ ...job, ...(look.style ? { style: look.style } : {}), ...(photo ? { photoPath: photo } : {}) }, library))
   }
 
   /** Rule editor preview: a style on a sample, same renderer and cache dir as uploads; returns the 1080p frame too. */
