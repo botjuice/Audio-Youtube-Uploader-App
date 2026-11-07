@@ -291,7 +291,7 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
                   </div>
                   <div className="min-w-0 flex-1 space-y-1">
                     <div className="truncate text-xs" title={rule.photo}>{rule.photo ? (photo ? rule.photo : <span className="text-err">⚠ {rule.photo} is missing — the reciter photo will be used</span>) : "Reciter's photo"}</div>
-                    <div className="flex gap-1.5">
+                    <div className="flex flex-wrap gap-1.5">
                       <Button size="sm" onClick={choosePhoto} disabled={choosing}>{choosing ? <Spinner /> : <FolderOpen size={13} />} {rule.photo ? 'Change image…' : 'Choose image…'}</Button>
                       {rule.photo && <Button size="sm" variant="ghost" onClick={() => setRule({ ...rule, photo: undefined })}><X size={13} /> Use reciter photo</Button>}
                     </div>
