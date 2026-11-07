@@ -1,7 +1,9 @@
 import { clsx } from 'clsx'
 import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, FolderOpen, Image as ImageIcon, Layers, Maximize2, Plus, RotateCcw, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useStyledPreview } from '@/lib/preview'
+import { useStyleSchema } from '@/lib/style-schema'
 import { enumerateLooks, overlayPreview, resolveSampleLook } from '@core/thumb-variants'
 import type { RulePhoto, StyleFieldInfo, StylePatch, StyleSchemaInfo, SurahOption, ThumbCondition, ThumbConditionKind, ThumbnailPreview, ThumbnailRule, ThumbnailSample } from '@shared/types'
 import { PRAYERS } from '@core/prayers'
@@ -110,6 +112,64 @@ function countLooks(records: { reciterKey: string | null; tokens: import('@share
   return m
 }
 
+// ── Knob peek: hover the "N knobs changed" line for the list of what the rule changes ─────────────
+
+/** "Title › Color  #AAA → #BBB" for every knob the rule sets, against what it inherits (the Default look, or the plugin for the Default look itself). */
+function knobLines(rule: ThumbnailRule, rules: readonly ThumbnailRule[], schema: StyleSchemaInfo): { group: string; label: string; from: string; to: string; color?: [string, string] }[] {
+  const isDefault = rule.origin === 'default'
+  const inherited = isDefault ? schema.defaults : mergePatches(schema.defaults as unknown as StylePatch, rules.find((x) => x.origin === 'default' && x.id !== rule.id)?.style ?? {})
+  const show = (f: StyleFieldInfo, v: unknown): string => {
+    if (f.field.kind === 'font') return f.field.options.find((o) => o.id === v)?.label ?? String(v).split('/').pop() ?? String(v)
+    if (f.field.kind === 'number' && typeof v === 'number') return String(Math.round(v * 1000) / 1000)
+    return String(v)
+  }
+  const out: { group: string; label: string; from: string; to: string; color?: [string, string] }[] = []
+  for (const f of schema.fields) {
+    const to = getKnob(rule.style, f.path)
+    if (to === undefined) continue
+    const from = getKnob(inherited, f.path)
+    const segs = f.path.split('.')
+    const group = GROUP_TITLES[segs[0]!] ?? humanise(segs[0]!)
+    const label = segs.slice(1).map(humanise).join(' › ')
+    out.push({ group, label, from: show(f, from), to: show(f, to), ...(f.field.kind === 'color' ? { color: [String(from), String(to)] as [string, string] } : {}) })
+  }
+  return out
+}
+
+function KnobPeek({ rule, rules, children }: { rule: ThumbnailRule; rules: readonly ThumbnailRule[]; children: React.ReactNode }) {
+  const schema = useStyleSchema()
+  const [at, setAt] = useState<{ x: number; y: number; up: boolean } | null>(null)
+  const lines = useMemo(() => (schema && at ? knobLines(rule, rules, schema) : []), [schema, at, rule, rules])
+  const open = (e: React.MouseEvent<HTMLElement>) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    setAt({ x: r.left, y: r.bottom + 6, up: r.bottom > window.innerHeight - 260 })
+  }
+  return (
+    <span className="relative cursor-help underline decoration-dotted decoration-muted/60 underline-offset-2" onMouseEnter={open} onMouseLeave={() => setAt(null)}>
+      {children}
+      {at && lines.length > 0 && createPortal(
+        <div role="tooltip" className="pointer-events-none fixed z-[60] w-max max-w-[340px] rounded-lg border border-border bg-surface p-2.5 text-[11px] shadow-xl"
+          style={at.up ? { left: at.x, bottom: window.innerHeight - at.y + 28 } : { left: at.x, top: at.y }}>
+          <div className="mb-1.5 text-[10px] uppercase tracking-wide text-muted">What this rule changes{rule.origin === 'default' ? ' from the plugin' : ' from the Default look'}</div>
+          <table className="border-separate border-spacing-x-2 border-spacing-y-0.5">
+            <tbody>
+              {lines.map((l, i) => (
+                <tr key={i}>
+                  <td className="whitespace-nowrap text-muted">{l.group}{l.label ? ` › ${l.label}` : ''}</td>
+                  <td className="whitespace-nowrap tabular-nums">
+                    <span className="text-muted">{l.color && <i className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-border align-middle" style={{ background: l.color[0] }} />}{l.from}</span>
+                    <span className="mx-1 text-muted">→</span>
+                    <span className="font-medium text-accent">{l.color && <i className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-border align-middle" style={{ background: l.color[1] }} />}{l.to}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>, document.body)}
+    </span>
+  )
+}
+
 // ── Card ──────────────────────────────────────────────────────────────────────
 
 function RuleCard({ rule, count, plName, index, total, onEdit, onToggle, onMove, onDelete }: {
@@ -149,7 +209,7 @@ function RuleCard({ rule, count, plName, index, total, onEdit, onToggle, onMove,
         </div>
         {ov?.current && <div className="truncate text-[11px] text-muted" title={`Look: ${ov.current.look}`}>Shown on {ov.current.reciter} · {ov.current.when}</div>}
         <div className="flex items-center gap-2 text-xs text-muted">
-          <span>{knobs ? `${knobs} knob${knobs === 1 ? '' : 's'} changed` : isDefault ? 'plugin default look' : 'same as the Default look'}</span>
+          {knobs ? <KnobPeek rule={rule} rules={rules}>{knobs} knob{knobs === 1 ? '' : 's'} changed</KnobPeek> : <span>{isDefault ? 'plugin default look' : 'same as the Default look'}</span>}
           {rule.photo && !rule.overlay && <><span>·</span><span title={rule.photo}>own image</span></>}
           <span>·</span>
           <span className="tabular-nums">{count} recording{count === 1 ? '' : 's'} now</span>
