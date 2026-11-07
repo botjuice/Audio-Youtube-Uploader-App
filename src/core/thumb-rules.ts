@@ -161,6 +161,15 @@ export const todayIso = (d = new Date()): string => `${d.getFullYear()}-${String
 
 export function defaultSample(folder = ''): ThumbnailSample { return { folder, surahsAr: ['الفاتحة'], prayer: 'Isha', date: todayIso() } }
 
+/** The widest content the template can get: two of the widest calligraphy names, the longest prayer, the longest Hijri month (same as the plugin's sweep job). */
+export const WORST_CASE_SAMPLE: Omit<ThumbnailSample, 'folder'> = { surahsAr: ['الكافرون', 'العاديات'], prayer: 'Istisqa', date: '2024-12-31' }
+
+/** A worst-case sample on the reciter with the longest Arabic name (or the given folder). */
+export function worstCaseSample(reciters: readonly { folder: string; nameAr: string | null }[], folder?: string): ThumbnailSample {
+  const longest = [...reciters].sort((a, b) => (b.nameAr?.length ?? 0) - (a.nameAr?.length ?? 0))[0]
+  return { folder: folder ?? longest?.folder ?? '', ...WORST_CASE_SAMPLE }
+}
+
 export function defaultThumbnailRule(folder = ''): ThumbnailRule {
   return { id: DEFAULT_RULE_ID, origin: 'default', enabled: true, conditions: [], style: {}, sample: defaultSample(folder) }
 }

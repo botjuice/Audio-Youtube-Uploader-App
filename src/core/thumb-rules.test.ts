@@ -94,6 +94,16 @@ describe('thumbnail rule validation', () => {
   })
 })
 
+describe('worst-case sample', () => {
+  it('uses the widest content on the reciter with the longest name', async () => {
+    const { worstCaseSample, WORST_CASE_SAMPLE } = await import('./thumb-rules')
+    const s = worstCaseSample([{ folder: 'A', nameAr: 'علي' }, { folder: 'B', nameAr: 'عبد الرحمن بن عبد العزيز السديس' }, { folder: 'C', nameAr: null }])
+    expect(s).toEqual({ folder: 'B', ...WORST_CASE_SAMPLE })
+    expect(worstCaseSample([{ folder: 'A', nameAr: 'x' }], 'A').folder).toBe('A')
+    expect(WORST_CASE_SAMPLE.surahsAr).toHaveLength(2)
+  })
+})
+
 describe('describe / normalise / patch helpers', () => {
   it('describes rules with playlist titles and the default', () => {
     expect(describeThumbRule(pl, (id) => ({ PL_X: 'Taraweeh 2025' })[id] ?? id)).toBe('Playlist is Taraweeh 2025 · Surah is not baqarah')

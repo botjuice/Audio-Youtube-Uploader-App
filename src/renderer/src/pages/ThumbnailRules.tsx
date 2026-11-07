@@ -1,11 +1,11 @@
 import { clsx } from 'clsx'
-import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, ChevronRight, FolderOpen, Image as ImageIcon, Layers, Maximize2, Plus, RotateCcw, Trash2, X } from 'lucide-react'
+import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, FolderOpen, Image as ImageIcon, Layers, Maximize2, Plus, RotateCcw, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RulePhoto, StyleFieldInfo, StylePatch, StyleSchemaInfo, SurahOption, ThumbCondition, ThumbConditionKind, ThumbnailPreview, ThumbnailRule, ThumbnailSample } from '@shared/types'
 import { PRAYERS } from '@core/prayers'
 import { DEFAULT_SURAHS } from '@core/surahs'
 import { MAX_CONDITIONS } from '@core/rules'
-import { THUMB_KIND_LABEL, countKnobs, defaultSample, describeThumbRule, effectiveStyle, getKnob, mergePatches, newThumbnailRule, prunePatch, resolveThumbnailLook, setKnob, validateThumbRule } from '@core/thumb-rules'
+import { THUMB_KIND_LABEL, countKnobs, defaultSample, describeThumbRule, effectiveStyle, getKnob, mergePatches, newThumbnailRule, prunePatch, resolveThumbnailLook, setKnob, validateThumbRule, worstCaseSample } from '@core/thumb-rules'
 import { Badge, Button, ColorInput, Empty, IconButton, Input, Modal, Select, Slider, Spinner, Switch } from '@/components/ui'
 import { errText, useStore } from '@/store'
 
@@ -218,6 +218,11 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
   const previewStyle = isDefault ? rule.style : mergePatches(defaultStyle, rule.style)
   const baseline = useMemo(() => (schema ? (isDefault ? schema.defaults : mergePatches(schema.defaults as unknown as StylePatch, defaultStyle)) : null) as Record<string, unknown> | null, [schema, isDefault, defaultStyle])
   const { result, rendering } = useStyledPreview(rule.sample, previewStyle, rule.overlay || isDefault ? undefined : rule.photo)
+  // The sample can hide an overflow (one short surah fits anything), so the widest content is always checked too.
+  const worst = useMemo(() => worstCaseSample(library.reciters, rule.sample.folder || undefined), [library.reciters, rule.sample.folder])
+  const isWorst = JSON.stringify({ ...rule.sample, folder: '' }) === JSON.stringify({ ...worst, folder: '' })
+  const { result: worstResult, rendering: worstRendering } = useStyledPreview(worst, previewStyle, rule.overlay || isDefault ? undefined : rule.photo, !isWorst, 900)
+  const worstFails = !isWorst && !!worstResult && !worstResult.ok && worstResult.reason === 'TEXT_OVERFLOW'
   const styleBlocks = !!result && !result.ok && (result.reason === 'INVALID_STYLE' || result.reason === 'TEXT_OVERFLOW' || result.reason === 'FONT_NOT_LOADED')
   const canSave = errors.length === 0 && !styleBlocks && !rendering && !saving
   const knobs = countKnobs(rule.style)
@@ -319,6 +324,17 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
                   <Select value={rule.sample.prayer} onChange={(e) => setSample({ prayer: e.target.value })} className="h-7.5 text-xs">{PRAYERS.map((p) => <option key={p} value={p}>{p}</option>)}</Select>
                   <input type="date" value={rule.sample.date} onChange={(e) => setSample({ date: e.target.value })} className="h-7.5 rounded-lg border border-border bg-surface px-2 text-xs no-drag" />
                   {rule.sample.surahsAr.length < 3 && <Button size="sm" variant="subtle" onClick={() => setSample({ surahsAr: [...rule.sample.surahsAr, surahOptions[0]?.ar ?? 'الفاتحة'] })}><Plus size={12} /> surah</Button>}
+                </div>
+                <div className={clsx('flex items-start gap-2 rounded-lg border p-2 text-[11px]', worstFails ? 'border-err/40 bg-err/6' : 'border-border bg-surface-2/40')}>
+                  {worstRendering && !isWorst ? <Spinner className="mt-0.5 shrink-0 text-accent" /> : worstFails ? <AlertTriangle size={13} className="mt-0.5 shrink-0 text-err" /> : <CheckCircle2 size={13} className="mt-0.5 shrink-0 text-ok" />}
+                  <div className="min-w-0 flex-1">
+                    {isWorst ? <span>Previewing the <b>worst case</b>: two of the widest surah names, the longest prayer and month, on the longest reciter name.</span>
+                      : worstRendering ? <span>Checking the worst case (widest surah pair, longest prayer and month)…</span>
+                      : worstFails ? <span><b>Overflows on the worst case:</b> {worstResult?.message}</span>
+                      : worstResult && !worstResult.ok ? <span>Worst case can't render ({worstResult.reason}): {worstResult.message}</span>
+                      : <span>Fits the <b>worst case</b> too (widest surah pair, longest prayer and month).{worstResult?.ok && worstResult.warnings?.length ? ` ${worstResult.warnings[0]}` : ''}</span>}
+                  </div>
+                  {!isWorst && <Button size="sm" variant="ghost" onClick={() => setSample({ ...worst })}>Show it</Button>}
                 </div>
               </div>
             </Section>
