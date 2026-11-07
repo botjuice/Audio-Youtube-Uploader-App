@@ -49,11 +49,14 @@ export function decodeChannels(r: number, g: number, b: number): number {
 /** A BGRA bitmap of a captured frame, at any scale of the 16:9 template. */
 export interface Frame { bmp: Uint8Array; width: number; height: number }
 
+/** The output frame; a box frame with fewer pixels than this (zoom lost) is not accepted. */
+export const FRAME_MIN = { width: 1920, height: 1080 } as const
+
 /** Scale of a frame relative to the template (frame px per template px), or null if the frame is
- *  not a 16:9 picture of it. The hidden window is 1920×1080 DIP, but Windows display scaling can
- *  hand back 2400×1350 or 2880×1620 — those are still the same picture. */
+ *  not a 16:9 picture of it at 1080p or better. The hidden window is 1920×1080 DIP, but Windows
+ *  display scaling can hand back 2400×1350 or 2880×1620 — those are still the same picture. */
 export function frameScale(width: number, height: number): number | null {
-  if (width < TEMPLATE.width || height < TEMPLATE.height) return null
+  if (width < FRAME_MIN.width || height < FRAME_MIN.height) return null
   const sx = width / TEMPLATE.width, sy = height / TEMPLATE.height
   return Math.abs(sx - sy) * TEMPLATE.height <= 2 ? sx : null
 }
@@ -103,28 +106,63 @@ export function scrubStamp(f: Frame): Frame {
   return f
 }
 
+export interface Rect { left: number; top: number; right: number; bottom: number }
+
 /** What the template reports about its own viewport after a render. */
 export interface PageMeasure {
   innerWidth: number
   innerHeight: number
   devicePixelRatio: number
-  stamp: { left: number; top: number; right: number; bottom: number }
+  stamp: Rect
+  /** The fixed 1280×720 picture box (`#thumb`), CSS px. Older templates did not report it. */
+  box?: Rect
+  /** Exact viewport size in CSS px (`visualViewport`), fractional under OS pixel snapping. */
+  viewport?: { width: number; height: number }
 }
 
-/** True when the page is laid out as authored: a 1280×720 CSS-px viewport (1920×1080 DIP at zoom
- *  1.5) with the stamp ending exactly at the bottom-right corner. `devicePixelRatio` is not checked:
- *  it is zoom × display scale, so 1.875 under 125 % Windows scaling is legitimate (frames then
- *  arrive at 2400×1350 and are downscaled). */
-export function pageOk(p: PageMeasure | undefined): boolean {
-  if (!p) return false
+/** How much wider/taller than 1280×720 the viewport may be before it is worth a warning. Windows snaps
+ *  the client area to whole physical pixels, so 1281×721 CSS px at 125 % scaling is normal. */
+export const VIEWPORT_SLACK = 4
+/** Beyond this the viewport is not snapping slack but a lost zoom or a resized window (1920×1080 or
+ *  1067×600 CSS px): the box would not have its 1080p pixels, so the render is refused. */
+export const VIEWPORT_SLACK_MAX = 40
+
+/** 'ok': laid out as authored. 'slack': the picture box and stamp are exactly where they belong but the
+ *  viewport carries more slack than usual — render, with a warning. 'bad': the picture itself moved or is
+ *  cut off (zoom lost: 1920×1080 or 1067×600 viewports; a scrollbar; a shifted box).
+ *  `devicePixelRatio` is not checked: it is zoom × display scale on some platforms and zoom alone on
+ *  others. */
+export function pageVerdict(p: PageMeasure | undefined): 'ok' | 'slack' | 'bad' {
+  if (!p) return 'bad'
   const near = (a: number, b: number) => Math.abs(a - b) < 0.5
-  return p.innerWidth === TEMPLATE.width && p.innerHeight === TEMPLATE.height
-    && near(p.stamp.right, TEMPLATE.width) && near(p.stamp.bottom, TEMPLATE.height)
-    && near(p.stamp.right - p.stamp.left, STAMP_W) && near(p.stamp.bottom - p.stamp.top, STAMP_H)
+  const s = p.stamp
+  const stampOk = near(s.right, TEMPLATE.width) && near(s.bottom, TEMPLATE.height) && near(s.right - s.left, STAMP_W) && near(s.bottom - s.top, STAMP_H)
+  const b = p.box
+  const boxOk = !b || (near(b.left, 0) && near(b.top, 0) && near(b.right, TEMPLATE.width) && near(b.bottom, TEMPLATE.height))
+  // The viewport must hold the whole box, else the capture cuts the picture.
+  const over = Math.max(p.innerWidth - TEMPLATE.width, p.innerHeight - TEMPLATE.height)
+  if (!stampOk || !boxOk || p.innerWidth < TEMPLATE.width || p.innerHeight < TEMPLATE.height || over > VIEWPORT_SLACK_MAX) return 'bad'
+  return over <= VIEWPORT_SLACK ? 'ok' : 'slack'
 }
+
+/** True when the render can go ahead (verdict 'ok' or 'slack'). */
+export const pageOk = (p: PageMeasure | undefined): boolean => pageVerdict(p) !== 'bad'
 
 export function describePage(p: PageMeasure | undefined): string {
   if (!p) return 'page: not measured'
-  const s = p.stamp
-  return `page ${p.innerWidth}×${p.innerHeight} css px, devicePixelRatio ${p.devicePixelRatio}, stamp rect ${s.left},${s.top}→${s.right},${s.bottom} (want 1280×720, stamp ending at 1280,720)`
+  const r = (x: Rect) => `${x.left},${x.top}→${x.right},${x.bottom}`
+  const vp = p.viewport ? ` (exact ${p.viewport.width}×${p.viewport.height})` : ''
+  return `page ${p.innerWidth}×${p.innerHeight} css px${vp}, devicePixelRatio ${p.devicePixelRatio}, box rect ${p.box ? r(p.box) : 'n/a'}, stamp rect ${r(p.stamp)} (want viewport ≥ 1280×720, box 0,0→1280,720, stamp ending at 1280,720)`
+}
+
+/** Crop a full-viewport frame to the picture box. The box is the top-left 1280×720 CSS px of a viewport
+ *  `viewportCss` wide/high (fractional under OS snapping, e.g. 1281.333×721 → a 2402×1351 frame at
+ *  1.875 px per CSS px holds a 2400×1350 box). A frame already the size of the box is returned as is. */
+export function cropToBox(f: Frame, viewportCss: { width: number; height: number }): Frame {
+  const k = f.width / viewportCss.width
+  const w = Math.min(f.width, Math.round(TEMPLATE.width * k)), h = Math.min(f.height, Math.round(TEMPLATE.height * k))
+  if (w === f.width && h === f.height) return f
+  const out = new Uint8Array(w * h * 4)
+  for (let y = 0; y < h; y++) out.set(f.bmp.subarray(y * f.width * 4, (y * f.width + w) * 4), y * w * 4)
+  return { bmp: out, width: w, height: h }
 }

@@ -81,8 +81,11 @@
   html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
 
   /* ---------- Canvas ---------- */
+  /* Fixed box at the viewport origin: the viewport may be a little larger than 1280×720 (Windows snaps the
+     client area to whole physical pixels), and as an in-flow RTL block the box would then hug the right
+     edge, carrying the stamp with it. Pinned here, the picture and stamp end at exactly 1280,720. */
   .thumb {
-    position: relative; width: var(--canvas-w); height: var(--canvas-h); overflow: hidden;
+    position: fixed; left: 0; top: 0; width: var(--canvas-w); height: var(--canvas-h); overflow: hidden;
     background: var(--canvas-bg); -webkit-font-smoothing: antialiased;
   }
   .thumb__photo {
@@ -430,8 +433,10 @@
     document.getElementById("stamp-main").style.background = d.stamp ? d.stamp.main : "#000";
     document.getElementById("stamp-inverse").style.background = d.stamp ? d.stamp.inverse : "#000";
     // The plugin verifies these instead of assuming the zoom and size it asked for are in effect.
-    const r = stamp.getBoundingClientRect();
-    window.__page = { innerWidth, innerHeight, devicePixelRatio, stamp: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } };
+    const rect = (el) => { const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; };
+    const vv = window.visualViewport;
+    window.__page = { innerWidth, innerHeight, devicePixelRatio, stamp: rect(stamp), box: rect(root),
+      viewport: vv ? { width: vv.width, height: vv.height } : { width: innerWidth, height: innerHeight } };
     root.setAttribute("data-ready", "true");
   }
 

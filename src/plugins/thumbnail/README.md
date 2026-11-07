@@ -102,7 +102,12 @@ Windows 3.0.x: stamp off the corner, every render refused). After each render th
 CSS px with the stamp ending at (1280, 720), the plugin resets zoom 1.5 and the 1920×1080 content
 size, waits for the page to see them, and renders again — failing with the measured values only if
 that does not help. The template root is `overflow: hidden` so a rounding pixel can never grow a
-scrollbar. `devicePixelRatio` is reported but not required to be 1.5: under Windows display scaling
+scrollbar. The picture lives in a `position: fixed` 1280×720 box at the viewport origin: Windows snaps
+the client area to whole physical pixels, so the viewport can be 1281.33×721 CSS px at 125 % scaling,
+and an in-flow RTL block would hug the right edge and carry the stamp with it (seen on Windows 3.2.0:
+every render refused). Paint frames are cropped to the box using the exact `visualViewport` size, the
+explicit capture asks for the box rect, and a viewport up to 4 px larger is normal; more is only a
+warning as long as the box and stamp rects are exact. `devicePixelRatio` is reported but not required to be 1.5: under Windows display scaling
 it is 1.5 × scale and frames arrive at e.g. 2400×1350; the stamp is read at the scaled position and
 the frame is downscaled to 1920×1080 after scrubbing.
 

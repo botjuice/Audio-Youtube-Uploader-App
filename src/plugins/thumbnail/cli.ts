@@ -204,6 +204,18 @@ async function hostile(outputDir: string): Promise<number> {
   const b = await render(jobs[1]!, host)
   check('zoom-and-size-drift', b.ok && meanDiff(b.thumbnail, golden(1)) < 1.5, b)
 
+  // 1b. Windows snaps the client area to whole physical pixels: 1922×1081 DIP is what a 1920×1080 request
+  //     can come back as at 125 %. The viewport is then 1281.33×720.67 CSS px; the picture box must stay at
+  //     0,0→1280,720, the frame cropped to it, and the golden picture reproduced with no warning.
+  win.setContentSize(1922, 1081)
+  const s1 = await render({ ...jobs[0]!, style: { output: { quality: 91 } } }, host)
+  check('viewport-snapping-slack', s1.ok && s1.warnings.length === 0 && meanDiff(s1.thumbnail, golden(0)) < 1.5, s1)
+  // 1c. More slack than snapping explains (1960×1102 → 1306.67×734.67 CSS px): still the right picture, with a warning.
+  win.setContentSize(1960, 1102)
+  const s2 = await render({ ...jobs[1]!, style: { output: { quality: 91 } } }, host)
+  check('viewport-large-slack', s2.ok && s2.warnings.some((w) => w.includes('picture box 1280×720')) && meanDiff(s2.thumbnail, golden(1)) < 1.5, s2)
+  win.setContentSize(1920, 1080)
+
   // 2. The stamp cannot be read: the fallback must return the (stable, new) picture with a warning.
   const css = await win.webContents.insertCSS('#stamp { visibility: hidden !important }')
   const c = await render(jobs[2]!, host)

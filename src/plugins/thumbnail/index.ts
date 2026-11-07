@@ -19,7 +19,7 @@ export { DEFAULT_STYLE, STYLE_FIELDS, STYLE_SCHEMA, validateStyle, type Style, t
 export { BUNDLED_FONTS, type BundledFont } from './fonts'
 export { WORST_CASE } from './job'
 
-export const manifest: PluginManifest = { id: 'thumbnail', version: '1.4.0', templateVersion: 4, styleVersion: 3 }
+export const manifest: PluginManifest = { id: 'thumbnail', version: '1.4.1', templateVersion: 5, styleVersion: 3 }
 
 /** YouTube's limit for custom thumbnails. */
 const THUMB_MAX_BYTES = 2 * 1024 * 1024

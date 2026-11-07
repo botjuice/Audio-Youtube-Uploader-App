@@ -10,7 +10,7 @@ import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { TemplateData } from './job'
-import { describePage, frameScale, MAX_ID, pageOk, readStamp, scrubStamp, stampColours, type Frame, type PageMeasure, type StampRead } from './stamp'
+import { cropToBox, describePage, frameScale, MAX_ID, pageVerdict, readStamp, scrubStamp, stampColours, type Frame, type PageMeasure, type StampRead } from './stamp'
 
 export const FRAME = { width: 1920, height: 1080 } as const
 export const THUMB = { width: 1280, height: 720 } as const
@@ -124,20 +124,24 @@ export class OffscreenRenderer {
     const wc = win.webContents
     const renderId = (this.renderSeq = (this.renderSeq % MAX_ID) + 1)   // 1..63, never 0 (black = no stamp)
     // What the window shows *before* this render: the fallback must never return it.
-    const before = await wc.capturePage().then((img) => sha1(img.toBitmap()), () => undefined)
+    const before = await wc.capturePage({ x: 0, y: 0, ...FRAME }).then((img) => sha1(img.toBitmap()), () => undefined)
     let report = await this.runTemplate(wc, data, vars, renderId)
-    if (!pageOk(report.page)) {
+    if (pageVerdict(report.page) === 'bad') {
       // Zoom or size drifted (a persisted zoom level, a resize): put them back and lay out again.
       log(`render ${renderId}: page off — ${describePage(report.page)}; resetting zoom and size`)
       wc.setZoomFactor(ZOOM)
       win.setContentSize(FRAME.width, FRAME.height)
       await this.settleViewport(wc)
       report = await this.runTemplate(wc, data, vars, renderId)
-      if (!pageOk(report.page)) {
-        throw new Error(`Render ${renderId}: the hidden page is not laid out at 1280×720 after resetting zoom — ${describePage(report.page)}; ${this.environment(win)}`)
+      if (pageVerdict(report.page) === 'bad') {
+        throw new Error(`Render ${renderId}: the hidden page's picture box is not at 0,0→1280×720 after resetting zoom — ${describePage(report.page)}; ${this.environment(win)}`)
       }
     }
     const { frame, warnings } = await this.captureStamped(win, renderId, before, report.page)
+    if (pageVerdict(report.page) === 'slack') {
+      const p = report.page!
+      warnings.push(`Viewport ${p.innerWidth}×${p.innerHeight}, picture box 1280×720 — fine (the picture is captured from the box).`)
+    }
     return { frame, warnings, ...report }
   }
 
@@ -179,15 +183,19 @@ export class OffscreenRenderer {
       /** The last two paints, raw, for the stable-and-new fallback and the diagnostics. */
       const recent: { frame: Frame; stamp: StampRead; source: string }[] = []
       const stop = () => { settled = true; if (timer) clearTimeout(timer); if (poke) clearInterval(poke); wc.off('paint', onPaint) }
-      const asFrame = (img: NativeImage): Frame | null => {
+      /** Paint frames cover the whole viewport, which may carry OS-snapping slack beyond the 1280×720
+       *  box; crop them to the box (a `capturePage` with the box rect already is the box). */
+      const asFrame = (img: NativeImage, wholeViewport: boolean): Frame | null => {
         const s = img.getSize()
-        if (!frameScale(s.width, s.height)) return null
-        return { bmp: img.toBitmap(), width: s.width, height: s.height }
+        let f: Frame = { bmp: img.toBitmap(), width: s.width, height: s.height }
+        if (wholeViewport && page?.viewport) f = cropToBox(f, page.viewport)
+        if (!frameScale(f.width, f.height)) return null
+        return f
       }
       /** True when the image is a frame carrying our stamp (then resolved). */
       const consider = (img: NativeImage, source: string): boolean => {
         if (settled) return false
-        const f = asFrame(img)
+        const f = asFrame(img, source === 'paint')
         if (!f) { log(`render ${renderId}: ${source} ${img.getSize().width}x${img.getSize().height} — not a frame of the template`); return false }
         const st = readStamp(f)
         log(`render ${renderId}: ${source} ${f.width}x${f.height} stamp=${st.id} raw=${JSON.stringify(st.raw)}`)
@@ -208,7 +216,7 @@ export class OffscreenRenderer {
       timer = setTimeout(() => {
         if (settled) return
         // Last resort: an explicit capture, still only accepted with the right stamp…
-        wc.capturePage().then((img) => {
+        wc.capturePage({ x: 0, y: 0, ...FRAME }).then((img) => {
           if (settled) return
           try {
             if (consider(img, 'capturePage')) return
