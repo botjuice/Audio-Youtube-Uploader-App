@@ -3,12 +3,11 @@ import { Plus, RefreshCw, Trash2, ListMusic, Tag, Pencil, X, AlertTriangle } fro
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Condition, ConditionKind, KeywordDef, PlaylistRule, Privacy, TokenValidation } from '@shared/types'
 import { PRAYERS } from '@core/prayers'
-import { DEFAULT_SURAHS } from '@core/surahs'
 import { KIND_LABEL, MAX_CONDITIONS, describeRule, matchesRule, validateRule } from '@core/rules'
 import { Badge, Button, Card, Empty, IconButton, Input, Select, Spinner, Switch } from '@/components/ui'
 import { useBusy, useStore } from '@/store'
+import { SurahSelect } from '@/components/SurahSelect'
 
-const SURAH_KEYS = Object.keys(DEFAULT_SURAHS).sort()
 const KINDS = Object.keys(KIND_LABEL) as ConditionKind[]
 
 export default function Playlists() {
@@ -137,7 +136,6 @@ function RulesByPlaylist() {
             ))}
           </div>
         )}
-        <datalist id="surah-keys">{SURAH_KEYS.map((k) => <option key={k} value={k} />)}</datalist>
       </Card>
     </div>
   )
@@ -202,7 +200,7 @@ function ValueInput({ c, onChange, reciters, keywords }: { c: Condition; onChang
     case 'prayer':
       return <Select value={c.value} onChange={(e) => onChange(e.target.value)} className={cls}><option value="">choose prayer…</option>{PRAYERS.map((p) => <option key={p} value={p}>{p}</option>)}</Select>
     case 'surah':
-      return <Input list="surah-keys" value={c.value} onChange={(e) => onChange(e.target.value)} placeholder="e.g. baqarah" className={cls} />
+      return <SurahSelect value={c.value} onChange={onChange} className={cls} />
     case 'keyword':
       return <Select value={c.value} onChange={(e) => onChange(e.target.value)} className={cls}><option value="">{keywords.length ? 'choose keyword…' : 'no keywords registered yet'}</option>{keywords.map((k) => <option key={k.name} value={k.name}>{k.name}</option>)}</Select>
   }

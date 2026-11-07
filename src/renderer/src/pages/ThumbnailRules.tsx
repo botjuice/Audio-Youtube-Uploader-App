@@ -3,13 +3,12 @@ import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, ChevronDown, ChevronRi
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RulePhoto, StyleFieldInfo, StylePatch, StyleSchemaInfo, SurahOption, ThumbCondition, ThumbConditionKind, ThumbnailPreview, ThumbnailRule, ThumbnailSample } from '@shared/types'
 import { PRAYERS } from '@core/prayers'
-import { DEFAULT_SURAHS } from '@core/surahs'
 import { MAX_CONDITIONS } from '@core/rules'
 import { THUMB_KIND_LABEL, countKnobs, defaultSample, describeThumbRule, effectiveStyle, getKnob, mergePatches, newThumbnailRule, prunePatch, resolveThumbnailLook, setKnob, validateThumbRule, worstCaseSample } from '@core/thumb-rules'
 import { Badge, Button, ColorInput, Empty, IconButton, Input, Modal, Select, Slider, Spinner, Switch } from '@/components/ui'
 import { errText, useStore } from '@/store'
+import { SurahSelect, useSurahOptions } from '@/components/SurahSelect'
 
-const SURAH_KEYS = Object.keys(DEFAULT_SURAHS).sort()
 const KINDS = Object.keys(THUMB_KIND_LABEL) as ThumbConditionKind[]
 const GROUP_TITLES: Record<string, string> = {
   photo: 'Photo', overlay: 'Overlay & shading', text: 'Text layout', shadow: 'Text shadow', title: 'Surah title',
@@ -184,13 +183,13 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
   const saving = useStore((s) => !!s.busy['thumbRules'])
   const [rule, setRule] = useState<ThumbnailRule>(draft.rule)
   const [schema, setSchema] = useState<StyleSchemaInfo | null>(null)
-  const [surahOptions, setSurahOptions] = useState<SurahOption[]>([])
+  const surahOptions = useSurahOptions()
   const [full, setFull] = useState(false)
   const [confirmClose, setConfirmClose] = useState(false)
   const [photo, setPhoto] = useState<RulePhoto | null>(null)
   const choosing = useStore((s) => !!s.busy['rulePhoto'])
   const call = useStore((s) => s.call)
-  useEffect(() => { void window.api.getStyleSchema().then(setSchema); void window.api.listSurahOptions().then(setSurahOptions) }, [])
+  useEffect(() => { void window.api.getStyleSchema().then(setSchema) }, [])
   useEffect(() => {
     let live = true
     if (!rule.photo) { setPhoto(null); return }
@@ -392,7 +391,6 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
           <img src={result.frameDataUrl ?? result.dataUrl} alt="frame" className="max-h-full max-w-full rounded-lg shadow-2xl" />
         </div>
       )}
-      <datalist id="thumb-surah-keys">{SURAH_KEYS.map((k) => <option key={k} value={k} />)}</datalist>
     </div>
   )
 }
@@ -416,7 +414,7 @@ function CondValue({ c, onChange }: { c: ThumbCondition; onChange: (v: string) =
     case 'prayer':
       return <Select value={c.value} onChange={(e) => onChange(e.target.value)} className={cls}><option value="">choose prayer…</option>{PRAYERS.map((p) => <option key={p} value={p}>{p}</option>)}</Select>
     case 'surah':
-      return <Input list="thumb-surah-keys" value={c.value} onChange={(e) => onChange(e.target.value)} placeholder="e.g. baqarah" className={cls} />
+      return <SurahSelect value={c.value} onChange={onChange} className={cls} />
     case 'keyword':
       return <Select value={c.value} onChange={(e) => onChange(e.target.value)} className={cls}><option value="">{library.keywords.length ? 'choose keyword…' : 'no keywords registered'}</option>{library.keywords.map((k) => <option key={k.name} value={k.name}>{k.name}</option>)}</Select>
     case 'playlist':
