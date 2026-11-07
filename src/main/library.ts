@@ -153,6 +153,7 @@ export async function scanLibrary(library: string, store: LibraryStore, opts: Sc
       videoId: marker?.video_id ?? null, uploadedAt: marker?.uploaded_at ?? null,
       lastError: st.lastError ?? null, hasVideoFile,
       thumbnail: st.thumbnail ?? null,
+      allowPlainPhoto: st.allowPlainPhoto ?? false,
     }
   }
 

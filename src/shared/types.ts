@@ -77,6 +77,8 @@ export interface LibraryRecord {
   lastError: LastError | null
   hasVideoFile: boolean
   thumbnail: ThumbnailInfo | null
+  /** user allowed this recording to upload with the plain reciter photo when its thumbnail can't render */
+  allowPlainPhoto: boolean
 }
 
 export interface ReciterInfo {
@@ -266,6 +268,7 @@ export interface SurahOption { n: number; ar: string; label: string }
 export interface RecordPatch {
   selected?: boolean
   skipped?: boolean
+  allowPlainPhoto?: boolean
   titleOverride?: string | null
   playlistOverrides?: PlaylistOverrides
 }

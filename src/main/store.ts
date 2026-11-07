@@ -29,6 +29,7 @@ export interface RecordState {
   playlistOverrides?: PlaylistOverrides
   lastError?: LastError | null
   thumbnail?: ThumbnailInfo | null
+  allowPlainPhoto?: boolean
   /** what the rendered mp4 was made from: a thumbnail cache key, or 'photo' */
   videoKey?: string
 }

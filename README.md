@@ -61,7 +61,10 @@ video's background **and** set as the YouTube custom thumbnail after upload. Ren
 bundled template in `src/plugins/thumbnail` (no internet), cached in `<library>/.yoosyjoosy/thumbs`.
 
 - On by default; Settings → Thumbnails turns it off (then: plain photo at 720p, no custom thumbnail, exactly as before) or drops the «الشيخ» prefix.
-- A thumbnail problem **never blocks an upload**: the recording shows the reason, the plain photo is used.
+- A thumbnail problem **holds that recording back**: the run skips it with the reason (shown on the row and
+  in the detail panel) so you can fix the cause, or tick **Upload with the plain photo anyway** on the
+  recording to upload it with the reciter photo and no custom thumbnail. Failures *after* the video is up
+  (e.g. YouTube refusing the thumbnail) never undo the upload; the recording shows "Thumbnail not set" with Retry.
 - Setting the thumbnail costs 50 API units (an upload is 1,600; a playlist add 50); the sidebar shows units next to uploads. Custom thumbnails require a **phone-verified** channel — otherwise the recording shows "Thumbnail not set" with a Retry button.
 - Previews: the record detail panel (which also names the look that will apply) and the reciter page (updates when you change the photo).
 

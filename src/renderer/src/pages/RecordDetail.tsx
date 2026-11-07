@@ -2,7 +2,7 @@ import { clsx } from 'clsx'
 import { Check, ExternalLink, FolderOpen, Pencil, RotateCcw, Sparkles, X, Plus, CircleSlash, CircleCheck, Tag, BookOpen, UserPlus, Image as ImageIcon, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { LibraryRecord, ThumbnailPreview } from '@shared/types'
-import { Badge, Button, Chip, IconButton, Input, Modal, Select } from '@/components/ui'
+import { Badge, Button, Checkbox, Chip, IconButton, Input, Modal, Select } from '@/components/ui'
 import { statusMeta, fmtBytes, fmtRel, parseVideoId } from '@/lib/format'
 import { describeRule } from '@core/rules'
 import { describeLook, resolveThumbnailLook } from '@core/thumb-rules'
@@ -261,12 +261,18 @@ function ThumbnailSection({ record: r }: { record: LibraryRecord }) {
             <img src={preview.dataUrl} alt="thumbnail" className="w-full aspect-video object-cover" />
           </button>
         ) : (
-          <div className="rounded-lg border border-warn/30 bg-warn/6 p-2 text-xs">
+          <div className={clsx('rounded-lg border p-2 text-xs', r.allowPlainPhoto ? 'border-warn/30 bg-warn/6' : 'border-err/40 bg-err/6')}>
             <div className="flex items-center gap-1.5 font-medium"><ImageIcon size={12} /> Thumbnail can't be rendered ({preview.reason})</div>
-            <div className="text-muted mt-0.5">{preview.message}</div>
-            <div className="text-muted mt-1">The plain photo will be used — the upload is not blocked.</div>
+            <div className="mt-0.5">{preview.message}</div>
+            <div className="text-muted mt-1">{r.allowPlainPhoto ? 'You allowed the plain reciter photo, so this recording uploads without a custom thumbnail.' : 'This recording is held back from uploading until the cause is fixed (in Thumbnail rules, Reciters or the filename) or you allow the plain photo below.'}</div>
           </div>
         )}
+      {r.status !== 'uploaded' && (preview?.ok === false || r.allowPlainPhoto || r.lastError?.stage === 'thumbnail') && (
+        <label className="mt-2 flex items-start gap-2 rounded-lg border border-border bg-surface-2/40 p-2 text-xs cursor-pointer">
+          <Checkbox checked={r.allowPlainPhoto} onChange={(v) => void call('plain', () => window.api.patchRecord(r.id, { allowPlainPhoto: v }))} />
+          <span><b>Upload with the plain photo anyway</b><span className="text-muted"> — the video frame becomes the reciter photo and no custom thumbnail is set. If the thumbnail renders fine at upload time it is used regardless.</span></span>
+        </label>
+      )}
       {t?.setError && (
         <div className="mt-2 flex items-start gap-2 rounded-lg border border-warn/30 bg-warn/6 p-2 text-xs">
           <div className="flex-1"><b>Thumbnail not set:</b> {t.setError}</div>

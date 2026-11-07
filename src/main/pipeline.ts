@@ -63,8 +63,13 @@ export class Pipeline extends EventEmitter {
             frame = result.frame; frameKey = result.cacheKey; thumbFile = result.thumbnail
             await ctx.store.records.update((d) => { d[rec.id] = { ...d[rec.id], thumbnail: { ok: true, key: result.cacheKey, set: d[rec.id]?.thumbnail?.set, at: new Date().toISOString() } } })
           } else {
-            activity.warn(`Thumbnail not rendered for ${rec.fileName} (${result.reason}): ${result.message} — using the plain photo.`, rec.id)
             await ctx.store.records.update((d) => { d[rec.id] = { ...d[rec.id], thumbnail: { ok: false, reason: result.reason, message: result.message, at: new Date().toISOString() } } })
+            if (!rec.allowPlainPhoto) {
+              // Held, not skipped silently: the user fixes the cause or ticks "upload with the plain photo anyway" on the recording.
+              await this.fail(ctx, rec, 'thumbnail', new Error(`${result.reason}: ${result.message} — upload held until you fix this or allow the plain photo on the recording.`))
+              continue
+            }
+            activity.warn(`Thumbnail not rendered for ${rec.fileName} (${result.reason}): ${result.message} — you allowed the plain photo, uploading with it.`, rec.id)
           }
         }
 
@@ -146,9 +151,9 @@ export class Pipeline extends EventEmitter {
     }
   }
 
-  private async fail(ctx: PipelineContext, rec: LibraryRecord, stage: 'encode' | 'upload', e: unknown) {
+  private async fail(ctx: PipelineContext, rec: LibraryRecord, stage: 'thumbnail' | 'encode' | 'upload', e: unknown) {
     const message = e instanceof Error ? e.message : String(e)
-    activity.error(`${stage === 'encode' ? 'Render' : 'Upload'} failed for ${rec.fileName}: ${message}`, rec.id)
+    activity.error(`${{ thumbnail: 'Thumbnail', encode: 'Render', upload: 'Upload' }[stage]} failed for ${rec.fileName}: ${message}`, rec.id)
     await ctx.store.records.update((d) => { d[rec.id] = { ...d[rec.id], lastError: { stage, message, at: new Date().toISOString() } } })
     this.emit('changed')
   }
