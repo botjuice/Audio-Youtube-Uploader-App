@@ -46,3 +46,17 @@ describe('thumbnail job builder', () => {
     expect(WORST_CASE_SAMPLE).toEqual({ surahsAr: WORST_CASE.surahsAr, prayer: WORST_CASE.prayer, date: WORST_CASE.date })
   })
 })
+
+describe('pruneDefaultLook', () => {
+  it('drops Default look knobs that equal the plugin factory value and leaves other rules alone', async () => {
+    const { pruneDefaultLook } = await import('./thumbnails')
+    const { DEFAULT_STYLE } = await import('../plugins/thumbnail/index')
+    const rules = [
+      { id: 'x', enabled: true, conditions: [], style: { photo: { blur: DEFAULT_STYLE.photo.blur } }, sample: { folder: 'A', surahsAr: ['x'], prayer: 'Isha', date: '2025-01-01' } },
+      { id: 'default', origin: 'default', enabled: true, conditions: [], style: { photo: { blur: DEFAULT_STYLE.photo.blur, contrast: DEFAULT_STYLE.photo.contrast + 0.2 }, title: { scale: DEFAULT_STYLE.title.scale } }, sample: { folder: 'A', surahsAr: ['x'], prayer: 'Isha', date: '2025-01-01' } },
+    ] as never
+    const out = pruneDefaultLook(rules)
+    expect(out[0]!.style).toEqual({ photo: { blur: DEFAULT_STYLE.photo.blur } })
+    expect(out[1]!.style).toEqual({ photo: { contrast: DEFAULT_STYLE.photo.contrast + 0.2 } })
+  })
+})

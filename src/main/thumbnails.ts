@@ -7,7 +7,7 @@ import { promises as fs } from 'node:fs'
 import { basename, join } from 'node:path'
 
 import type { LibraryRecord, ReciterInfo, Settings, StyleError, StylePatch, StyleSchemaInfo, SurahOption, ThumbnailPreview, ThumbnailRule, ThumbnailSample } from '@shared/types'
-import { resolveThumbnailLook, type ThumbTarget, type ThumbnailLook } from '@core/thumb-rules'
+import { prunePatch, resolveThumbnailLook, type ThumbTarget, type ThumbnailLook } from '@core/thumb-rules'
 import { DEFAULT_SURAHS, translateSurah, type SurahDict } from '@core/surahs'
 import { SURAHS_AR } from '../plugins/thumbnail/surahs'
 import { PRAYERS } from '@core/prayers'
@@ -78,6 +78,11 @@ export function buildThumbnailJob(
 /** What the rules engine needs to know about a recording. */
 export const thumbTarget = (rec: Pick<LibraryRecord, 'reciterKey' | 'tokens' | 'playlists'>): ThumbTarget =>
   ({ reciter: rec.reciterKey, tokens: rec.tokens, playlists: rec.playlists.final })
+
+/** The Default look stores differences from the plugin's factory style; drop knobs that equal it (e.g. after the plugin adopts them as defaults). */
+export function pruneDefaultLook(rules: readonly ThumbnailRule[]): ThumbnailRule[] {
+  return rules.map((r) => (r.origin === 'default' ? { ...r, style: prunePatch(r.style as Record<string, unknown>, DEFAULT_STYLE as unknown as Record<string, unknown>) as StylePatch } : r))
+}
 
 /** The style patch a recording gets from the thumbnail rules (undefined = plugin defaults). */
 export function styleForRecord(rec: Pick<LibraryRecord, 'reciterKey' | 'tokens' | 'playlists'>, rules: readonly ThumbnailRule[], surahs: SurahDict): ThumbnailLook {

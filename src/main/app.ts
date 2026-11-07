@@ -13,7 +13,7 @@ import { Pipeline } from './pipeline'
 import { mergeSettings, openLibraryStore, secrets, settings, type LibraryStore } from './store'
 import { Watcher } from './watcher'
 import { updater } from './updater'
-import { buildSampleJob, buildThumbnailJob, disposeThumbnails, fontPathsInRules, renderJob, resolveRulePhoto, ruleFontsDir, rulePhotoPath, rulePhotosDir, styleForRecord, styleProblems, styleSchema, surahOptions, toPreview } from './thumbnails'
+import { buildSampleJob, buildThumbnailJob, disposeThumbnails, pruneDefaultLook, fontPathsInRules, renderJob, resolveRulePhoto, ruleFontsDir, rulePhotoPath, rulePhotosDir, styleForRecord, styleProblems, styleSchema, surahOptions, toPreview } from './thumbnails'
 import { setThumbnail } from './google/youtube'
 import { THUMBNAIL_COST_UNITS, addQuota } from '@core/quota'
 import type { SurahOption, ThumbnailPreview } from '@shared/types'
@@ -105,8 +105,8 @@ class YoosyApp {
         this.store = await openLibraryStore(path)
         await this.migrateLegacy(path)
         await this.migrateV22()
-        // the thumbnail rules file always carries exactly one default rule
-        await this.store.thumbRules.update((d) => { d.rules = normaliseThumbRules(d.rules ?? []) })
+        // the thumbnail rules file always carries exactly one default rule; its patch never repeats the plugin's factory values
+        await this.store.thumbRules.update((d) => { d.rules = pruneDefaultLook(normaliseThumbRules(d.rules ?? [])) })
         await this.rescan()
         activity.info(`Library opened: ${path}`)
       } catch (e) {
@@ -370,7 +370,7 @@ class YoosyApp {
       const bad = styleProblems(r.style)
       if (bad.length) throw new Error(`Rule “${describeThumbRule(r)}”: ${bad.map((b) => `${b.key} ${b.message}`).join('; ')}`)
     }
-    await store.thumbRules.replace({ rules: next })
+    await store.thumbRules.replace({ rules: pruneDefaultLook(next) })
     this.broadcast('evt:library', this.getLibrary())
     void this.sweepRulePhotos().catch(() => {})
   }
