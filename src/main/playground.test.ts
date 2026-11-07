@@ -31,20 +31,3 @@ describe('thumbnail rule sample job', () => {
     expect(o.every((x) => x.label.length > 0)).toBe(true)
   })
 })
-
-describe('reciter page preview target', () => {
-  it('feeds the thumbnail rules the reciter, the sample prayer/surah and the playlists the playlist rules give it', async () => {
-    const { reciterSampleTarget, sampleJobForReciter } = await import('./thumbnails')
-    const { resolveThumbnailLook, DEFAULT_SURAHS, defaultThumbnailRule, newThumbnailRule } = await import('@core/index')
-    const job = sampleJobForReciter({ nameAr: 'عبدالله الموسى', imagePath: '/x.png' }, { sheikhPrefix: 'الشيخ' } as never)!
-    const playlistRules = [{ id: 'p1', playlistId: 'PL1', enabled: true, conditions: [{ kind: 'prayer', value: 'Jumuah', negate: false }] }] as never
-    const t = reciterSampleTarget({ key: 'abdullahalmousa' }, job, playlistRules, DEFAULT_SURAHS)
-    expect(t).toEqual({ reciter: 'abdullahalmousa', tokens: { prayer: 'Jumuah', surahs: ['الكهف'], keywords: [] }, playlists: ['PL1'] })
-
-    const def = defaultThumbnailRule()
-    const byReciter = { ...newThumbnailRule('abdullahalmousa'), conditions: [{ kind: 'reciter', value: 'AbdullahAlMousa', negate: false }], style: { background: { blur: 9 } } } as never
-    const byPlaylist = { ...newThumbnailRule('abdullahalmousa'), conditions: [{ kind: 'playlist', value: 'PL1', negate: false }], style: { background: { blur: 3 } } } as never
-    expect(resolveThumbnailLook(t, [byPlaylist, byReciter, def]).base).toBe(byPlaylist)
-    expect(resolveThumbnailLook(t, [byReciter, byPlaylist, def]).base).toBe(byReciter)
-  })
-})

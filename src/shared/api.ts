@@ -1,6 +1,6 @@
 import type {
   ActivityEntry, Health, KeywordDef, LibraryRecord, NewReciter, Playlist, PlaylistRule, Privacy, Progress,
-  CustomFont, ReciterInfo, ReciterPatch, RecordPatch, RulePhoto, Settings, StyleRenderInput, StyleSchemaInfo, SurahOption, ThumbnailPreview, ThumbnailRule, TokenValidation, UpdateState,
+  CustomFont, ReciterInfo, ReciterPatch, RecordPatch, RulePhoto, Settings, StyleRenderInput, StyleSchemaInfo, SurahOption, ThumbnailPreview, ThumbnailRule, ThumbnailVariant, TokenValidation, UpdateState,
 } from './types'
 
 export interface LibrarySnapshot {
@@ -52,7 +52,7 @@ export interface Api {
   syncWithYouTube(): Promise<SyncResult>
   // thumbnails
   previewThumbnail(recordId: string): Promise<ThumbnailPreview>
-  previewReciterThumbnail(folder: string): Promise<ThumbnailPreview>
+  listReciterVariants(folder: string): Promise<ThumbnailVariant[]>   // reciter page: everyday look + every rule that can change it
   retryThumbnail(recordId: string): Promise<void>
   renderStyled(input: StyleRenderInput): Promise<ThumbnailPreview>   // rule editor preview (1080p frame included)
   getStyleSchema(): Promise<StyleSchemaInfo>

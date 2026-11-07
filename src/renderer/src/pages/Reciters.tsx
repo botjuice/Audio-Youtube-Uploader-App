@@ -1,7 +1,9 @@
-import { FolderOpen, ImageOff, Plus, Users } from 'lucide-react'
+import { clsx } from 'clsx'
+import { ChevronLeft, ChevronRight, FolderOpen, ImageOff, Layers, Plus, Users } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import type { ReciterInfo, ThumbnailPreview, TokenValidation } from '@shared/types'
-import { Badge, Button, Card, Empty, Field, Input, Select } from '@/components/ui'
+import type { ReciterInfo, ThumbnailVariant, TokenValidation } from '@shared/types'
+import { Badge, Button, Card, Empty, Field, IconButton, Input, Modal, Select } from '@/components/ui'
+import { useStyledPreview } from '@/lib/preview'
 import { useBusy, useStore } from '@/store'
 
 export default function Reciters() {
@@ -65,15 +67,18 @@ function AddReciter() {
 function ReciterCard({ r, libraryPath }: { r: ReciterInfo; libraryPath: string }) {
   const call = useStore((s) => s.call)
   const settings = useStore((s) => s.settings)
-  const [preview, setPreview] = useState<ThumbnailPreview | null>(null)
+  const library = useStore((s) => s.library)
   const thumbsOn = !!settings?.thumbnails.enabled
+  // Every look this reciter's videos can get: recomputed when the thumbnail or playlist rules change.
+  const [variants, setVariants] = useState<ThumbnailVariant[] | null>(null)
+  const [showAll, setShowAll] = useState(false)
+  const rulesKey = JSON.stringify([library.thumbnailRules, library.rules, library.playlists.map((p) => [p.id, p.title])])
   useEffect(() => {
-    setPreview(null)
-    if (!thumbsOn || !r.nameAr || !r.imagePath) return
+    if (!thumbsOn || !r.nameAr || !r.imagePath) { setVariants(null); return }
     let live = true
-    void window.api.previewReciterThumbnail(r.folder).then((p) => { if (live) setPreview(p) }).catch(() => { if (live) setPreview({ ok: false, message: 'Preview failed' }) })
+    void window.api.listReciterVariants(r.folder).then((v) => { if (live) setVariants(v) }).catch(() => { if (live) setVariants([]) })
     return () => { live = false }
-  }, [r.folder, r.imagePath, r.nameAr, thumbsOn, settings?.thumbnails.sheikhPrefix])
+  }, [r.folder, r.imagePath, r.nameAr, thumbsOn, rulesKey])
   const [nameAr, setNameAr] = useState(r.nameAr ?? '')
   const [aliases, setAliases] = useState(r.aliases.join(', '))
   useEffect(() => { setNameAr(r.nameAr ?? ''); setAliases(r.aliases.join(', ')) }, [r.nameAr, r.aliases])
@@ -95,11 +100,20 @@ function ReciterCard({ r, libraryPath }: { r: ReciterInfo; libraryPath: string }
           )}
         </Field>
         {thumbsOn && (
-          <Field label="Thumbnail preview" hint="How this reciter's thumbnails will look with the current photo, name and thumbnail rules (sample: Jumuah, al-Kahf, today)">
+          <Field label="Thumbnail preview" hint={variants?.[0] ? `The everyday look from the thumbnail rules · sample: ${variants[0].when}, today` : 'How this reciter\'s thumbnails will look with the current photo, name and thumbnail rules'}>
             {!r.nameAr || !r.imagePath ? <div className="text-xs text-muted">Set the Arabic name and a photo to see a preview.</div>
-              : !preview ? <div className="aspect-video rounded-lg bg-surface-2 animate-pulse" />
-              : preview.ok ? <img src={preview.dataUrl} alt="preview" className="w-full aspect-video rounded-lg border border-border object-cover" />
-              : <div className="text-xs text-warn">Can't render: {preview.message}</div>}
+              : !variants?.[0] ? <div className="aspect-video rounded-lg bg-surface-2 animate-pulse" />
+              : <VariantPreview v={variants[0]} />}
+            {variants && variants.length > 0 && (
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <span className="text-xs text-muted">
+                  {variants.length === 1 ? 'No other rule changes this reciter\'s thumbnails.'
+                    : `${variants.length - 1} other look${variants.length === 2 ? '' : 's'} can apply, depending on the recording.`}
+                </span>
+                {variants.length > 1 && <Button size="sm" variant="ghost" onClick={() => setShowAll(true)}><Layers size={14} /> View all {variants.length} looks</Button>}
+              </div>
+            )}
+            {variants && <VariantsModal open={showAll} onClose={() => setShowAll(false)} folder={r.folder} variants={variants} />}
           </Field>
         )}
         <Field label="Other spellings" hint="Comma-separated. Filenames using any of these also belong to this reciter.">
@@ -109,5 +123,53 @@ function ReciterCard({ r, libraryPath }: { r: ReciterInfo; libraryPath: string }
         </Field>
       </div>
     </Card>
+  )
+}
+
+/** One rendered look (same renderer and cache as the rule editor). */
+function VariantPreview({ v, className }: { v: ThumbnailVariant; className?: string }) {
+  const { result, rendering } = useStyledPreview(v.sample, v.style ?? {}, v.photo, true, 0)
+  if (!result || (rendering && !result.ok)) return <div className={clsx('aspect-video rounded-lg bg-surface-2 animate-pulse', className)} />
+  if (!result.ok) return <div className={clsx('aspect-video rounded-lg border border-border bg-surface-2 flex items-center justify-center p-4 text-xs text-warn text-center', className)}>Can't render: {result.message}</div>
+  return <img src={result.dataUrl} alt={v.title} className={clsx('w-full aspect-video rounded-lg border border-border object-cover', rendering && 'opacity-60', className)} />
+}
+
+/** Slideshow of every look the reciter's videos can get. All slides render up front; arrows and ←/→ move between them. */
+function VariantsModal({ open, onClose, folder, variants }: { open: boolean; onClose: () => void; folder: string; variants: ThumbnailVariant[] }) {
+  const [i, setI] = useState(0)
+  const n = variants.length
+  const go = (d: number) => setI((x) => (x + d + n) % n)
+  useEffect(() => { if (open) setI(0) }, [open])
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'ArrowLeft') go(-1); else if (e.key === 'ArrowRight') go(1) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, n])  // eslint-disable-line react-hooks/exhaustive-deps
+  const cur = variants[Math.min(i, n - 1)]
+  if (!cur) return null
+  return (
+    <Modal open={open} onClose={onClose} title={`Thumbnail looks · ${folder}`} width="max-w-3xl">
+      <div className="flex items-center gap-2">
+        <IconButton label="Previous look" onClick={() => go(-1)} disabled={n < 2} className="shrink-0"><ChevronLeft size={18} /></IconButton>
+        <div className="flex-1 min-w-0">
+          {variants.map((v, j) => <VariantPreview key={v.id} v={v} className={j === i ? '' : 'hidden'} />)}
+        </div>
+        <IconButton label="Next look" onClick={() => go(1)} disabled={n < 2} className="shrink-0"><ChevronRight size={18} /></IconButton>
+      </div>
+      <div className="mt-3 flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="font-medium truncate">{cur.title}</div>
+          <div className="text-xs text-muted truncate" title={cur.look}>Look: {cur.look}</div>
+          <div className="text-xs text-muted truncate" title={cur.when}>Sample: {cur.when}</div>
+        </div>
+        <div className="shrink-0 flex items-center gap-2">
+          <span className="text-xs text-muted tabular-nums">{i + 1} of {n}</span>
+          <div className="flex gap-1">
+            {variants.map((v, j) => <button key={v.id} aria-label={v.title} onClick={() => setI(j)} className={clsx('h-1.5 w-1.5 rounded-full transition-colors no-drag', j === i ? 'bg-accent' : 'bg-border hover:bg-muted')} />)}
+          </div>
+        </div>
+      </div>
+    </Modal>
   )
 }

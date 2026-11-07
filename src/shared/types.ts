@@ -128,6 +128,17 @@ export interface ThumbCondition { kind: ThumbConditionKind; value: string; negat
 /** What the rule's preview card renders: a real reciter folder plus made-up surahs / prayer / date. */
 export interface ThumbnailSample { folder: string; surahsAr: string[]; prayer: string; date: string }
 
+/** One distinct look a reciter's videos can get, with a sample situation that produces it (see core/thumb-variants). */
+export interface ThumbnailVariant {
+  id: string          // 'base' (everyday look) or the id of the rule this variant demonstrates
+  title: string       // 'Everyday look' or the rule's description
+  look: string        // the resolved chain, e.g. "Default look + Taraweeh nights"
+  when: string        // the sample situation, e.g. "Taraweeh · الكهف · in “Ramadan”"
+  sample: ThumbnailSample
+  style?: StylePatch
+  photo?: string
+}
+
 /**
  * Picks a thumbnail look for a recording. Rules are tried in list order and the first enabled one whose
  * conditions ALL hold wins; the `origin: 'default'` rule (no conditions) applies when none matches.

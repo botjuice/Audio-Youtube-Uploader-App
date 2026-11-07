@@ -1,6 +1,7 @@
 import { clsx } from 'clsx'
 import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, FolderOpen, Image as ImageIcon, Layers, Maximize2, Plus, RotateCcw, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useStyledPreview } from '@/lib/preview'
 import type { RulePhoto, StyleFieldInfo, StylePatch, StyleSchemaInfo, SurahOption, ThumbCondition, ThumbConditionKind, ThumbnailPreview, ThumbnailRule, ThumbnailSample } from '@shared/types'
 import { PRAYERS } from '@core/prayers'
 import { MAX_CONDITIONS } from '@core/rules'
@@ -17,33 +18,6 @@ const GROUP_TITLES: Record<string, string> = {
 const humanise = (seg: string) => seg.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase())
 
 type Draft = { rule: ThumbnailRule; isNew: boolean }
-
-// ── Shared preview hook: debounced, out-of-order safe, memoised across cards ─────────────────────
-
-const previewCache = new Map<string, ThumbnailPreview>()
-function useStyledPreview(sample: ThumbnailSample, style: StylePatch, photo?: string, enabled = true, delay = 250) {
-  const sheikh = useStore((s) => s.settings?.thumbnails.sheikhPrefix ?? true)
-  const key = JSON.stringify([sample, style, sheikh, photo ?? null])
-  const [result, setResult] = useState<ThumbnailPreview | null>(() => previewCache.get(key) ?? null)
-  const [rendering, setRendering] = useState(false)
-  const seq = useRef(0)
-  useEffect(() => {
-    if (!enabled) return
-    const hit = previewCache.get(key)
-    if (hit) { setResult(hit); setRendering(false); return }
-    const mine = ++seq.current
-    setRendering(true)
-    const t = setTimeout(async () => {
-      let r: ThumbnailPreview
-      try { r = await window.api.renderStyled({ sample, style, sheikhPrefix: sheikh, ...(photo ? { photo } : {}) }) }
-      catch (e) { r = { ok: false, reason: 'RENDER_FAILED', message: errText(e) } }
-      if (r.ok) previewCache.set(key, r)
-      if (mine === seq.current) { setResult(r); setRendering(false) }
-    }, delay)
-    return () => clearTimeout(t)
-  }, [key, enabled])  // eslint-disable-line react-hooks/exhaustive-deps
-  return { result, rendering }
-}
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
