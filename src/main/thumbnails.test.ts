@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', isPackaged: false }, BrowserWindow: class {}, nativeImage: {} }))
 import { DEFAULT_SURAHS } from '@core/surahs'
 import { buildThumbnailJob, fontPathsInRules, isoDate, sampleJobForReciter, styleForRecord } from './thumbnails'
+import { WORST_CASE_SAMPLE } from '@core/thumb-rules'
+import { WORST_CASE } from '../plugins/thumbnail/index'
 
 const opts = { enabled: true, sheikhPrefix: true }
 describe('thumbnail job builder', () => {
@@ -39,6 +41,9 @@ describe('thumbnail job builder', () => {
     const mk = (style: object) => ({ id: 'x', enabled: true, conditions: [], style, sample: { folder: '', surahsAr: ['x'], prayer: 'Isha', date: '2025-01-01' } })
     const paths = fontPathsInRules([mk({ reciter: { font: '/lib/.yoosyjoosy/fonts/a.ttf' }, meta: { font: 'amiri' } }), mk({ meta: { font: '/lib/.yoosyjoosy/fonts/b.otf' } }), mk({})])
     expect([...paths].sort()).toEqual(['/lib/.yoosyjoosy/fonts/a.ttf', '/lib/.yoosyjoosy/fonts/b.otf'])
+  })
+  it("the editor's worst-case sample is the plugin's own worst case", () => {
+    expect(WORST_CASE_SAMPLE).toEqual({ surahsAr: WORST_CASE.surahsAr, prayer: WORST_CASE.prayer, date: WORST_CASE.date })
   })
   it('reciter sample job respects the prefix option', () => {
     expect(sampleJobForReciter({ nameAr: 'x', imagePath: '/p' }, { enabled: true, sheikhPrefix: false })?.options.sheikhPrefix).toBe(false)
