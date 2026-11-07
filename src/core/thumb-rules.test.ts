@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ThumbnailRule } from '@shared/types'
-import { countKnobs, defaultThumbnailRule, describeLook, describeThumbRule, mergePatches, normaliseThumbRules, prunePatch, resolveThumbnailLook, resolveThumbnailRule, resolveThumbnailStyle, setKnob, validateThumbRule } from './thumb-rules'
+import { countKnobs, defaultThumbnailRule, describeLook, describeThumbRule, effectiveStyle, mergePatches, normaliseThumbRules, prunePatch, resolveThumbnailLook, resolveThumbnailRule, resolveThumbnailStyle, setKnob, validateThumbRule } from './thumb-rules'
 
 const sample = { folder: 'AbdullahAlMousa', surahsAr: ['الفاتحة'], prayer: 'Isha', date: '2026-01-01' }
 const R = (id: string, conditions: ThumbnailRule['conditions'], style: ThumbnailRule['style'] = { title: { color: '#ff0000' } }): ThumbnailRule => ({ id, enabled: true, conditions, style, sample })
@@ -30,6 +30,14 @@ describe('thumbnail rule resolution', () => {
     expect(resolveThumbnailStyle(target('Isha'), [defaultThumbnailRule()]).style).toBeUndefined()
     expect(resolveThumbnailStyle(target('Isha'), [def]).style).toEqual({ photo: { blur: 2 } })
   })
+  it('every rule inherits the Default look; its own changes win per knob', () => {
+    const d = { ...defaultThumbnailRule(), style: { photo: { blur: 2 }, title: { color: '#111111', scale: 0.9 } } }
+    expect(resolveThumbnailLook(target('Taraweeh'), [tara, d]).style).toEqual({ photo: { blur: 2 }, title: { color: '#111111', scale: 0.9 }, overlay: { bottom: 1 } })
+    expect(resolveThumbnailLook(target('Isha'), [mousa, d]).style).toEqual({ photo: { blur: 2 }, title: { color: '#ff0000', scale: 0.9 } })
+    expect(resolveThumbnailLook(target('Isha'), [R('empty', mousa.conditions, {}), d]).style).toEqual(d.style)
+    expect(effectiveStyle(mousa, [mousa, d])).toEqual({ photo: { blur: 2 }, title: { color: '#ff0000', scale: 0.9 } })
+    expect(effectiveStyle(d, [mousa, d])).toEqual(d.style)
+  })
 })
 
 describe('overlay rules', () => {
@@ -39,10 +47,10 @@ describe('overlay rules', () => {
     const rules = [taraOverlay, mousa, def]
     const look = resolveThumbnailLook(target('Taraweeh'), rules)
     expect(look.base?.id).toBe('mousa'); expect(look.overlays.map((r) => r.id)).toEqual(['tara-ov'])
-    expect(look.style).toEqual({ title: { color: '#00FF00' }, frame: { width: 8 } })   // mousa's title.color replaced by the overlay
+    expect(look.style).toEqual({ photo: { blur: 2 }, title: { color: '#00FF00' }, frame: { width: 8 } })   // default look under mousa, mousa's title.color replaced by the overlay
     const noBase = resolveThumbnailLook({ ...target('Taraweeh'), reciter: 'other' }, rules)
     expect(noBase.base?.id).toBe('default'); expect(noBase.style).toEqual({ photo: { blur: 2 }, title: { color: '#00FF00' }, frame: { width: 8 } })
-    expect(resolveThumbnailLook(target('Isha'), rules).style).toEqual({ title: { color: '#ff0000' } })   // overlay didn't match
+    expect(resolveThumbnailLook(target('Isha'), rules).style).toEqual({ photo: { blur: 2 }, title: { color: '#ff0000' } })   // overlay didn't match
   })
   it('several overlays apply in list order, later wins per knob; groups merge', () => {
     const look = resolveThumbnailLook(target('Taraweeh'), [taraOverlay, second, def])
@@ -57,6 +65,8 @@ describe('overlay rules', () => {
     expect(resolveThumbnailLook(target('Isha'), [photoBase, def]).photo).toBe('mousa-1.jpg')
     expect(resolveThumbnailLook({ ...target('Isha'), reciter: 'other' }, [photoBase, def]).photo).toBeUndefined()
     expect(normaliseThumbRules([{ ...taraOverlay, photo: 'x.jpg' }])[0]!.photo).toBeUndefined()
+    expect(normaliseThumbRules([{ ...def, photo: 'x.jpg' }])[0]!.photo).toBeUndefined()
+    expect(resolveThumbnailLook({ ...target('Isha'), reciter: 'other' }, [{ ...def, photo: 'x.jpg' }]).photo).toBeUndefined()
   })
   it('describes the combined look and refuses an overlay default', () => {
     expect(describeLook(resolveThumbnailLook(target('Taraweeh'), [taraOverlay, mousa, def]))).toBe('Reciter is Abdullah Al Mousa + Taraweeh gold')

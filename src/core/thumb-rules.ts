@@ -61,12 +61,24 @@ export function mergePatches(base: StylePatch, over: StylePatch): StylePatch {
   return out as StylePatch
 }
 
-/** The look a recording gets: base rule (first match or default) + matching overlays. */
+/**
+ * The look a recording gets. Every rule inherits the Default look: the winning base rule's changes are
+ * laid over the default rule's style, then matching overlays on top. Only a normal (non-default,
+ * non-overlay) base rule can bring its own background image.
+ */
 export function resolveThumbnailLook(t: ThumbTarget, rules: readonly ThumbnailRule[], surahs: SurahDict = DEFAULT_SURAHS): ThumbnailLook {
+  const def = rules.find((r) => r.origin === 'default')
   const base = resolveThumbnailRule(t, rules, surahs)
   const overlays = matchingOverlays(t, rules, surahs)
-  const merged = overlays.reduce((acc, r) => mergePatches(acc, r.style), base?.style ?? {})
-  return { base, overlays, style: isEmptyPatch(merged) ? undefined : merged, ...(base?.photo && !base.overlay ? { photo: base.photo } : {}) }
+  const start = base && base !== def ? mergePatches(def?.style ?? {}, base.style) : (base?.style ?? {})
+  const merged = overlays.reduce((acc, r) => mergePatches(acc, r.style), start)
+  return { base, overlays, style: isEmptyPatch(merged) ? undefined : merged, ...(base?.photo && !base.overlay && base.origin !== 'default' ? { photo: base.photo } : {}) }
+}
+
+/** Effective style of a rule for display: the Default look under a normal rule's or an overlay's changes. */
+export function effectiveStyle(rule: Pick<ThumbnailRule, 'style' | 'origin'>, rules: readonly ThumbnailRule[]): StylePatch {
+  if (rule.origin === 'default') return rule.style
+  return mergePatches(rules.find((r) => r.origin === 'default')?.style ?? {}, rule.style)
 }
 
 /** The style patch to send with a recording's job (undefined = plugin defaults). */
@@ -161,5 +173,5 @@ export function newThumbnailRule(conditions: ThumbCondition[], sample: Thumbnail
 export function normaliseThumbRules(rules: readonly ThumbnailRule[]): ThumbnailRule[] {
   const others = rules.filter((r) => r.origin !== 'default')
   const def = rules.find((r) => r.origin === 'default') ?? defaultThumbnailRule()
-  return [...others.map((r) => (r.overlay && r.photo ? { ...r, photo: undefined } : r)), { ...def, id: DEFAULT_RULE_ID, conditions: [], overlay: false }]
+  return [...others.map((r) => (r.overlay && r.photo ? { ...r, photo: undefined } : r)), { ...def, id: DEFAULT_RULE_ID, conditions: [], overlay: false, photo: undefined }]
 }

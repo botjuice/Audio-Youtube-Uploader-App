@@ -5,7 +5,7 @@ import type { RulePhoto, StyleFieldInfo, StylePatch, StyleSchemaInfo, SurahOptio
 import { PRAYERS } from '@core/prayers'
 import { DEFAULT_SURAHS } from '@core/surahs'
 import { MAX_CONDITIONS } from '@core/rules'
-import { THUMB_KIND_LABEL, countKnobs, defaultSample, describeThumbRule, getKnob, mergePatches, newThumbnailRule, prunePatch, resolveThumbnailLook, setKnob, validateThumbRule } from '@core/thumb-rules'
+import { THUMB_KIND_LABEL, countKnobs, defaultSample, describeThumbRule, effectiveStyle, getKnob, mergePatches, newThumbnailRule, prunePatch, resolveThumbnailLook, setKnob, validateThumbRule } from '@core/thumb-rules'
 import { Badge, Button, ColorInput, Empty, IconButton, Input, Modal, Select, Slider, Spinner, Switch } from '@/components/ui'
 import { errText, useStore } from '@/store'
 
@@ -131,9 +131,8 @@ function RuleCard({ rule, count, plName, index, total, onEdit, onToggle, onMove,
   onEdit: () => void; onToggle?: (v: boolean) => void; onMove?: (d: -1 | 1) => void; onDelete?: () => void
 }) {
   const rules = useStore((s) => s.library.thumbnailRules)
-  const defaultStyle = rules.find((x) => x.origin === 'default')?.style ?? {}
-  const { result, rendering } = useStyledPreview(rule.sample, rule.overlay ? mergePatches(defaultStyle, rule.style) : rule.style, rule.overlay ? undefined : rule.photo)
   const isDefault = rule.origin === 'default'
+  const { result, rendering } = useStyledPreview(rule.sample, effectiveStyle(rule, rules), rule.overlay || isDefault ? undefined : rule.photo)
   const knobs = countKnobs(rule.style)
   return (
     <section className={clsx('rounded-xl border border-border bg-surface shadow-xs overflow-hidden flex flex-col', !rule.enabled && !isDefault && 'opacity-60')}>
@@ -159,7 +158,7 @@ function RuleCard({ rule, count, plName, index, total, onEdit, onToggle, onMove,
             ))}
         </div>
         <div className="flex items-center gap-2 text-xs text-muted">
-          <span>{knobs ? `${knobs} knob${knobs === 1 ? '' : 's'} changed` : 'plugin default look'}</span>
+          <span>{knobs ? `${knobs} knob${knobs === 1 ? '' : 's'} changed` : isDefault ? 'plugin default look' : 'same as the Default look'}</span>
           {rule.photo && !rule.overlay && <><span>·</span><span title={rule.photo}>own image</span></>}
           <span>·</span>
           <span className="tabular-nums">{count} recording{count === 1 ? '' : 's'} now</span>
@@ -213,20 +212,22 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
 
   const isDefault = rule.origin === 'default'
   const errors = validateThumbRule(rule)
-  // an overlay is previewed on top of the default look, which is what most recordings would combine it with
+  // Every rule inherits the Default look: knobs show its values as their defaults, resets return to it,
+  // and only differences from it are stored. In the Default look's own editor, "default" is the plugin's.
   const defaultStyle = rules.find((x) => x.origin === 'default' && x.id !== rule.id)?.style ?? {}
-  const previewStyle = rule.overlay ? mergePatches(defaultStyle, rule.style) : rule.style
-  const { result, rendering } = useStyledPreview(rule.sample, previewStyle, rule.overlay ? undefined : rule.photo)
+  const previewStyle = isDefault ? rule.style : mergePatches(defaultStyle, rule.style)
+  const baseline = useMemo(() => (schema ? (isDefault ? schema.defaults : mergePatches(schema.defaults as unknown as StylePatch, defaultStyle)) : null) as Record<string, unknown> | null, [schema, isDefault, defaultStyle])
+  const { result, rendering } = useStyledPreview(rule.sample, previewStyle, rule.overlay || isDefault ? undefined : rule.photo)
   const styleBlocks = !!result && !result.ok && (result.reason === 'INVALID_STYLE' || result.reason === 'TEXT_OVERFLOW' || result.reason === 'FONT_NOT_LOADED')
   const canSave = errors.length === 0 && !styleBlocks && !rendering && !saving
   const knobs = countKnobs(rule.style)
   const matches = useMemo(() => countLooks(library.records, rules.some((x) => x.id === rule.id) ? rules.map((x) => (x.id === rule.id ? rule : x)) : [...rules.filter((x) => x.origin !== 'default'), rule, ...rules.filter((x) => x.origin === 'default')]).get(rule.id) ?? 0, [library.records, rules, rule])
 
   const patchStyle = (path: string, value: unknown) => {
-    if (!schema) return
-    const def = getKnob(schema.defaults, path)
+    if (!baseline) return
+    const def = getKnob(baseline, path)
     const next = setKnob(rule.style as Record<string, unknown>, path, value === def ? undefined : value)
-    setRule({ ...rule, style: prunePatch(next, schema.defaults as unknown as Record<string, unknown>) as StylePatch })
+    setRule({ ...rule, style: prunePatch(next, baseline) as StylePatch })
   }
   const resetGroup = (group: string) => { const next = { ...(rule.style as Record<string, unknown>) }; delete next[group]; setRule({ ...rule, style: next as StylePatch }) }
   const setSample = (p: Partial<ThumbnailSample>) => setRule({ ...rule, sample: { ...rule.sample, ...p } })
@@ -252,10 +253,10 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
             </label>
           )}
           {draft.isNew && <Badge>new rule</Badge>}
-          <Badge tone={knobs ? 'info' : 'muted'}>{knobs ? `${knobs} knob${knobs === 1 ? '' : 's'} changed` : 'plugin defaults'}</Badge>
+          <Badge tone={knobs ? 'info' : 'muted'}>{knobs ? `${knobs} knob${knobs === 1 ? '' : 's'} changed` : isDefault ? 'plugin defaults' : 'same as the Default look'}</Badge>
           <span className="text-xs text-muted tabular-nums">{matches} recording{matches === 1 ? '' : 's'} would get this look</span>
           <div className="ml-auto flex items-center gap-2">
-            <Button size="sm" variant="ghost" disabled={!knobs} onClick={() => setRule({ ...rule, style: {} })}><RotateCcw size={13} /> Reset all knobs</Button>
+            <Button size="sm" variant="ghost" disabled={!knobs} onClick={() => setRule({ ...rule, style: {} })} title={isDefault ? "Back to the plugin's locked design" : 'Back to the Default look'}><RotateCcw size={13} /> {isDefault ? 'Reset all knobs' : 'Reset to Default look'}</Button>
             <IconButton label={dirty ? 'Close (asks before discarding changes)' : 'Close'} onClick={requestClose}><X size={16} /></IconButton>
           </div>
         </header>
@@ -283,7 +284,7 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
               )}
             </Section>
 
-            {!rule.overlay && (
+            {!rule.overlay && !isDefault && (
               <Section title="Background image" hint="By default the reciter folder's photo. Choose an image to use for every recording this look applies to; a copy is kept inside the library.">
                 <div className="flex items-center gap-3">
                   <div className="h-14 w-24 shrink-0 overflow-hidden rounded-md border border-border bg-surface-2 flex items-center justify-center text-muted">
@@ -322,10 +323,15 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
               </div>
             </Section>
 
-            {!schema ? <div className="p-4 text-xs text-muted">Loading knobs…</div> : groups.map(([group, fields]) => (
-              <KnobGroup key={group} group={group} fields={fields} style={rule.style} schema={schema} errors={result && !result.ok ? result.styleErrors ?? [] : []}
-                onChange={patchStyle} onReset={() => resetGroup(group)} />
-            ))}
+            {!schema || !baseline ? <div className="p-4 text-xs text-muted">Loading knobs…</div> : (
+              <>
+                {!isDefault && <div className="px-4 py-2 text-[11px] text-muted border-b border-border">Knobs start at the Default look's values; resets return to them. Only what you change here is saved.</div>}
+                {groups.map(([group, fields]) => (
+                  <KnobGroup key={group} group={group} fields={fields} style={rule.style} baseline={baseline} errors={result && !result.ok ? result.styleErrors ?? [] : []}
+                    onChange={patchStyle} onReset={() => resetGroup(group)} />
+                ))}
+              </>
+            )}
           </aside>
 
           {/* right: big preview */}
@@ -404,8 +410,8 @@ function CondValue({ c, onChange }: { c: ThumbCondition; onChange: (v: string) =
 
 // ── Knob groups built from the plugin schema ──────────────────────────────────
 
-function KnobGroup({ group, fields, style, schema, errors, onChange, onReset }: {
-  group: string; fields: StyleFieldInfo[]; style: StylePatch; schema: StyleSchemaInfo; errors: { key: string; message: string }[]
+function KnobGroup({ group, fields, style, baseline, errors, onChange, onReset }: {
+  group: string; fields: StyleFieldInfo[]; style: StylePatch; baseline: Record<string, unknown>; errors: { key: string; message: string }[]
   onChange: (path: string, value: unknown) => void; onReset: () => void
 }) {
   const changed = countKnobs((style as Record<string, unknown>)[group])
@@ -425,11 +431,11 @@ function KnobGroup({ group, fields, style, schema, errors, onChange, onReset }: 
       </div>
       {open && (
         <div className="space-y-2 px-4 pb-3">
-          {direct.map((f) => <Knob key={f.path} info={f} style={style} schema={schema} error={errors.find((e) => e.key === f.path)?.message} onChange={onChange} />)}
+          {direct.map((f) => <Knob key={f.path} info={f} style={style} baseline={baseline} error={errors.find((e) => e.key === f.path)?.message} onChange={onChange} />)}
           {[...subs.entries()].map(([sub, list]) => (
             <div key={sub} className="rounded-lg border border-border/70 bg-surface-2/40 p-2 space-y-2">
               <div className="text-[11px] font-medium text-muted">{humanise(sub)}</div>
-              {list.map((f) => <Knob key={f.path} info={f} style={style} schema={schema} error={errors.find((e) => e.key === f.path)?.message} onChange={onChange} />)}
+              {list.map((f) => <Knob key={f.path} info={f} style={style} baseline={baseline} error={errors.find((e) => e.key === f.path)?.message} onChange={onChange} />)}
             </div>
           ))}
         </div>
@@ -438,9 +444,9 @@ function KnobGroup({ group, fields, style, schema, errors, onChange, onReset }: 
   )
 }
 
-function Knob({ info, style, schema, error, onChange }: { info: StyleFieldInfo; style: StylePatch; schema: StyleSchemaInfo; error?: string; onChange: (path: string, value: unknown) => void }) {
+function Knob({ info, style, baseline, error, onChange }: { info: StyleFieldInfo; style: StylePatch; baseline: Record<string, unknown>; error?: string; onChange: (path: string, value: unknown) => void }) {
   const { path, field } = info
-  const def = getKnob(schema.defaults, path)
+  const def = getKnob(baseline, path)
   const current = getKnob(style, path)
   const value = current ?? def
   const changed = current !== undefined

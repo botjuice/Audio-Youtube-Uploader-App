@@ -76,6 +76,10 @@ preview and its conditions; click the preview to open the editor.
 - **First match wins.** Rules are tried top to bottom; the arrows on a card change its priority.
   The **Default look** card (no conditions, cannot be deleted) applies when nothing matches and is
   editable like any other rule.
+- **Every rule inherits the Default look.** A rule's knobs start at the Default look's current values,
+  resets return to them, and only its own changes are saved, so later changes to the Default look flow
+  into every rule that hasn't overridden that knob. Only in the Default look's editor does a reset mean
+  the plugin's locked design.
 - **Overlay rules** (toggle in the editor) don't compete for the base look: every matching overlay
   adds its changed knobs on top of whichever rule won, in list order. One overlay "Prayer is
   Taraweeh" with a gold frame therefore restyles every reciter's Taraweeh thumbnails while each
@@ -90,9 +94,10 @@ preview and its conditions; click the preview to open the editor.
   fonts, or *Your own font file…* (.ttf/.otf/.woff/.woff2), which keeps a copy in
   `<library>/.yoosyjoosy/fonts/`. A font that cannot draw Arabic is refused by the preview
   (`FONT_NOT_LOADED`) and blocks Save. The surah calligraphy font is fixed.
-- **Background image** (non-overlay rules): *Choose image…* in the editor picks a file; the app keeps a
-  copy in `<library>/.yoosyjoosy/thumb-photos/` and uses it instead of the reciter's photo for every
-  recording the rule wins. A missing copy falls back to the reciter photo with a warning; copies no rule
+- **Background image** (normal rules only; not the Default look, not overlays): *Choose image…* in the
+  editor picks a file; the app keeps a copy in `<library>/.yoosyjoosy/thumb-photos/` and uses it
+  instead of the reciter's photo for every recording the rule wins. Overlays always keep the base
+  rule's image. A missing copy falls back to the reciter photo with a warning; copies no rule
   uses any more are removed on the next save.
 - Stored in `<library>/.yoosyjoosy/thumbnail-rules.json`. A changed look re-renders the thumbnail
   on the next run and re-encodes pending videos; uploaded videos are never touched.
