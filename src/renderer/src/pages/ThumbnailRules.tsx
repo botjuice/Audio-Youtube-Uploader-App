@@ -85,8 +85,8 @@ export default function ThumbnailRules() {
   return (
     <div className="h-full overflow-auto">
       <div className="drag h-13 flex items-center gap-3 px-6 border-b border-border">
-        <h1 className="font-semibold">Thumbnail rules</h1>
-        <span className="text-xs text-muted">Each recording gets the look of the first rule it matches, top to bottom (otherwise the default look); overlay rules then add their changed knobs on top.</span>
+        <h1 className="font-semibold whitespace-nowrap shrink-0">Thumbnail rules</h1>
+        <span className="text-xs text-muted truncate min-w-0" title="Each recording gets the look of the first rule it matches, top to bottom; otherwise the default look. Overlay rules then add their changed knobs on top.">First matching rule wins, top to bottom · overlays add their changed knobs on top</span>
         {settings && !settings.thumbnails.enabled && <Badge tone="warn">Thumbnails are off in Settings — uploads use the plain photo</Badge>}
         <Button variant="primary" size="sm" className="ml-auto no-drag" onClick={startNew} disabled={!library.reciters.length}><Plus size={14} /> New rule</Button>
       </div>
@@ -240,7 +240,7 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px] no-drag" role="dialog" aria-modal="true">
-      <div className="absolute inset-3 flex flex-col overflow-hidden rounded-xl border border-border bg-bg shadow-2xl">
+      <div className={clsx('absolute inset-x-3 bottom-3 flex flex-col overflow-hidden rounded-xl border border-border bg-bg shadow-2xl', window.platform === 'darwin' ? 'top-11' : 'top-3')}>
         <header className="flex items-center gap-3 border-b border-border px-4 py-2.5">
           <ImageIcon size={16} className="text-accent" />
           <Input value={rule.label ?? ''} onChange={(e) => setRule({ ...rule, label: e.target.value || undefined })} placeholder={describeThumbRule({ ...rule, label: undefined }, plName)} className="h-8 max-w-md text-[13px]" />
