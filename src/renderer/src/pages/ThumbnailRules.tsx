@@ -6,7 +6,7 @@ import { PRAYERS } from '@core/prayers'
 import { DEFAULT_SURAHS } from '@core/surahs'
 import { MAX_CONDITIONS } from '@core/rules'
 import { THUMB_KIND_LABEL, countKnobs, defaultSample, describeThumbRule, getKnob, mergePatches, newThumbnailRule, prunePatch, resolveThumbnailLook, setKnob, validateThumbRule } from '@core/thumb-rules'
-import { Badge, Button, ColorInput, Empty, IconButton, Input, Select, Slider, Spinner, Switch } from '@/components/ui'
+import { Badge, Button, ColorInput, Empty, IconButton, Input, Modal, Select, Slider, Spinner, Switch } from '@/components/ui'
 import { errText, useStore } from '@/store'
 
 const SURAH_KEYS = Object.keys(DEFAULT_SURAHS).sort()
@@ -56,7 +56,7 @@ export default function ThumbnailRules() {
   const rules = library.thumbnailRules
   const firstFolder = library.reciters[0]?.folder ?? ''
 
-  const persist = (next: ThumbnailRule[]) => call('thumbRules', () => window.api.setThumbnailRules(next), { success: 'Thumbnail rules saved' })
+  const persist = (next: ThumbnailRule[]) => call('thumbRules', async () => { await window.api.setThumbnailRules(next); return true }, { success: 'Thumbnail rules saved' })
   const plName = (id: string) => library.playlists.find((p) => p.id === id)?.title ?? `(unknown playlist ${id.slice(0, 8)}…)`
 
   // base rule per recording (first match wins) and every overlay that applies → counts per rule
@@ -79,7 +79,7 @@ export default function ThumbnailRules() {
     const exists = rules.some((r) => r.id === rule.id)
     const next = exists ? rules.map((r) => (r.id === rule.id ? rule : r)) : [...others, rule, ...(def ? [def] : [])]
     const ok = await persist(next)
-    if (ok !== undefined) setDraft(null)
+    if (ok) setDraft(null)
   }
 
   return (
@@ -186,7 +186,16 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
   const [schema, setSchema] = useState<StyleSchemaInfo | null>(null)
   const [surahOptions, setSurahOptions] = useState<SurahOption[]>([])
   const [full, setFull] = useState(false)
+  const [confirmClose, setConfirmClose] = useState(false)
   useEffect(() => { void window.api.getStyleSchema().then(setSchema); void window.api.listSurahOptions().then(setSurahOptions) }, [])
+  const dirty = draft.isNew || JSON.stringify(rule) !== JSON.stringify(draft.rule)
+  // X / Esc: close straight away when nothing changed, otherwise ask first
+  const requestClose = () => { if (full) { setFull(false); return } if (dirty) setConfirmClose(true); else onDiscard() }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); if (confirmClose) setConfirmClose(false); else requestClose() } }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
 
   const isDefault = rule.origin === 'default'
   const errors = validateThumbRule(rule)
@@ -233,6 +242,7 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
           <span className="text-xs text-muted tabular-nums">{matches} recording{matches === 1 ? '' : 's'} would get this look</span>
           <div className="ml-auto flex items-center gap-2">
             <Button size="sm" variant="ghost" disabled={!knobs} onClick={() => setRule({ ...rule, style: {} })}><RotateCcw size={13} /> Reset all knobs</Button>
+            <IconButton label={dirty ? 'Close (asks before discarding changes)' : 'Close'} onClick={requestClose}><X size={16} /></IconButton>
           </div>
         </header>
 
@@ -314,13 +324,17 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
         </div>
 
         <footer className="flex items-center gap-3 border-t border-border px-4 py-2.5">
-          <span className="text-xs text-muted">{draft.isNew ? 'Discard removes this new rule.' : 'Discard returns to the saved version.'} Changes apply to future uploads; pending videos re-render with the new look.</span>
+          <span className="text-xs text-muted">{dirty ? (draft.isNew ? 'Unsaved new rule.' : 'Unsaved changes.') : 'No changes.'} Saved changes apply to future uploads; pending videos re-render with the new look.</span>
           <div className="ml-auto flex gap-2">
-            <Button onClick={onDiscard} disabled={saving}>Discard</Button>
+            <Button onClick={requestClose} disabled={saving}>{dirty ? 'Discard' : 'Close'}</Button>
             <Button variant="primary" disabled={!canSave} onClick={() => void onSave(rule)} title={errors[0] ?? (styleBlocks ? 'The style cannot render' : undefined)}>{saving ? <Spinner /> : null} Save</Button>
           </div>
         </footer>
       </div>
+      <Modal open={confirmClose} onClose={() => setConfirmClose(false)} title={draft.isNew ? 'Discard this new rule?' : 'Discard changes?'}
+        footer={<><Button onClick={() => setConfirmClose(false)}>Keep editing</Button><Button variant="danger" onClick={() => { setConfirmClose(false); onDiscard() }}>Discard</Button></>}>
+        <p className="text-sm text-muted">{draft.isNew ? 'The rule has not been saved yet and will be removed.' : 'Your edits to the conditions, sample or knobs will be lost. The saved version stays as it is.'}</p>
+      </Modal>
       {full && result?.ok && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 p-6" onClick={() => setFull(false)}>
           <img src={result.frameDataUrl ?? result.dataUrl} alt="frame" className="max-h-full max-w-full rounded-lg shadow-2xl" />
