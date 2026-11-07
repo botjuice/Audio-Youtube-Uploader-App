@@ -7,6 +7,8 @@ import { registerIpc } from './ipc'
 import { activity } from './log'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
+/** Tray / dock images: shipped as extraResources (`icons/`) in packaged builds, read from `resources/` in dev. */
+const iconsDir = app.isPackaged ? join(process.resourcesPath, 'icons') : join(here, '../../resources')
 const isMac = process.platform === 'darwin'
 let win: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -74,7 +76,7 @@ function showWindow(): void {
 }
 
 function buildTray(): void {
-  const icon = nativeImage.createFromPath(join(here, '../../resources', isMac ? 'trayTemplate.png' : 'tray.png'))
+  const icon = nativeImage.createFromPath(join(iconsDir, isMac ? 'trayTemplate.png' : 'tray.png'))
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon)
   tray.setToolTip('YouTube Quran Uploader')
   const refresh = () => {
@@ -99,7 +101,7 @@ function buildTray(): void {
 
 void app.whenReady().then(async () => {
   installMenu()
-  if (isMac) app.dock?.setIcon(nativeImage.createFromPath(join(here, '../../resources/icon.png')))
+  if (isMac && !app.isPackaged) app.dock?.setIcon(nativeImage.createFromPath(join(iconsDir, 'icon.png')))
   await yoosy.init()
   registerIpc()
   buildTray()

@@ -12,6 +12,9 @@ asarUnpack:
 extraResources:
   - from: src/plugins/thumbnail/template
     to: thumbnail
+  - from: resources
+    to: icons
+    filter: ['icon.png', 'tray*.png']
 mac:
   category: public.app-category.video
   target: [dmg, zip]
