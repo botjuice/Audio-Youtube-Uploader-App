@@ -73,22 +73,91 @@ export class OffscreenRenderer {
     return win
   }
 
+  private renderSeq = 0
+
   private async renderNow(data: TemplateData, vars: Record<string, string>): Promise<Captured> {
     const win = await this.window()
+    const renderId = (this.renderSeq = (this.renderSeq + 1) & 511)
     const report = (await win.webContents.executeJavaScript(
-      `window.renderThumbnail(${JSON.stringify(data)}, ${JSON.stringify(vars)})
+      `window.renderThumbnail(${JSON.stringify({ ...data, renderId })}, ${JSON.stringify(vars)})
          .then(() => ({ fontOk: window.__fontOk === true, fit: window.__fit || {}, layout: window.__layout || { lines: 0, clamped: false } }))`,
       true,
     )) as RenderReport
-    // Give the compositor one frame after layout before capturing.
-    await new Promise((r) => setTimeout(r, 50))
-    const frame = await win.webContents.capturePage({ x: 0, y: 0, ...FRAME })
-    const size = frame.getSize()
-    if (size.width !== FRAME.width || size.height !== FRAME.height) {
-      throw new Error(`Captured ${size.width}×${size.height}, expected ${FRAME.width}×${FRAME.height}`)
-    }
+    const frame = await this.captureStamped(win, renderId)
     return { frame, ...report }
   }
+
+  /** Take a frame that provably shows the current DOM — never a leftover one.
+   *
+   *  `renderThumbnail` resolves once layout is final, but what the compositor hands back next may
+   *  still be an older frame: on an offscreen window `capturePage` returns the most recent composited
+   *  frame (after minutes of idle the first repaint takes longer than any fixed delay), and even the
+   *  first `paint` after `invalidate()` can be a frame that was already in flight. Both were seen in
+   *  the app: a cached thumbnail showing another surah, and a frame missing the final positioning.
+   *  So every render paints a colour-coded id into a 2px corner stamp, and a frame is accepted only
+   *  when its stamp matches; otherwise we keep taking paints (forcing repaints) until it does. */
+  private async captureStamped(win: BrowserWindow, renderId: number, timeoutMs = 3000): Promise<NativeImage> {
+    const wc = win.webContents
+    const debug = !!process.env['THUMB_DEBUG']
+    const raw = await new Promise<NativeImage>((resolve, reject) => {
+      let settled = false
+      let paints = 0
+      let timer: ReturnType<typeof setTimeout> | undefined
+      let poke: ReturnType<typeof setInterval> | undefined
+      const stop = () => { settled = true; if (timer) clearTimeout(timer); if (poke) clearInterval(poke); wc.off('paint', onPaint) }
+      /** True when the image is a full frame carrying our stamp (then resolved). */
+      const consider = (img: NativeImage, source: string): boolean => {
+        if (settled) return false
+        const s = img.getSize()
+        const stamp = s.width === FRAME.width && s.height === FRAME.height ? stampOf(img) : NaN
+        if (debug) console.error(`[thumb] render ${renderId}: ${source} ${s.width}x${s.height} stamp=${stamp}`)
+        if (stamp !== renderId) return false
+        stop(); resolve(img); return true
+      }
+      const onPaint = (_e: unknown, _dirty: unknown, image: NativeImage) => {
+        paints++
+        try { consider(image, 'paint') } catch (e) { stop(); reject(e) }
+      }
+      timer = setTimeout(() => {
+        if (settled) return
+        // Last resort: an explicit capture, still only accepted with the right stamp.
+        wc.capturePage({ x: 0, y: 0, ...FRAME }).then((img) => {
+          if (settled) return
+          try {
+            if (!consider(img, 'capturePage')) { stop(); reject(new Error(`Render ${renderId}: no frame with the current content after ${timeoutMs}ms (${paints} paints, stamp ${stampOf(img)}) — refusing to use a stale frame`)) }
+          } catch (e) { stop(); reject(e) }
+        }, (e) => { stop(); reject(e) })
+      }, timeoutMs)
+      if (debug) console.error(`[thumb] render ${renderId}: waiting for stamped frame`)
+      wc.on('paint', onPaint)              // listener first, then force repaints until one carries our stamp
+      poke = setInterval(() => { if (!settled) wc.invalidate() }, 100)
+      wc.invalidate()
+    })
+    return scrubStamp(raw)
+  }
+}
+
+/** Stamp pixel: the 2×2 template-px block at the bottom-right corner (3×3 at 1080p); sample 2px in. */
+const STAMP_PX = { x: FRAME.width - 2, y: FRAME.height - 2 }
+const STAMP_SIZE = 4
+
+/** Decode the render id from a captured frame's corner stamp (BGRA bitmap). */
+export function stampOf(img: NativeImage): number {
+  const bmp = img.toBitmap()
+  const i = (STAMP_PX.y * FRAME.width + STAMP_PX.x) * 4
+  const b = bmp[i]!, g = bmp[i + 1]!, r = bmp[i + 2]!
+  if (r > 7 || g > 7 || b > 7) return -1
+  return r | (g << 3) | (b << 6)
+}
+
+/** Copy the pixels just left of the stamp over it, so no trace is left in the output. */
+export function scrubStamp(img: NativeImage): NativeImage {
+  const bmp = Buffer.from(img.toBitmap())
+  for (let y = FRAME.height - STAMP_SIZE; y < FRAME.height; y++) {
+    const src = (y * FRAME.width + (FRAME.width - STAMP_SIZE - 1)) * 4
+    for (let x = FRAME.width - STAMP_SIZE; x < FRAME.width; x++) bmp.copy(bmp, (y * FRAME.width + x) * 4, src, src + 4)
+  }
+  return nativeImage.createFromBitmap(bmp, { width: FRAME.width, height: FRAME.height })
 }
 
 /** JPEG under `maxBytes`, lowering quality in steps if needed. */

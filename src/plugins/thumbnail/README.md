@@ -59,6 +59,20 @@ Rules the plugin enforces, whatever the knobs say:
   safe area is refused with `TEXT_OVERFLOW` naming the knobs to reduce.
 - **Fonts are fixed.** The calligraphy font breaks with letter-spacing, so none is offered on the title.
 
+## Capture correctness (stale-frame bug, fixed 2026-11-07)
+
+On an offscreen window, `capturePage` returns the most recent *composited* frame, and even the
+first `paint` after `invalidate()` can be a frame that was already in flight. After the hidden
+window has sat idle (every recording in an upload run follows an idle gap) the old timer-based
+capture could return the previous job's picture, which then got cached under the new key.
+
+Fix: every render paints a colour-coded render id into a 2px corner stamp as the **last** DOM
+change, and the renderer accepts a frame only when its stamp matches (`renderer.captureStamped`),
+forcing repaints until one does; the stamp pixels are scrubbed from the output. `templateVersion`
+was bumped to 3 so existing caches re-render. Check: `npm run thumb -- --idle 390 /tmp/t` renders
+job A, idles 6.5 min, renders job B, and fails if B's pixels equal A's. Set `THUMB_DEBUG=1` to see
+each paint's stamp.
+
 ## Integration notes for the app
 
 1. Build the job from existing data (`reciter.nameAr`, `reciter.imagePath`, `parsed.surahs` → Arabic,
@@ -75,6 +89,7 @@ npm run build
 npm run thumb -- src/plugins/thumbnail/samples/jobs.json /tmp/thumbs   # 4 good jobs (one styled) + 2 bad ones
 npm run thumb:golden     # empty style must reproduce samples/golden/*.jpg (mean diff < 1.5)
 npm run thumb:sweep      # worst-case job × every knob at min/max + combos; asserts bounds (147 renders)
+npm run thumb -- --idle 390 /tmp/thumb-idle   # stale-capture check (6.5 min idle between two renders)
 ```
 
 After any template change: run the golden check (should still match unless you meant to change the

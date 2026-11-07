@@ -16,7 +16,7 @@ import type { PluginHost, PluginManifest, ThumbnailJob, ThumbnailResult } from '
 export type { PluginHost, PluginManifest, ThumbnailJob, ThumbnailReason, ThumbnailResult } from './types'
 export { DEFAULT_STYLE, STYLE_FIELDS, STYLE_SCHEMA, validateStyle, type Style, type StylePatch, type StyleError, type StyleFieldInfo } from './style'
 
-export const manifest: PluginManifest = { id: 'thumbnail', version: '1.1.0', templateVersion: 2, styleVersion: 1 }
+export const manifest: PluginManifest = { id: 'thumbnail', version: '1.1.1', templateVersion: 3, styleVersion: 1 }
 
 /** YouTube's limit for custom thumbnails. */
 const THUMB_MAX_BYTES = 2 * 1024 * 1024
@@ -27,6 +27,7 @@ const CANVAS = { width: 1280, height: 720 }
 
 let renderer: OffscreenRenderer | null = null
 const getRenderer = () => (renderer ??= new OffscreenRenderer())
+
 
 /** Close the hidden window. Safe to call any time; the next render reopens it. */
 export function dispose(): void {
@@ -61,6 +62,7 @@ export async function render(job: ThumbnailJob, host: PluginHost): Promise<Thumb
 
   try {
     await fs.mkdir(host.outputDir, { recursive: true })
+    // Freshness is guaranteed by the renderer: a frame is only accepted when it carries this render's stamp.
     const out = await getRenderer().render({ ...check.data, photo: pathToFileURL(job.photoPath).href }, cssVars(style))
 
     if (!out.fontOk) return { ok: false, reason: 'FONT_NOT_LOADED', message: 'The surah calligraphy font did not load — refusing to render the surah name as plain code.' }

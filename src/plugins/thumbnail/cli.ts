@@ -5,6 +5,7 @@
  *   npm run thumb -- <jobs.json> [outDir]     render one job or an array (each may carry a `style`)
  *   npm run thumb -- --golden [outDir]        empty style must reproduce samples/golden/*.jpg
  *   npm run thumb -- --sweep [outDir]         worst-case job × every knob at min/max + combos; asserts safe bounds
+ *   npm run thumb -- --idle <seconds> [outDir]  render job A, sit idle, render job B: B's pixels must differ from A's
  *
  * Relative photo paths resolve against the JSON file's folder. Results print as JSON lines;
  * exit code 1 if any job failed or any check did not pass.
@@ -151,15 +152,32 @@ async function sweep(outputDir: string): Promise<number> {
   return failed
 }
 
+/** Stale-capture check: after the hidden window has been idle, the next render must still be its own job's picture. */
+async function idle(seconds: number, outputDir: string): Promise<number> {
+  const jobs = (await loadJobs(join(samplesDir(), 'jobs.json'))).filter((j) => !j.surahsAr.includes('سورة غير موجودة') && !j.photoPath.includes('does-not-exist'))
+  const host: PluginHost = { outputDir, log }
+  const a = await render(jobs[0]!, host)
+  if (!a.ok) { console.log(JSON.stringify({ idle: 'A', ...a })); return 1 }
+  console.error(`A rendered (${jobs[0]!.surahsAr.join(' ')}); idling ${seconds}s …`)
+  await new Promise((r) => setTimeout(r, seconds * 1000))
+  const b = await render(jobs[1]!, host)
+  if (!b.ok) { console.log(JSON.stringify({ idle: 'B', ...b })); return 1 }
+  const same = meanDiff(a.thumbnail, b.thumbnail) < 0.01
+  console.log(JSON.stringify({ idleSeconds: seconds, a: a.cacheKey, b: b.cacheKey, identicalImage: same, ok: !same }))
+  console.error(same ? 'idle: STALE CAPTURE — B is A\'s picture' : 'idle: ok — B is its own picture')
+  return same ? 1 : 0
+}
+
 async function main(): Promise<number> {
   const args = process.argv.slice(app.isPackaged ? 1 : 2)
   const [first, second] = args
-  if (!first) { console.error('usage: thumbnail-cli <jobs.json> [outDir] | --golden [outDir] | --sweep [outDir]'); return 2 }
-  const outputDir = resolve(second ?? 'thumbnail-out')
+  if (!first) { console.error('usage: thumbnail-cli <jobs.json> [outDir] | --golden [outDir] | --sweep [outDir] | --idle <seconds> [outDir]'); return 2 }
+  const outputDir = resolve((first === '--idle' ? args[2] : second) ?? 'thumbnail-out')
   await fs.mkdir(outputDir, { recursive: true })
   let failed: number
   if (first === '--golden') failed = await golden(outputDir)
   else if (first === '--sweep') failed = await sweep(outputDir)
+  else if (first === '--idle') failed = await idle(Number(second) || 390, outputDir)
   else failed = await runJobs(resolve(first), outputDir)
   dispose()
   return failed ? 1 : 0

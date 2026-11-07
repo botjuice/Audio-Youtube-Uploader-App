@@ -149,6 +149,9 @@
   }
   .meta [data-slot="prayer"] { display: var(--prayer-display); opacity: var(--prayer-opacity); }
   .meta [data-slot="date"] { display: var(--date-display); opacity: var(--date-opacity); }
+  /* Render stamp: a 2px block in the corner whose colour encodes the render id. The plugin accepts a
+     captured frame only when it carries the current id, then scrubs these pixels from the output. */
+  .stamp { position: absolute; right: 0; bottom: 0; width: 2px; height: 2px; z-index: 99; background: #000; }
   .meta__dot { display: var(--sep-display); width: var(--sep-size); height: var(--sep-size); border-radius: 50%; background: var(--sep-color); flex: none; }
 </style>
 </head>
@@ -159,6 +162,7 @@
   <div class="thumb__grain"></div>
   <div class="thumb__overlay"></div>
   <div class="thumb__frame"></div>
+  <div class="stamp" id="stamp"></div>
 
   <div class="thumb__content">
     <div class="reciter line" dir="rtl" data-slot="reciter_name" data-fit="reciter"></div>
@@ -341,6 +345,9 @@
     window.__fontOk = document.fonts.check('290px "surah-name-v4-icon"');
     fitAll();
     placeGroup();
+    // Stamp LAST, in the same task as the final layout: any frame carrying this id shows the finished DOM.
+    const id = (d.renderId | 0) & 511;
+    document.getElementById("stamp").style.background = `rgb(${id & 7}, ${(id >> 3) & 7}, ${(id >> 6) & 7})`;
     root.setAttribute("data-ready", "true");
   }
 
