@@ -217,7 +217,7 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
   const defaultStyle = rules.find((x) => x.origin === 'default' && x.id !== rule.id)?.style ?? {}
   const previewStyle = rule.overlay ? mergePatches(defaultStyle, rule.style) : rule.style
   const { result, rendering } = useStyledPreview(rule.sample, previewStyle, rule.overlay ? undefined : rule.photo)
-  const styleBlocks = !!result && !result.ok && (result.reason === 'INVALID_STYLE' || result.reason === 'TEXT_OVERFLOW')
+  const styleBlocks = !!result && !result.ok && (result.reason === 'INVALID_STYLE' || result.reason === 'TEXT_OVERFLOW' || result.reason === 'FONT_NOT_LOADED')
   const canSave = errors.length === 0 && !styleBlocks && !rendering && !saving
   const knobs = countKnobs(rule.style)
   const matches = useMemo(() => countLooks(library.records, rules.some((x) => x.id === rule.id) ? rules.map((x) => (x.id === rule.id ? rule : x)) : [...rules.filter((x) => x.origin !== 'default'), rule, ...rules.filter((x) => x.origin === 'default')]).get(rule.id) ?? 0, [library.records, rules, rule])
@@ -446,6 +446,17 @@ function Knob({ info, style, schema, error, onChange }: { info: StyleFieldInfo; 
   const changed = current !== undefined
   const label = humanise(path.split('.').pop()!)
   const decimals = field.kind === 'number' ? Math.max(0, -Math.floor(Math.log10(field.step))) : 0
+  if (field.kind === 'font') {
+    return (
+      <div className="space-y-1" title={field.desc}>
+        <div className="flex items-center gap-1.5 text-[12px]"><span className={clsx(changed && 'font-medium text-accent')}>{label}</span><span className="truncate text-[10.5px] text-muted">{field.desc}</span>
+          <button type="button" title={`Reset to ${String(def)}`} disabled={!changed} onClick={() => onChange(path, def)} className={clsx('ml-auto flex h-6 w-5 items-center justify-center rounded text-muted hover:text-text no-drag', !changed && 'invisible')}><RotateCcw size={11} /></button>
+        </div>
+        <FontPicker value={String(value)} options={field.options} onChange={(v) => onChange(path, v)} />
+        {error && <div className="text-[11px] text-err">{error}</div>}
+      </div>
+    )
+  }
   return (
     <div className={clsx('grid gap-x-2 gap-y-1', field.kind === 'number' ? 'grid-cols-[minmax(0,1fr)_64px_20px]' : 'grid-cols-[minmax(0,1fr)_auto_20px]')} title={field.desc}>
       <div className="flex items-center gap-1.5 text-[12px]"><span className={clsx(changed && 'font-medium text-accent')}>{label}</span><span className="truncate text-[10.5px] text-muted">{field.desc}</span></div>
@@ -457,6 +468,29 @@ function Knob({ info, style, schema, error, onChange }: { info: StyleFieldInfo; 
       <button type="button" title={`Reset to ${String(def)}`} disabled={!changed} onClick={() => onChange(path, def)} className={clsx('flex h-6 w-5 items-center justify-center rounded text-muted hover:text-text no-drag', !changed && 'invisible')}><RotateCcw size={11} /></button>
       {field.kind === 'number' && <Slider value={Number(value)} min={field.min} max={field.max} step={field.step} onChange={(v) => onChange(path, Number(v.toFixed(decimals)))} className="col-span-3" />}
       {error && <div className="col-span-3 text-[11px] text-err">{error}</div>}
+    </div>
+  )
+}
+
+const CUSTOM = '__custom__'
+/** Bundled font list plus "Your own font file…", which copies the file into the library and stores its path. */
+function FontPicker({ value, options, onChange }: { value: string; options: readonly { id: string; label: string; style: string }[]; onChange: (v: string) => void }) {
+  const call = useStore((s) => s.call)
+  const busy = useStore((s) => !!s.busy['fontFile'])
+  const isCustom = value.includes('/')
+  const pick = () => void call('fontFile', async () => { const f = await window.api.chooseFontFile(); if (f) onChange(f.path) })
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <Select value={isCustom ? CUSTOM : value} onChange={(e) => { if (e.target.value === CUSTOM) pick(); else onChange(e.target.value) }} className="h-7 flex-1 text-xs">
+        {options.map((o) => <option key={o.id} value={o.id}>{o.label} — {o.style}</option>)}
+        <option value={CUSTOM}>Your own font file…</option>
+      </Select>
+      {isCustom && (
+        <span className="flex min-w-0 items-center gap-1 text-[11px]">
+          <span className="truncate max-w-[150px]" title={value}>{value.split('/').pop()}</span>
+          <Button size="sm" variant="ghost" onClick={pick} disabled={busy}>{busy ? <Spinner /> : <FolderOpen size={12} />} Change…</Button>
+        </span>
+      )}
     </div>
   )
 }

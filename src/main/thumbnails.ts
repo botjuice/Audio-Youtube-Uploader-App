@@ -19,6 +19,18 @@ export const thumbsDir = (library: string) => stateFile(library, 'thumbs')
 /** Copies of images chosen for thumbnail rules (travel with the library, like the rules). */
 export const rulePhotosDir = (library: string) => stateFile(library, 'thumb-photos')
 export const rulePhotoPath = (library: string, file: string) => join(rulePhotosDir(library), basename(file))
+/** Copies of font files chosen for thumbnail rules (absolute paths are stored in the style patch, as the plugin wants). */
+export const ruleFontsDir = (library: string) => stateFile(library, 'fonts')
+
+/** Every custom font path referenced by the rules' `reciter.font` / `meta.font` knobs. */
+export function fontPathsInRules(rules: readonly ThumbnailRule[]): Set<string> {
+  const out = new Set<string>()
+  for (const r of rules) for (const line of ['reciter', 'meta'] as const) {
+    const v = (r.style as Record<string, Record<string, unknown> | undefined>)[line]?.font
+    if (typeof v === 'string' && v.includes('/')) out.add(v)
+  }
+  return out
+}
 
 /** Absolute path of a rule's photo when the file still exists; otherwise undefined (callers fall back to the reciter photo). */
 export async function resolveRulePhoto(library: string, file: string | undefined, recordId?: string): Promise<string | undefined> {

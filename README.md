@@ -86,6 +86,10 @@ preview and its conditions; click the preview to open the editor.
   on every change, with the plugin's warnings (text shrank, group pulled inside the safe area) and
   refusals (a look that cannot render blocks Save). Each rule keeps its own **preview sample**
   (reciter, up to 3 surahs, prayer, date). The editor closes only with **Discard** or **Save**.
+- **Fonts**: the reciter line and the prayer · date line each have a font knob with 21 bundled Arabic
+  fonts, or *Your own font file…* (.ttf/.otf/.woff/.woff2), which keeps a copy in
+  `<library>/.yoosyjoosy/fonts/`. A font that cannot draw Arabic is refused by the preview
+  (`FONT_NOT_LOADED`) and blocks Save. The surah calligraphy font is fixed.
 - **Background image** (non-overlay rules): *Choose image…* in the editor picks a file; the app keeps a
   copy in `<library>/.yoosyjoosy/thumb-photos/` and uses it instead of the reciter's photo for every
   recording the rule wins. A missing copy falls back to the reciter photo with a warning; copies no rule

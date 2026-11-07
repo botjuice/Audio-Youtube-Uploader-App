@@ -1,6 +1,6 @@
 import type {
   ActivityEntry, Health, KeywordDef, LibraryRecord, NewReciter, Playlist, PlaylistRule, Privacy, Progress,
-  ReciterInfo, ReciterPatch, RecordPatch, RulePhoto, Settings, StyleRenderInput, StyleSchemaInfo, SurahOption, ThumbnailPreview, ThumbnailRule, TokenValidation, UpdateState,
+  CustomFont, ReciterInfo, ReciterPatch, RecordPatch, RulePhoto, Settings, StyleRenderInput, StyleSchemaInfo, SurahOption, ThumbnailPreview, ThumbnailRule, TokenValidation, UpdateState,
 } from './types'
 
 export interface LibrarySnapshot {
@@ -58,6 +58,7 @@ export interface Api {
   getStyleSchema(): Promise<StyleSchemaInfo>
   chooseRulePhoto(ruleId: string): Promise<RulePhoto | null>   // file dialog → copy into <library>/.yoosyjoosy/thumb-photos
   getRulePhoto(file: string): Promise<RulePhoto | null>
+  chooseFontFile(): Promise<CustomFont | null>              // file dialog → copy into <library>/.yoosyjoosy/fonts, returns the absolute path for the style patch
   listSurahOptions(): Promise<SurahOption[]>
   // pipeline
   startUpload(ids: string[]): Promise<void>

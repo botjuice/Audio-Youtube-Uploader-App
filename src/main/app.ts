@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, nativeTheme, shell } from 'electron'
 import { promises as fs } from 'node:fs'
 import { basename, extname, join } from 'node:path'
-import type { Health, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, RulePhoto, Settings, StyleRenderInput, StyleSchemaInfo, ThumbnailRule, TokenValidation } from '@shared/types'
+import type { CustomFont, Health, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, RulePhoto, Settings, StyleRenderInput, StyleSchemaInfo, ThumbnailRule, TokenValidation } from '@shared/types'
 import type { LibrarySnapshot, SurahEntry, SyncResult } from '@shared/api'
 import { DEFAULT_SURAHS, conditionKey, describeRule, describeThumbRule, nextQuotaReset, normaliseQuota, normaliseThumbRules, reciterKey, remainingUploads, surahKey, validateRule, validateThumbRule, validateToken } from '@core/index'
 import { ffmpegAvailable, ffmpegPath } from './ffmpeg'
@@ -13,7 +13,7 @@ import { Pipeline } from './pipeline'
 import { mergeSettings, openLibraryStore, secrets, settings, type LibraryStore } from './store'
 import { Watcher } from './watcher'
 import { updater } from './updater'
-import { buildSampleJob, buildThumbnailJob, disposeThumbnails, renderJob, resolveRulePhoto, rulePhotoPath, rulePhotosDir, sampleJobForReciter, styleForRecord, styleProblems, styleSchema, surahOptions, toPreview } from './thumbnails'
+import { buildSampleJob, buildThumbnailJob, disposeThumbnails, fontPathsInRules, renderJob, resolveRulePhoto, ruleFontsDir, rulePhotoPath, rulePhotosDir, sampleJobForReciter, styleForRecord, styleProblems, styleSchema, surahOptions, toPreview } from './thumbnails'
 import { setThumbnail } from './google/youtube'
 import { THUMBNAIL_COST_UNITS, addQuota } from '@core/quota'
 import type { SurahOption, ThumbnailPreview } from '@shared/types'
@@ -396,6 +396,28 @@ class YoosyApp {
     return { file, dataUrl: await this.photoDataUrl(rulePhotoPath(library, file)) }
   }
 
+  /** Let the user pick a font file for a rule; a copy goes into the library and its absolute path is what the style patch stores. */
+  async chooseFontFile(win: BrowserWindow | null): Promise<CustomFont | null> {
+    const { library } = this.req()
+    const r = await dialog.showOpenDialog(win ?? undefined as never, {
+      title: 'Choose a font file (.ttf, .otf, .woff, .woff2)',
+      filters: [{ name: 'Fonts', extensions: ['ttf', 'otf', 'woff', 'woff2'] }], properties: ['openFile'],
+    })
+    const src = r.filePaths[0]
+    if (!src) return null
+    const st = await fs.stat(src)
+    if (!st.isFile() || st.size === 0) throw new Error('That file is empty or not a regular file')
+    if (st.size > 30 * 1024 * 1024) throw new Error('Font file is larger than 30 MB — pick a smaller one')
+    const ext = extname(src).toLowerCase()
+    const stem = basename(src, extname(src)).replace(/[^\w.-]+/g, '_').slice(0, 60) || 'font'
+    const file = `${stem}-${Date.now()}${ext}`
+    await fs.mkdir(ruleFontsDir(library), { recursive: true })
+    const dest = join(ruleFontsDir(library), file)
+    await fs.copyFile(src, dest)
+    activity.info(`Font stored: ${basename(src)} → .yoosyjoosy/fonts/${file}`)
+    return { path: dest, name: basename(src) }
+  }
+
   async getRulePhoto(file: string): Promise<RulePhoto | null> {
     const { library } = this.req()
     const abs = await resolveRulePhoto(library, file)
@@ -407,13 +429,17 @@ class YoosyApp {
     return `data:${mime};base64,${(await fs.readFile(abs)).toString('base64')}`
   }
 
-  /** Remove copied images no saved rule refers to any more (a replaced or discarded choice). */
+  /** Remove copied images and fonts no saved rule refers to any more (a replaced or discarded choice). */
   private async sweepRulePhotos(): Promise<void> {
     const { store, library } = this.req()
-    const used = new Set(store.thumbRules.get().rules.map((r) => r.photo).filter(Boolean))
+    const rules = store.thumbRules.get().rules
+    const usedPhotos = new Set(rules.map((r) => r.photo).filter(Boolean))
     let files: string[] = []
-    try { files = await fs.readdir(rulePhotosDir(library)) } catch { return }
-    for (const f of files) if (!used.has(f) && !f.startsWith('.')) await fs.rm(rulePhotoPath(library, f), { force: true }).catch(() => {})
+    try { files = await fs.readdir(rulePhotosDir(library)) } catch { files = [] }
+    for (const f of files) if (!usedPhotos.has(f) && !f.startsWith('.')) await fs.rm(rulePhotoPath(library, f), { force: true }).catch(() => {})
+    const usedFonts = fontPathsInRules(rules)
+    try { files = await fs.readdir(ruleFontsDir(library)) } catch { return }
+    for (const f of files) { const abs = join(ruleFontsDir(library), f); if (!usedFonts.has(abs) && !f.startsWith('.')) await fs.rm(abs, { force: true }).catch(() => {}) }
   }
 
   // ── youtube ────────────────────────────────────────────────────────────────

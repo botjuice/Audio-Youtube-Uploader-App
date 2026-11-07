@@ -155,6 +155,9 @@ export interface StyleRenderInput { sample: ThumbnailSample; style: StylePatch; 
 
 export interface RulePhoto { file: string; dataUrl: string }
 
+/** A font file the user supplied, copied into <library>/.yoosyjoosy/fonts/. `path` is what goes into the style patch. */
+export interface CustomFont { path: string; name: string }
+
 /** The plugin's knob table, so the editor builds its controls from data (ranges, steps, defaults, descriptions). */
 export interface StyleSchemaInfo { fields: StyleFieldInfo[]; defaults: Style; styleVersion: number }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', isPackaged: false }, BrowserWindow: class {}, nativeImage: {} }))
 import { DEFAULT_SURAHS } from '@core/surahs'
-import { buildThumbnailJob, isoDate, sampleJobForReciter, styleForRecord } from './thumbnails'
+import { buildThumbnailJob, fontPathsInRules, isoDate, sampleJobForReciter, styleForRecord } from './thumbnails'
 
 const opts = { enabled: true, sheikhPrefix: true }
 describe('thumbnail job builder', () => {
@@ -34,6 +34,11 @@ describe('thumbnail job builder', () => {
     expect(r.ok && r.job.photoPath).toBe('/lib/.yoosyjoosy/thumb-photos/rule-1.png')
     const noPhotoReciter = buildThumbnailJob({ fileName: 'x', parsed }, { nameAr: 'a', imagePath: null }, DEFAULT_SURAHS, opts, undefined, '/lib/x.png')
     expect(noPhotoReciter.ok && noPhotoReciter.job.photoPath).toBe('/lib/x.png')
+  })
+  it('collects custom font paths from rules, ignoring bundled ids', () => {
+    const mk = (style: object) => ({ id: 'x', enabled: true, conditions: [], style, sample: { folder: '', surahsAr: ['x'], prayer: 'Isha', date: '2025-01-01' } })
+    const paths = fontPathsInRules([mk({ reciter: { font: '/lib/.yoosyjoosy/fonts/a.ttf' }, meta: { font: 'amiri' } }), mk({ meta: { font: '/lib/.yoosyjoosy/fonts/b.otf' } }), mk({})])
+    expect([...paths].sort()).toEqual(['/lib/.yoosyjoosy/fonts/a.ttf', '/lib/.yoosyjoosy/fonts/b.otf'])
   })
   it('reciter sample job respects the prefix option', () => {
     expect(sampleJobForReciter({ nameAr: 'x', imagePath: '/p' }, { enabled: true, sheikhPrefix: false })?.options.sheikhPrefix).toBe(false)
