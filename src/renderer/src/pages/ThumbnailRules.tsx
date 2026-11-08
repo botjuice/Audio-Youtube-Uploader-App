@@ -354,18 +354,18 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
       <div className={clsx('absolute inset-x-3 bottom-3 flex flex-col overflow-hidden rounded-xl border border-border bg-bg shadow-2xl', window.platform === 'darwin' ? 'top-11' : 'top-3')}>
         <header className="flex items-center gap-3 border-b border-border px-4 py-2.5">
           <ImageIcon size={16} className="text-accent" />
-          <Input value={rule.label ?? ''} onChange={(e) => setRule({ ...rule, label: e.target.value || undefined })} placeholder={describeThumbRule({ ...rule, label: undefined }, plName)} className="h-8 max-w-md text-[13px]" />
+          <Input value={rule.label ?? ''} onChange={(e) => setRule({ ...rule, label: e.target.value || undefined })} placeholder={describeThumbRule({ ...rule, label: undefined }, plName)} className="h-8 w-[260px] min-w-[140px] shrink text-[13px]" />
           {isDefault && <Badge tone="accent">default look</Badge>}
           {!isDefault && (
-            <label className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-2.5 h-8 text-xs" title="An overlay never wins the base look by itself: every matching overlay adds its changed knobs on top of whichever rule won (or the default look), in list order.">
+            <label className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-border bg-surface px-2.5 h-8 text-xs" title="An overlay never wins the base look by itself: every matching overlay adds its changed knobs on top of whichever rule won (or the default look), in list order.">
               <Layers size={13} className={rule.overlay ? 'text-accent' : 'text-muted'} /> Overlay rule
               <Switch checked={!!rule.overlay} onChange={(overlay) => setRule({ ...rule, overlay })} label="Overlay rule" />
             </label>
           )}
           {draft.isNew && <Badge>new rule</Badge>}
-          <Badge tone={knobs ? 'info' : 'muted'}>{knobs ? `${knobs} knob${knobs === 1 ? '' : 's'} changed` : isDefault ? 'plugin defaults' : 'same as the Default look'}</Badge>
-          <span className="text-xs text-muted tabular-nums">{matches} recording{matches === 1 ? '' : 's'} would get this look</span>
-          <div className="ml-auto flex items-center gap-2">
+          <Badge tone={knobs ? 'info' : 'muted'} className="shrink-0 whitespace-nowrap">{knobs ? `${knobs} knob${knobs === 1 ? '' : 's'} changed` : isDefault ? 'plugin defaults' : 'same as the Default look'}</Badge>
+          <span className="shrink-0 whitespace-nowrap text-xs text-muted tabular-nums" title={`${matches} recording${matches === 1 ? '' : 's'} in the library would get this look`}>{matches} recording{matches === 1 ? '' : 's'}</span>
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             <Button size="sm" variant="ghost" disabled={!schema} onClick={() => void exportLook()} title="Save this look's knobs as a JSON file (custom fonts included) to keep or use on another computer"><Download size={13} /> Export…</Button>
             <Button size="sm" variant="ghost" disabled={!schema || importing} onClick={() => void importLook()} title={rule.overlay ? 'Load a look file: this overlay takes the file\'s changed knobs' : 'Load a look file: this rule takes the file\'s exact look (only differences from what it inherits are stored)'}><Upload size={13} /> {importing ? 'Importing…' : 'Import…'}</Button>
             <Button size="sm" variant="ghost" disabled={!knobs} onClick={() => setRule({ ...rule, style: {} })} title={isDefault ? "Back to the plugin's locked design" : 'Back to the Default look'}><RotateCcw size={13} /> {isDefault ? 'Reset all knobs' : 'Reset to Default look'}</Button>
