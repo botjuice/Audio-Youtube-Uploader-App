@@ -31,18 +31,18 @@ const fromPos = (f: NumberField, p: number) => {
 
 // ── preview hook: debounced, newest wins ──────────────────────────────────────
 
-function useAudioPreview(sample: { recordId: string; start: number }, look: AudioLookPatch, enabled: boolean) {
+function useAudioPreview(sample: { recordId: string; start: number }, look: AudioLookPatch, matchLoudness: boolean, enabled: boolean) {
   const [result, setResult] = useState<AudioPreviewResult | null>(null)
   const [rendering, setRendering] = useState(false)
   const seq = useRef(0)
-  const key = JSON.stringify([sample, look])
+  const key = JSON.stringify([sample, look, matchLoudness])
   useEffect(() => {
     if (!enabled || !sample.recordId) return
     const mine = ++seq.current
     setRendering(true)
     const t = setTimeout(async () => {
       let r: AudioPreviewResult
-      try { r = await window.api.renderAudioPreview({ recordId: sample.recordId, start: sample.start, seconds: PREVIEW_SECONDS, look }) }
+      try { r = await window.api.renderAudioPreview({ recordId: sample.recordId, start: sample.start, seconds: PREVIEW_SECONDS, look, matchLoudness }) }
       catch (e) { r = { ok: false, reason: 'RENDER_FAILED', message: errText(e) } }
       if (mine !== seq.current) return                 // superseded by a newer knob change
       if (!r.ok && r.reason === 'CANCELLED') return    // cancelled by that newer request
@@ -76,7 +76,8 @@ export default function AudioPage() {
   const dirty = JSON.stringify(look) !== JSON.stringify(prune(saved.look)) || JSON.stringify(sample) !== JSON.stringify(saved.sample ?? sample)
   const summary = validation.ok ? describeLook(validation.look) : 'fix the knobs marked below'
   const record = records.find((r) => r.id === sample.recordId)
-  const { result, rendering } = useAudioPreview(sample, look, validation.ok && !!record)
+  const [matchLoudness, setMatchLoudness] = useState(false)
+  const { result, rendering } = useAudioPreview(sample, look, matchLoudness, validation.ok && !!record)
 
   const setKnobValue = (path: string, value: unknown) => {
     const def = getKnob(DEFAULT_LOOK, path)
@@ -191,7 +192,7 @@ export default function AudioPage() {
             <div className="rounded-xl border border-err/40 bg-err/6 px-4 py-3 text-xs"><b>Some knobs are out of range:</b> {errors.map((e) => `${e.key}: ${e.message}`).join(' · ')}</div>
           )}
           {!record ? <Empty icon={<AudioLines size={28} />} title="Choose a recording" />
-            : result?.ok ? <AbPlayer processed={result.processed} original={result.original} startOffset={sample.start} stale={rendering} />
+            : result?.ok ? <AbPlayer processed={result.processed} original={result.original} startOffset={sample.start} stale={rendering} matchLoudness={matchLoudness} onMatchLoudness={setMatchLoudness} />
             : result ? (
               <div className="rounded-xl border border-warn/40 bg-warn/6 px-4 py-3 text-xs">
                 <div className="flex items-center gap-2 font-medium"><AlertTriangle size={14} /> Can't render ({result.reason})</div>
@@ -199,7 +200,7 @@ export default function AudioPage() {
               </div>
             ) : (
               <div className="flex h-56 items-center justify-center rounded-xl border border-border bg-surface text-xs text-muted">
-                {rendering ? <><Spinner className="mr-2 text-accent" /> Rendering a {PREVIEW_SECONDS} s excerpt (original and processed at the same loudness)…</> : 'Change a knob or pick a recording to hear it.'}
+                {rendering ? <><Spinner className="mr-2 text-accent" /> Rendering a {PREVIEW_SECONDS} s excerpt…</> : 'Change a knob or pick a recording to hear it.'}
               </div>
             )}
         </main>
@@ -388,7 +389,7 @@ function decode(ctx: AudioContext, file: string): Promise<AudioBuffer> {
   return p
 }
 
-function AbPlayer({ processed, original, startOffset, stale }: { processed: AudioPreviewSide; original: AudioPreviewSide; startOffset: number; stale: boolean }) {
+function AbPlayer({ processed, original, startOffset, stale, matchLoudness, onMatchLoudness }: { processed: AudioPreviewSide; original: AudioPreviewSide; startOffset: number; stale: boolean; matchLoudness: boolean; onMatchLoudness: (v: boolean) => void }) {
   const notify = useStore((s) => s.notify)
   const tRef = useRef<Transport | null>(null)
   const transport = () => (tRef.current ??= new Transport())
@@ -452,6 +453,9 @@ function AbPlayer({ processed, original, startOffset, stale }: { processed: Audi
         </div>
         <button type="button" onClick={toggleLoop} className={clsx('inline-flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs no-drag', loop ? 'border-accent/40 text-accent bg-accent/10' : 'border-border text-muted')} title="Loop the excerpt"><Repeat size={13} /> Loop</button>
         <span className="text-xs tabular-nums text-muted">{fmtTime(startOffset + time)} / {fmtTime(startOffset + duration)}</span>
+        <label className="inline-flex h-8 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-muted" title="Off: the original plays exactly as recorded. On: the original gets one fixed gain so it sits at the processed loudness — louder never sounds better, so you judge tone and noise alone. The final clip is not affected either way.">
+          <Switch checked={matchLoudness} onChange={onMatchLoudness} label="Match loudness" /> Match loudness
+        </label>
         {(stale || loading) && <span className="inline-flex items-center gap-1 text-xs text-muted"><Spinner className="text-accent" /> {stale ? 'rendering the new knobs…' : 'loading…'}</span>}
         {loadError && !loading && <span className="inline-flex items-center gap-1 text-xs text-err"><AlertTriangle size={13} /> {loadError}</span>}
         <span className="ml-auto text-[11px] text-muted">Space = play/pause · S = switch · both lanes share one clock</span>
@@ -462,7 +466,8 @@ function AbPlayer({ processed, original, startOffset, stale }: { processed: Audi
         <TimeAxis startOffset={startOffset} duration={duration} />
       </div>
       <div className="grid grid-cols-2 gap-x-6 gap-y-1 border-t border-border px-4 py-3 text-xs sm:grid-cols-4">
-        <Stat label="Loudness (both matched)" value={`${audible.lufs.toFixed(1)} LUFS`} hint={`original ${original.lufs.toFixed(1)} · processed ${processed.lufs.toFixed(1)}`} />
+        <Stat label={matchLoudness ? 'Loudness (original matched)' : 'Loudness'} value={`${audible.lufs.toFixed(1)} LUFS`}
+          hint={matchLoudness ? `original raised to ${original.lufs.toFixed(1)} · processed ${processed.lufs.toFixed(1)}` : `original ${original.lufs.toFixed(1)} · processed ${processed.lufs.toFixed(1)} (${db(processed.lufs - original.lufs, 'LU')})`} />
         <Stat label="True peak" value={db(audible.truePeak, 'dBTP')} hint={`original ${db(original.truePeak, '')} · processed ${db(processed.truePeak, '')}`} />
         <Stat label="Gain applied" value={db(processed.gainDb)} hint="by the loudness stage" />
         <Stat label="Channels" value={processed.channels === 2 ? 'stereo' : 'mono'} hint={processed.channels === 2 ? 'reverb makes it stereo' : undefined} />

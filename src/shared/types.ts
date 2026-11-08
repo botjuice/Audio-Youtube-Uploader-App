@@ -180,7 +180,11 @@ export type { LookPatch as AudioLookPatch, LookFieldInfo as AudioFieldInfo } fro
 export type { AudioAnalysis } from '../plugins/audio/types'
 /** The one audio look (a patch over the plugin's factory defaults) plus the editor's last sample. Editor only for now: uploads still use the original audio. */
 export interface AudioLookState { look: import('../plugins/audio/look').LookPatch; sample: { recordId: string; start: number } | null }
-export interface AudioPreviewInput { recordId: string; start: number; seconds: number; look: import('../plugins/audio/look').LookPatch }
+export interface AudioPreviewInput {
+  recordId: string; start: number; seconds: number; look: import('../plugins/audio/look').LookPatch
+  /** true: the original gets one fixed gain to sit at the processed loudness (judge tone, not volume); false/absent: the original exactly as recorded */
+  matchLoudness?: boolean
+}
 export interface AudioPreviewSide {
   file: string            // FLAC the plugin wrote; the window plays it through the yj-audio:// protocol
   durationSec: number; channels: number; lufs: number; truePeak: number; gainDb: number; warnings: string[]

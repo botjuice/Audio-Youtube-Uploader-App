@@ -4,6 +4,7 @@
  */
 import { protocol } from 'electron'
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { createReadStream, promises as fs } from 'node:fs'
 import { Readable } from 'node:stream'
 import { join, resolve } from 'node:path'
@@ -71,10 +72,35 @@ export function peaksOf(file: string, buckets = PEAK_BUCKETS, signal?: AbortSign
 const side = (r: Extract<AudioResult, { ok: true }>, peaks: number[]): AudioPreviewSide =>
   ({ file: r.file, durationSec: r.after.durationSec, channels: r.after.channels, lufs: r.after.lufs, truePeak: r.after.truePeak, gainDb: r.gainDb, warnings: r.warnings, peaks })
 
+/** The original excerpt exactly as recorded: cut to the window and stored losslessly, no gain, no processing. */
+async function cutOriginal(library: string, audioPath: string, preview: { start: number; seconds: number }, signal?: AbortSignal): Promise<string> {
+  const bin = ffmpegPath()
+  if (!bin) throw new Error('ffmpeg is not available on this computer')
+  const st = await fs.stat(audioPath)
+  const key = createHash('sha1').update(`${audioPath}|${st.size}|${st.mtimeMs}|${preview.start}|${preview.seconds}|raw1`).digest('hex').slice(0, 20)
+  const dir = audioDir(library)
+  const out = join(dir, `${key}-original.flac`)
+  if (await fs.access(out).then(() => true, () => false)) return out
+  await fs.mkdir(dir, { recursive: true })
+  const part = `${out}.part`
+  await new Promise<void>((res, rej) => {
+    // same -ss/-t placement as the plugin so both excerpts start on the same sample
+    const child = spawn(bin, ['-hide_banner', '-loglevel', 'error', '-y', '-ss', String(preview.start), '-t', String(preview.seconds), '-i', audioPath, '-vn', '-c:a', 'flac', '-f', 'flac', part], { windowsHide: true })
+    let err = ''
+    child.stderr.on('data', (c: Buffer) => { err += c.toString() })
+    const onAbort = () => child.kill()
+    signal?.addEventListener('abort', onAbort, { once: true })
+    child.on('error', rej)
+    child.on('close', (code) => { signal?.removeEventListener('abort', onAbort); if (signal?.aborted) rej(new Error('cancelled')); else if (code !== 0) rej(new Error(err.trim() || `ffmpeg exited with ${code}`)); else res() })
+  }).catch(async (e) => { await fs.rm(part, { force: true }); throw e })
+  await fs.rename(part, out)
+  return out
+}
+
 let inflight: AbortController | null = null
 
 /** Render the processed excerpt and the original excerpt at the same loudness. A newer request cancels an older one. */
-export async function renderAudioPreview(library: string, audioPath: string, input: { start: number; seconds: number; look: LookPatch }): Promise<AudioPreviewResult> {
+export async function renderAudioPreview(library: string, audioPath: string, input: { start: number; seconds: number; look: LookPatch; matchLoudness?: boolean }): Promise<AudioPreviewResult> {
   inflight?.abort()
   const ac = new AbortController()
   inflight = ac
@@ -85,10 +111,20 @@ export async function renderAudioPreview(library: string, audioPath: string, inp
     const preview = { start: Math.max(0, input.start), seconds: Math.min(Math.max(1, input.seconds), 600) }
     const p = await processAudio({ audioPath, look: input.look, preview }, h)
     if (!p.ok) return p
-    const o = await processAudio({ audioPath, preview, bypass: true, matchLufs: p.after.lufs }, h)
-    if (!o.ok) return o
-    const [pp, op] = await Promise.all([peaksOf(p.file, PEAK_BUCKETS, ac.signal), peaksOf(o.file, PEAK_BUCKETS, ac.signal)])
-    return { ok: true, processed: side(p, pp), original: side(o, op) }
+    let original: AudioPreviewSide
+    if (input.matchLoudness) {
+      // the original with one fixed gain so it sits at the processed loudness: judge tone and noise, not volume
+      const o = await processAudio({ audioPath, preview, bypass: true, matchLufs: p.after.lufs }, h)
+      if (!o.ok) return o
+      original = side(o, await peaksOf(o.file, PEAK_BUCKETS, ac.signal))
+    } else {
+      // the original untouched: only cut to the same window
+      const file = await cutOriginal(library, audioPath, preview, ac.signal)
+      const [a, peaks] = await Promise.all([analyse(file, { ffmpegPath: h.ffmpegPath, signal: ac.signal }), peaksOf(file, PEAK_BUCKETS, ac.signal)])
+      original = { file, durationSec: a.durationSec, channels: a.channels, lufs: a.lufs, truePeak: a.truePeak, gainDb: 0, warnings: [], peaks }
+    }
+    const pp = await peaksOf(p.file, PEAK_BUCKETS, ac.signal)
+    return { ok: true, processed: side(p, pp), original }
   } catch (e) {
     return { ok: false, reason: ac.signal.aborted ? 'CANCELLED' : 'PROCESS_FAILED', message: e instanceof Error ? e.message : String(e) }
   } finally {
