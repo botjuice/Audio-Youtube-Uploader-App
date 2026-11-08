@@ -8,8 +8,8 @@ import { createHash } from 'node:crypto'
 import { createReadStream, promises as fs } from 'node:fs'
 import { Readable } from 'node:stream'
 import { join, resolve } from 'node:path'
-import type { AudioLookState, AudioPreviewResult, AudioPreviewSide } from '@shared/types'
-import { analyse, processAudio, validateLook, type AudioAnalysis, type AudioHost, type AudioResult, type LookPatch } from '../plugins/audio/index'
+import type { AudioLookState, AudioOverview, AudioTile, AudioTileInput, AudioTileResult } from '@shared/types'
+import { analyse, processAudio, validateLook, type AudioAnalysis, type AudioHost } from '../plugins/audio/index'
 import { ffmpegPath } from './ffmpeg'
 import { activity } from './log'
 import { stateFile } from './paths'
@@ -44,11 +44,11 @@ export function bucketPeaks(samples: Int16Array, buckets: number): number[] {
 }
 
 /** Decode a file to 8 kHz mono PCM through ffmpeg and bucket it (fast: a 45 s excerpt is 360k samples). */
-export function peaksOf(file: string, buckets = PEAK_BUCKETS, signal?: AbortSignal): Promise<number[]> {
+export function peaksOf(file: string, buckets = PEAK_BUCKETS, signal?: AbortSignal, fromSec = 0): Promise<number[]> {
   const bin = ffmpegPath()
   if (!bin) return Promise.reject(new Error('ffmpeg is not available on this computer'))
   return new Promise((res, rej) => {
-    const child = spawn(bin, ['-hide_banner', '-loglevel', 'error', '-i', file, '-ac', '1', '-ar', '8000', '-f', 's16le', 'pipe:1'], { windowsHide: true })
+    const child = spawn(bin, ['-hide_banner', '-loglevel', 'error', ...(fromSec > 0 ? ['-ss', String(fromSec)] : []), '-i', file, '-ac', '1', '-ar', '8000', '-f', 's16le', 'pipe:1'], { windowsHide: true })
     const chunks: Buffer[] = []
     let err = ''
     child.stdout.on('data', (c: Buffer) => chunks.push(c))
@@ -69,23 +69,24 @@ export function peaksOf(file: string, buckets = PEAK_BUCKETS, signal?: AbortSign
   })
 }
 
-const side = (r: Extract<AudioResult, { ok: true }>, peaks: number[]): AudioPreviewSide =>
-  ({ file: r.file, durationSec: r.after.durationSec, channels: r.after.channels, lufs: r.after.lufs, truePeak: r.after.truePeak, gainDb: r.gainDb, warnings: r.warnings, peaks })
+/** Filters start cold at a chunk's first sample; render this much before the chunk and skip it on playback. */
+export const TILE_PREROLL_S = 4
+const TILE_PEAK_BUCKETS = 160   // per 5 s tile → ~32 per second, plenty for a 45 s window
 
-/** The original excerpt exactly as recorded: cut to the window and stored losslessly, no gain, no processing. */
-async function cutOriginal(library: string, audioPath: string, preview: { start: number; seconds: number }, signal?: AbortSignal): Promise<string> {
+/** The original, exactly as recorded, cut to a window and stored losslessly (no gain, no processing). */
+async function cutOriginal(library: string, audioPath: string, start: number, seconds: number, signal?: AbortSignal): Promise<string> {
   const bin = ffmpegPath()
   if (!bin) throw new Error('ffmpeg is not available on this computer')
   const st = await fs.stat(audioPath)
-  const key = createHash('sha1').update(`${audioPath}|${st.size}|${st.mtimeMs}|${preview.start}|${preview.seconds}|raw1`).digest('hex').slice(0, 20)
+  const key = createHash('sha1').update(`${audioPath}|${st.size}|${st.mtimeMs}|${start}|${seconds}|raw1`).digest('hex').slice(0, 20)
   const dir = audioDir(library)
   const out = join(dir, `${key}-original.flac`)
   if (await fs.access(out).then(() => true, () => false)) return out
   await fs.mkdir(dir, { recursive: true })
   const part = `${out}.part`
   await new Promise<void>((res, rej) => {
-    // same -ss/-t placement as the plugin so both excerpts start on the same sample
-    const child = spawn(bin, ['-hide_banner', '-loglevel', 'error', '-y', '-ss', String(preview.start), '-t', String(preview.seconds), '-i', audioPath, '-vn', '-c:a', 'flac', '-f', 'flac', part], { windowsHide: true })
+    // -ss before -i is sample-accurate in this ffmpeg (accurate_seek), and it is what the plugin does, so chunks line up
+    const child = spawn(bin, ['-hide_banner', '-loglevel', 'error', '-y', '-ss', String(start), '-t', String(seconds), '-i', audioPath, '-vn', '-c:a', 'flac', '-f', 'flac', part], { windowsHide: true })
     let err = ''
     child.stderr.on('data', (c: Buffer) => { err += c.toString() })
     const onAbort = () => child.kill()
@@ -97,42 +98,67 @@ async function cutOriginal(library: string, audioPath: string, preview: { start:
   return out
 }
 
-let inflight: AbortController | null = null
+// Processed chunks of an old look are pointless the moment the look changes: the editor bumps the generation and we abort them.
+let currentGeneration = 0
+const inflight = new Map<AbortController, number>()
+const MAX_CONCURRENT = 2
+let running = 0
+const queue: (() => void)[] = []
+const slot = () => new Promise<void>((res) => { if (running < MAX_CONCURRENT) { running++; res() } else queue.push(() => { running++; res() }) })
+const release = () => { running--; queue.shift()?.() }
 
-/** Render the processed excerpt and the original excerpt at the same loudness. A newer request cancels an older one. */
-export async function renderAudioPreview(library: string, audioPath: string, input: { start: number; seconds: number; look: LookPatch; matchLoudness?: boolean }): Promise<AudioPreviewResult> {
-  inflight?.abort()
+export function cancelAudioTiles(generation: number): void {
+  if (generation > currentGeneration) currentGeneration = generation
+  for (const [ac, gen] of inflight) if (gen > 0 && gen < currentGeneration) ac.abort()
+}
+
+/** Render one chunk: the raw original (cut only) or the processed audio with a warm-up pre-roll the player skips. */
+export async function renderAudioTile(library: string, audioPath: string, input: AudioTileInput): Promise<AudioTileResult> {
+  const gen = input.kind === 'processed' ? (input.generation ?? 0) : 0
+  if (gen) cancelAudioTiles(gen)
+  if (gen && gen < currentGeneration) return { ok: false, reason: 'CANCELLED', message: 'superseded' }
   const ac = new AbortController()
-  inflight = ac
-  const v = validateLook(input.look ?? {})
-  if (!v.ok) return { ok: false, reason: 'INVALID_LOOK', message: v.errors.map((e) => `${e.key}: ${e.message}`).join('\n') }
+  inflight.set(ac, gen)
+  await slot()
   try {
+    if (ac.signal.aborted) return { ok: false, reason: 'CANCELLED', message: 'superseded' }
     const h = host(library, ac.signal)
-    const preview = { start: Math.max(0, input.start), seconds: Math.min(Math.max(1, input.seconds), 600) }
-    const p = await processAudio({ audioPath, look: input.look, preview }, h)
-    if (!p.ok) return p
-    let original: AudioPreviewSide
-    if (input.matchLoudness) {
-      // the original with one fixed gain so it sits at the processed loudness: judge tone and noise, not volume
-      const o = await processAudio({ audioPath, preview, bypass: true, matchLufs: p.after.lufs }, h)
-      if (!o.ok) return o
-      original = side(o, await peaksOf(o.file, PEAK_BUCKETS, ac.signal))
-    } else {
-      // the original untouched: only cut to the same window
-      const file = await cutOriginal(library, audioPath, preview, ac.signal)
-      const [a, peaks] = await Promise.all([analyse(file, { ffmpegPath: h.ffmpegPath, signal: ac.signal }), peaksOf(file, PEAK_BUCKETS, ac.signal)])
-      original = { file, durationSec: a.durationSec, channels: a.channels, lufs: a.lufs, truePeak: a.truePeak, gainDb: 0, warnings: [], peaks }
+    const start = Math.max(0, input.start), seconds = Math.min(Math.max(0.5, input.seconds), 60)
+    if (input.kind === 'original') {
+      const file = await cutOriginal(library, audioPath, start, seconds, ac.signal)
+      const peaks = await peaksOf(file, TILE_PEAK_BUCKETS, ac.signal)
+      const tile: AudioTile = { kind: 'original', start, seconds, file, offset: 0, peaks, gainDb: 0, lufs: NaN, truePeak: NaN, channels: 1 }
+      return { ok: true, tile }
     }
-    const pp = await peaksOf(p.file, PEAK_BUCKETS, ac.signal)
-    return { ok: true, processed: side(p, pp), original }
+    const v = validateLook(input.look ?? {})
+    if (!v.ok) return { ok: false, reason: 'INVALID_LOOK', message: v.errors.map((e) => `${e.key}: ${e.message}`).join('\n') }
+    const pre = Math.min(TILE_PREROLL_S, start)
+    const r = await processAudio({ audioPath, look: input.look, preview: { start: start - pre, seconds: seconds + pre } }, h)
+    if (!r.ok) return r.reason === 'CANCELLED' ? { ok: false, reason: 'CANCELLED', message: 'superseded' } : r
+    const peaks = await peaksOf(r.file, TILE_PEAK_BUCKETS, ac.signal, pre)
+    const tile: AudioTile = { kind: 'processed', start, seconds, file: r.file, offset: pre, peaks, gainDb: r.gainDb, lufs: r.after.lufs, truePeak: r.after.truePeak, channels: r.after.channels }
+    return { ok: true, tile }
   } catch (e) {
     return { ok: false, reason: ac.signal.aborted ? 'CANCELLED' : 'PROCESS_FAILED', message: e instanceof Error ? e.message : String(e) }
   } finally {
-    if (inflight === ac) inflight = null
+    inflight.delete(ac)
+    release()
   }
 }
 
-export function cancelAudioPreview(): void { inflight?.abort(); inflight = null }
+/** Whole-recording envelope for the overview strip; decoded once per file identity and kept beside the previews. */
+export async function audioOverview(library: string, audioPath: string): Promise<AudioOverview> {
+  const st = await fs.stat(audioPath)
+  const key = createHash('sha1').update(`${audioPath}|${st.size}|${st.mtimeMs}|overview2`).digest('hex').slice(0, 20)
+  const dir = audioDir(library)
+  const sidecar = join(dir, `${key}-overview.json`)
+  try { return JSON.parse(await fs.readFile(sidecar, 'utf8')) as AudioOverview } catch { /* not yet */ }
+  const [a, peaks] = await Promise.all([analyseRecording(audioPath), peaksOf(audioPath, 2400)])
+  const out: AudioOverview = { durationSec: a.durationSec, lufs: a.lufs, peaks }
+  await fs.mkdir(dir, { recursive: true })
+  await fs.writeFile(sidecar, JSON.stringify(out))
+  return out
+}
 
 const analyses = new Map<string, Promise<AudioAnalysis>>()
 /** Full-recording analysis (loudness, peaks, hiss, rumble, clipping), cached per file identity for the session. */

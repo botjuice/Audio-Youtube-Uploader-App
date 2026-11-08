@@ -180,18 +180,28 @@ export type { LookPatch as AudioLookPatch, LookFieldInfo as AudioFieldInfo } fro
 export type { AudioAnalysis } from '../plugins/audio/types'
 /** The one audio look (a patch over the plugin's factory defaults) plus the editor's last sample. Editor only for now: uploads still use the original audio. */
 export interface AudioLookState { look: import('../plugins/audio/look').LookPatch; sample: { recordId: string; start: number } | null }
-export interface AudioPreviewInput {
-  recordId: string; start: number; seconds: number; look: import('../plugins/audio/look').LookPatch
-  /** true: the original gets one fixed gain to sit at the processed loudness (judge tone, not volume); false/absent: the original exactly as recorded */
-  matchLoudness?: boolean
+/** One 5 s chunk of the A/B stream. `processed` chunks are rendered by the plugin with a pre-roll (so filters are warm) that playback skips via `offset`. */
+export interface AudioTileInput {
+  recordId: string
+  kind: 'processed' | 'original'
+  start: number            // recording seconds, on the tile grid
+  seconds: number          // tile length
+  look?: import('../plugins/audio/look').LookPatch
+  /** processed only: bumped by the editor on every look change; older generations are cancelled */
+  generation?: number
 }
-export interface AudioPreviewSide {
-  file: string            // FLAC the plugin wrote; the window plays it through the yj-audio:// protocol
-  durationSec: number; channels: number; lufs: number; truePeak: number; gainDb: number; warnings: string[]
-  /** waveform envelope: [min, max] pairs in −1…1, interleaved */
-  peaks: number[]
+export interface AudioTile {
+  kind: 'processed' | 'original'
+  start: number; seconds: number
+  file: string             // FLAC; play through yj-audio://
+  offset: number           // seconds into the file where the tile really begins (pre-roll before it)
+  peaks: number[]          // [min, max] pairs over the tile only
+  gainDb: number           // gain the loudness stage applied to this chunk (0 for original)
+  lufs: number; truePeak: number; channels: number
 }
-export type AudioPreviewResult = { ok: true; processed: AudioPreviewSide; original: AudioPreviewSide } | { ok: false; reason: string; message: string }
+export type AudioTileResult = { ok: true; tile: AudioTile } | { ok: false; reason: string; message: string }
+/** Peak envelope of a whole recording, for the overview strip. */
+export interface AudioOverview { durationSec: number; lufs: number; peaks: number[] }
 
 /** Result of importing a thumbnail look file: the file (font paths already pointing at restored local copies) and what was adjusted. */
 export interface ImportedLook { file: import('../core/look-file').LookFile; notes: string[] }

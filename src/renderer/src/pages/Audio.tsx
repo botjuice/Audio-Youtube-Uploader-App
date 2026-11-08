@@ -1,7 +1,7 @@
 import { clsx } from 'clsx'
 import { AlertTriangle, AudioLines, Pause, Play, Repeat, RotateCcw, Save, Undo2, Waves } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AudioAnalysis, AudioLookPatch, AudioPreviewResult, AudioPreviewSide } from '@shared/types'
+import type { AudioAnalysis, AudioLookPatch, AudioOverview } from '@shared/types'
 import { countKnobs, getKnob, mergePatches, prunePatch, setKnob } from '@core/thumb-rules'
 import { DEFAULT_LOOK, LOOK_FIELDS, LOOK_PRESETS, REVERB_PRESETS, controllingToggle, describeLook, validateLook, type LookFieldInfo, type NumberField } from '../../../plugins/audio/look'
 import { Badge, Button, Select, Slider, Spinner, Switch, Empty } from '@/components/ui'
@@ -12,7 +12,6 @@ const audioUrl = (file: string) => `yj-audio://preview/?p=${encodeURIComponent(f
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 type Obj = Record<string, unknown>
-const PREVIEW_SECONDS = 45
 const GROUP_TITLES: Record<string, string> = { cleanup: 'Clean-up', tone: 'Tone (EQ)', dynamics: 'Compressor', reverb: 'Reverb', loudness: 'Loudness', limiter: 'Peak limiter', fades: 'Fades' }
 const prune = (patch: unknown): AudioLookPatch => prunePatch((patch ?? {}) as Obj, DEFAULT_LOOK as unknown as Obj) as AudioLookPatch
 const merge = (a: unknown, b: unknown): Obj => mergePatches(a as never, b as never) as unknown as Obj
@@ -27,30 +26,6 @@ const fromPos = (f: NumberField, p: number) => {
   if (f.scale !== 'log') return p
   const raw = Math.exp(Math.log(f.min) + (p / SLIDER_STEPS) * (Math.log(f.max) - Math.log(f.min)))
   return Math.min(f.max, Math.max(f.min, Math.round(raw / f.step) * f.step))
-}
-
-// ── preview hook: debounced, newest wins ──────────────────────────────────────
-
-function useAudioPreview(sample: { recordId: string; start: number }, look: AudioLookPatch, matchLoudness: boolean, enabled: boolean) {
-  const [result, setResult] = useState<AudioPreviewResult | null>(null)
-  const [rendering, setRendering] = useState(false)
-  const seq = useRef(0)
-  const key = JSON.stringify([sample, look, matchLoudness])
-  useEffect(() => {
-    if (!enabled || !sample.recordId) return
-    const mine = ++seq.current
-    setRendering(true)
-    const t = setTimeout(async () => {
-      let r: AudioPreviewResult
-      try { r = await window.api.renderAudioPreview({ recordId: sample.recordId, start: sample.start, seconds: PREVIEW_SECONDS, look, matchLoudness }) }
-      catch (e) { r = { ok: false, reason: 'RENDER_FAILED', message: errText(e) } }
-      if (mine !== seq.current) return                 // superseded by a newer knob change
-      if (!r.ok && r.reason === 'CANCELLED') return    // cancelled by that newer request
-      setResult(r); setRendering(false)
-    }, 500)
-    return () => clearTimeout(t)
-  }, [key, enabled])  // eslint-disable-line react-hooks/exhaustive-deps
-  return { result, rendering }
 }
 
 // ── page ──────────────────────────────────────────────────────────────────────
@@ -76,8 +51,7 @@ export default function AudioPage() {
   const dirty = JSON.stringify(look) !== JSON.stringify(prune(saved.look)) || JSON.stringify(sample) !== JSON.stringify(saved.sample ?? sample)
   const summary = validation.ok ? describeLook(validation.look) : 'fix the knobs marked below'
   const record = records.find((r) => r.id === sample.recordId)
-  const [matchLoudness, setMatchLoudness] = useState(false)
-  const { result, rendering } = useAudioPreview(sample, look, matchLoudness, validation.ok && !!record)
+  const setStart = (start: number) => setSample((s) => (Math.abs(s.start - start) < 0.01 ? s : { ...s, start }))
 
   const setKnobValue = (path: string, value: unknown) => {
     const def = getKnob(DEFAULT_LOOK, path)
@@ -167,16 +141,6 @@ export default function AudioPage() {
                 {records.map((r) => <option key={r.id} value={r.id}>{r.reciterFolder ? `${r.reciterFolder} / ` : ''}{r.fileName}</option>)}
               </Select>
             </label>
-            <label className="text-xs text-muted">
-              <div className="mb-1">Excerpt starts at</div>
-              <div className="flex items-center gap-1">
-                <Button size="sm" variant="subtle" onClick={() => setSample((s) => ({ ...s, start: Math.max(0, s.start - 60) }))}>−1 min</Button>
-                <input type="number" min={0} step={5} value={sample.start} onChange={(e) => setSample((s) => ({ ...s, start: Math.max(0, Number(e.target.value) || 0) }))}
-                  className="h-8 w-20 rounded-lg border border-border bg-surface px-2 text-center text-[13px] tabular-nums no-drag" />
-                <span className="text-[11px]">s</span>
-                <Button size="sm" variant="subtle" onClick={() => setSample((s) => ({ ...s, start: s.start + 60 }))}>+1 min</Button>
-              </div>
-            </label>
             <Button size="sm" variant="ghost" disabled={!record || analysing} onClick={analyse} title="Measure the whole recording: loudness, peaks, hiss, rumble, clipping"><Waves size={13} /> {analysing ? 'Analysing…' : analysis ? 'Re-analyse' : 'Analyse recording'}</Button>
           </div>
           {analysis && (
@@ -192,17 +156,7 @@ export default function AudioPage() {
             <div className="rounded-xl border border-err/40 bg-err/6 px-4 py-3 text-xs"><b>Some knobs are out of range:</b> {errors.map((e) => `${e.key}: ${e.message}`).join(' · ')}</div>
           )}
           {!record ? <Empty icon={<AudioLines size={28} />} title="Choose a recording" />
-            : result?.ok ? <AbPlayer processed={result.processed} original={result.original} startOffset={sample.start} stale={rendering} matchLoudness={matchLoudness} onMatchLoudness={setMatchLoudness} />
-            : result ? (
-              <div className="rounded-xl border border-warn/40 bg-warn/6 px-4 py-3 text-xs">
-                <div className="flex items-center gap-2 font-medium"><AlertTriangle size={14} /> Can't render ({result.reason})</div>
-                <div className="mt-1 whitespace-pre-wrap text-muted">{result.message}</div>
-              </div>
-            ) : (
-              <div className="flex h-56 items-center justify-center rounded-xl border border-border bg-surface text-xs text-muted">
-                {rendering ? <><Spinner className="mr-2 text-accent" /> Rendering a {PREVIEW_SECONDS} s excerpt…</> : 'Change a knob or pick a recording to hear it.'}
-              </div>
-            )}
+            : <Workbench key={record.id} recordId={record.id} look={look} lookOk={validation.ok} winStart={sample.start} onWinStart={setStart} />}
         </main>
       </div>
     </div>
@@ -258,122 +212,138 @@ function Knob({ info, look, resolved, errors, onChange }: { info: LookFieldInfo;
   )
 }
 
-// ── A/B transport: decoded buffers on one Web Audio clock ─────────────────────
+// ── Streaming A/B workbench ───────────────────────────────────────────────────
 //
-// Two <audio> elements would have to reload on every re-render (a gap, and a reload that resets the
-// position). Instead both excerpts are decoded once and played from AudioBufferSourceNodes started at
-// the same context time. A new render starts fresh sources at the exact current position and
-// crossfades them in over a few milliseconds while the old ones fade out; switching sides is a gain ramp.
+// The window is a 45 s slice of the recording, rendered as 5 s chunks on a fixed grid. Processed chunks
+// come from the plugin with a 4 s pre-roll (skipped on playback) so filters are warm at the join; the
+// original chunks are plain cuts. The chunk under the playhead renders first, then the ones ahead, so a
+// knob change is audible within about half a second and the rest fills in while you listen. All chunks
+// play from one Web Audio clock; a chunk that re-renders crossfades in at its exact position.
 
 type Side = 'original' | 'processed'
-interface Pair<T> { original: T; processed: T }
-interface Voice { src: AudioBufferSourceNode; gain: GainNode }
+const TILE = 5
+const WINDOW = 45
 const XFADE = 0.03
+const tileKey = (kind: Side, index: number) => `${kind}:${index}`
 
-class Transport {
+interface Loaded {
+  key: string; kind: Side; index: number; gen: number
+  buffer: AudioBuffer; offset: number; peaks: number[]; gainDb: number; lufs: number; truePeak: number; channels: number
+}
+interface Voice { src: AudioBufferSourceNode; gain: GainNode; tile: Loaded }
+
+class TileTransport {
   readonly ctx = new AudioContext()
-  private buffers: Pair<AudioBuffer> | null = null
-  private voices: Pair<Voice> | null = null
-  private startedAt = 0      // ctx time at which position 0 played (while playing)
-  private position = 0       // position while paused
-  playing = false
   side: Side = 'processed'
   loop = true
-  onEnded: (() => void) | null = null
+  playing = false
+  private startedAt = 0           // ctx time at which recording second 0 plays
+  private pos = 0                 // absolute recording seconds while paused
+  private win = { start: 0, end: WINDOW }
+  private tiles = new Map<string, Loaded>()
+  private voices = new Map<string, Voice>()
+  /** processed chunks are each levelled on their own; play them all at the gain of the first chunk of this look */
+  refGain: number | null = null
+  /** extra gain on the original side (loudness match), linear */
+  originalGain = 1
 
-  get duration(): number { return this.buffers ? Math.min(this.buffers.original.duration, this.buffers.processed.duration) : 0 }
-  get time(): number {
-    if (!this.playing || !this.buffers) return this.position
-    const t = this.ctx.currentTime - this.startedAt
-    return this.loop && this.duration > 0 ? t % this.duration : Math.min(t, this.duration)
+  get time(): number { return this.playing ? this.ctx.currentTime - this.startedAt : this.pos }
+
+  private linearGain(t: Loaded): number {
+    if (t.kind === 'original') return this.originalGain
+    return this.refGain === null ? 1 : Math.pow(10, (this.refGain - t.gainDb) / 20)
   }
+  private target(t: Loaded): number { return t.kind === this.side ? this.linearGain(t) : 0 }
 
-  private voice(buffer: AudioBuffer, audible: boolean, at: number, offset: number): Voice {
-    const src = this.ctx.createBufferSource()
-    src.buffer = buffer
-    src.loop = this.loop; src.loopStart = 0; src.loopEnd = this.duration
+  private schedule(t: Loaded, fadeIn: boolean): void {
+    const now = this.ctx.currentTime
+    const tileStart = t.index * TILE
+    const when = this.startedAt + tileStart
+    const lead = 0.005
+    let offset = t.offset, dur = Math.min(TILE, t.buffer.duration - t.offset)
+    let at = when
+    if (when < now + lead) { const skip = now + lead - when; offset += skip; dur -= skip; at = now + lead }
+    if (dur <= 0.01) return
+    const src = this.ctx.createBufferSource(); src.buffer = t.buffer
     const gain = this.ctx.createGain()
-    gain.gain.setValueAtTime(audible ? 1 : 0, at)
+    const g = this.target(t)
+    if (fadeIn) { gain.gain.setValueAtTime(0, at); gain.gain.linearRampToValueAtTime(g, at + XFADE) } else gain.gain.setValueAtTime(g, at)
     src.connect(gain).connect(this.ctx.destination)
-    src.start(at, offset)
-    return { src, gain }
+    src.start(at, offset, dur)
+    const v: Voice = { src, gain, tile: t }
+    src.onended = () => { if (this.voices.get(t.key) === v) this.voices.delete(t.key) }
+    this.voices.set(t.key, v)
   }
 
-  private startVoices(at: number, offset: number): Pair<Voice> {
-    const b = this.buffers!
-    const v = { original: this.voice(b.original, this.side === 'original', at, offset), processed: this.voice(b.processed, this.side === 'processed', at, offset) }
-    v[this.side].src.onended = () => { if (!this.loop && this.voices === v) { this.playing = false; this.position = 0; this.onEnded?.() } }
-    return v
+  private stop(v: Voice, fade: number): void {
+    const at = this.ctx.currentTime
+    v.src.onended = null
+    v.gain.gain.cancelScheduledValues(at); v.gain.gain.setValueAtTime(v.gain.gain.value, at); v.gain.gain.linearRampToValueAtTime(0, at + fade)
+    try { v.src.stop(at + fade + 0.01) } catch { /* already stopped */ }
   }
 
-  private stopVoices(v: Pair<Voice>, at: number, fade: number): void {
-    for (const side of ['original', 'processed'] as const) {
-      const { src, gain } = v[side]
-      src.onended = null
-      gain.gain.cancelScheduledValues(at); gain.gain.setValueAtTime(gain.gain.value, at); gain.gain.linearRampToValueAtTime(0, at + fade)
-      try { src.stop(at + fade + 0.01) } catch { /* already stopped */ }
+  private inWindow(t: Loaded): boolean { const s = t.index * TILE; return s < this.win.end && s + TILE > this.win.start }
+
+  /** Replace the chunk set. New or re-rendered chunks in the window start at their exact position (crossfading over a stale one); chunks that left the window stop. */
+  setTiles(next: Map<string, Loaded>): void {
+    for (const [key, v] of [...this.voices]) {
+      const t = next.get(key)
+      if (!t || !this.inWindow(t)) { this.stop(v, 0.01); this.voices.delete(key) }
     }
+    if (this.playing) {
+      for (const t of next.values()) {
+        if (!this.inWindow(t)) continue
+        const live = this.voices.get(t.key)
+        if (live && live.tile === t) continue
+        if (live) this.stop(live, XFADE)
+        this.schedule(t, !!live)
+      }
+    }
+    this.tiles = next
   }
 
-  /** New render: keep playing without a gap — the new voices start at the current position and crossfade in. */
-  load(buffers: Pair<AudioBuffer>): void {
-    const wasPlaying = this.playing
-    const pos = this.time
-    const old = this.voices
-    this.buffers = buffers
-    this.position = Math.min(pos, Math.max(0, this.duration - 0.05))
-    if (wasPlaying) {
-      const at = this.ctx.currentTime + 0.005
-      const v = this.startVoices(at, this.position)
-      v[this.side].gain.gain.setValueAtTime(0, at); v[this.side].gain.gain.linearRampToValueAtTime(1, at + XFADE)
-      if (old) this.stopVoices(old, at, XFADE)
-      this.voices = v
-      this.startedAt = at - this.position
-    } else if (old) { this.stopVoices(old, this.ctx.currentTime, 0.005); this.voices = null }
+  setWindow(start: number): void {
+    this.win = { start, end: start + WINDOW }
+    if (this.time < start || this.time >= start + WINDOW) this.seek(start)
+    else this.setTiles(this.tiles)
   }
 
   async play(): Promise<void> {
-    if (!this.buffers || this.playing) return
+    if (this.playing) return
     await this.ctx.resume()
-    const at = this.ctx.currentTime + 0.005
-    this.voices = this.startVoices(at, this.position)
-    this.startedAt = at - this.position
+    if (this.pos < this.win.start || this.pos >= this.win.end) this.pos = this.win.start
+    this.startedAt = this.ctx.currentTime + 0.005 - this.pos
     this.playing = true
+    for (const t of this.tiles.values()) if (this.inWindow(t)) this.schedule(t, false)
   }
 
   pause(): void {
     if (!this.playing) return
-    this.position = this.time
-    if (this.voices) this.stopVoices(this.voices, this.ctx.currentTime, 0.008)
-    this.voices = null
+    this.pos = this.time
+    for (const v of this.voices.values()) this.stop(v, 0.008)
+    this.voices.clear()
     this.playing = false
   }
 
   seek(t: number): void {
-    const c = Math.min(Math.max(0, t), Math.max(0, this.duration - 0.05))
-    if (!this.playing) { this.position = c; return }
-    const at = this.ctx.currentTime + 0.005
-    if (this.voices) this.stopVoices(this.voices, at, 0.008)
-    this.voices = this.startVoices(at, c)
-    this.startedAt = at - c
+    const c = Math.min(Math.max(this.win.start, t), this.win.end - 0.05)
+    if (!this.playing) { this.pos = c; return }
+    for (const v of this.voices.values()) this.stop(v, 0.008)
+    this.voices.clear()
+    this.startedAt = this.ctx.currentTime + 0.005 - c
+    for (const tile of this.tiles.values()) if (this.inWindow(tile)) this.schedule(tile, false)
   }
 
-  setSide(side: Side): void {
-    this.side = side
-    if (!this.voices) return
+  /** Called from the display loop: wrap at the window end. */
+  tick(): void { if (this.playing && this.time >= this.win.end) { if (this.loop) this.seek(this.win.start); else this.pause() } }
+
+  private retarget(): void {
     const at = this.ctx.currentTime
-    for (const s of ['original', 'processed'] as const) {
-      const g = this.voices[s].gain.gain
-      g.cancelScheduledValues(at); g.setValueAtTime(g.value, at); g.linearRampToValueAtTime(s === side ? 1 : 0, at + 0.015)
-      this.voices[s].src.onended = s === side ? () => { if (!this.loop && this.voices) { this.playing = false; this.position = 0; this.onEnded?.() } } : null
-    }
+    for (const v of this.voices.values()) { const g = v.gain.gain; g.cancelScheduledValues(at); g.setValueAtTime(g.value, at); g.linearRampToValueAtTime(this.target(v.tile), at + 0.015) }
   }
-
-  setLoop(loop: boolean): void {
-    this.loop = loop
-    if (this.voices) for (const s of ['original', 'processed'] as const) this.voices[s].src.loop = loop
-  }
-
+  setSide(side: Side): void { this.side = side; this.retarget() }
+  setOriginalGain(g: number): void { this.originalGain = g; this.retarget() }
+  setRefGain(g: number | null): void { this.refGain = g; this.retarget() }
   dispose(): void { this.pause(); void this.ctx.close() }
 }
 
@@ -384,100 +354,180 @@ function decode(ctx: AudioContext, file: string): Promise<AudioBuffer> {
     p = fetch(audioUrl(file)).then((r) => { if (!r.ok) throw new Error(`Could not load ${file.split('/').pop()} (${r.status})`); return r.arrayBuffer() }).then((ab) => ctx.decodeAudioData(ab))
     decoded.set(file, p)
     p.catch(() => decoded.delete(file))
-    if (decoded.size > 12) decoded.delete(decoded.keys().next().value!)   // the plugin caches files; we keep a few decodes around for quick A/B of knob states
+    if (decoded.size > 64) decoded.delete(decoded.keys().next().value!)
   }
   return p
 }
 
-function AbPlayer({ processed, original, startOffset, stale, matchLoudness, onMatchLoudness }: { processed: AudioPreviewSide; original: AudioPreviewSide; startOffset: number; stale: boolean; matchLoudness: boolean; onMatchLoudness: (v: boolean) => void }) {
+function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId: string; look: AudioLookPatch; lookOk: boolean; winStart: number; onWinStart: (s: number) => void }) {
   const notify = useStore((s) => s.notify)
-  const tRef = useRef<Transport | null>(null)
-  const transport = () => (tRef.current ??= new Transport())
+  const tRef = useRef<TileTransport | null>(null)
+  const transport = () => (tRef.current ??= new TileTransport())
+  useEffect(() => () => { tRef.current?.dispose(); tRef.current = null }, [])
+
+  const [overview, setOverview] = useState<AudioOverview | null>(null)
+  useEffect(() => {
+    let live = true
+    window.api.getAudioOverview(recordId).then((o) => { if (live) setOverview(o) }).catch((e) => { if (live) notify('error', errText(e)) })
+    return () => { live = false }
+  }, [recordId])  // eslint-disable-line react-hooks/exhaustive-deps
+  const duration = overview?.durationSec ?? Infinity
+  const maxStart = Math.max(0, (Number.isFinite(duration) ? duration : winStart + WINDOW) - WINDOW)
+  useEffect(() => { if (winStart > maxStart) onWinStart(Math.max(0, Math.floor(maxStart))) }, [maxStart])  // eslint-disable-line react-hooks/exhaustive-deps
+
   const [which, setWhich] = useState<Side>('processed')
   const [playing, setPlaying] = useState(false)
   const [loop, setLoop] = useState(true)
-  const [time, setTime] = useState(0)
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const [duration, setDuration] = useState(Math.min(processed.durationSec, original.durationSec) || processed.durationSec)
-  useEffect(() => () => { tRef.current?.dispose(); tRef.current = null }, [])
+  const [time, setTime] = useState(winStart)
+  const [matchLoudness, setMatchLoudness] = useState(false)
+  const [tiles, setTiles] = useState<Map<string, Loaded>>(() => new Map())
+  const [tick, setTick] = useState(0)
+  const genRef = useRef(1)
+  const lookKey = JSON.stringify(look)
+  const inflight = useRef(new Set<string>())
+  const failed = useRef(new Map<string, string>())
+  const refGainRef = useRef<number | null>(null)
 
-  // Decode the new pair and hand it to the transport (which keeps playing through the swap). Newest wins.
-  const loadSeq = useRef(0)
+  // look changed → new generation: processed chunks become stale (kept playing until replaced), old renders cancelled
   useEffect(() => {
-    const t = transport(), mine = ++loadSeq.current
-    let live = true
-    setLoading(true); setLoadError(null)
-    Promise.all([decode(t.ctx, original.file), decode(t.ctx, processed.file)]).then(([o, p]) => {
-      if (!live || mine !== loadSeq.current) return
-      t.load({ original: o, processed: p })
-      setDuration(t.duration); setTime(t.time); setLoading(false)
-    }).catch((e) => { if (live && mine === loadSeq.current) { setLoading(false); setLoadError(errText(e)); notify('error', errText(e)) } })
-    return () => { live = false }
-  }, [original.file, processed.file])  // eslint-disable-line react-hooks/exhaustive-deps
+    genRef.current++
+    refGainRef.current = null
+    transport().setRefGain(null)
+    for (const k of [...failed.current.keys()]) if (k.startsWith('processed:')) failed.current.delete(k)
+    void window.api.cancelAudioTiles(genRef.current)
+    setTick((n) => n + 1)
+  }, [lookKey])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { transport().onEnded = () => { setPlaying(false); setTime(0) } }, [])
-  useEffect(() => {   // clock display while playing
-    if (!playing) return
+  useEffect(() => { transport().setWindow(winStart); setTime(transport().time) }, [winStart])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { transport().setTiles(tiles) }, [tiles])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const t = transport()
+    const resolved = merge(DEFAULT_LOOK, look) as { loudness?: { enabled?: boolean; target?: number } }
+    const target = resolved.loudness?.enabled === false ? null : resolved.loudness?.target ?? null
+    t.setOriginalGain(matchLoudness && overview && target !== null && Number.isFinite(overview.lufs) ? Math.pow(10, (target - overview.lufs) / 20) : 1)
+  }, [matchLoudness, overview, lookKey])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Scheduler: which chunks the window needs, nearest to the playhead first, then ahead, then behind.
+  const first = Math.floor(winStart / TILE), last = Math.floor((winStart + WINDOW - 0.001) / TILE)
+  const playIndex = Math.floor(time / TILE)
+  useEffect(() => {
+    if (!lookOk) return
+    const centre = Math.min(last, Math.max(first, playIndex))
+    const order: number[] = [centre]
+    for (let d = 1; order.length < last - first + 1; d++) { if (centre + d <= last) order.push(centre + d); if (centre - d >= first) order.push(centre - d) }
+    const gen = genRef.current
+    const want: { kind: Side; index: number }[] = []
+    for (const index of order) {
+      if (Number.isFinite(duration) && index * TILE >= duration) continue
+      for (const kind of ['processed', 'original'] as const) {
+        const key = tileKey(kind, index), have = tiles.get(key)
+        const fresh = have && (kind === 'original' || have.gen === gen)
+        if (!fresh && !inflight.current.has(key) && !failed.current.has(key)) want.push({ kind, index })
+      }
+    }
+    const budget = 2 - inflight.current.size
+    for (const w of want.slice(0, Math.max(0, budget))) {
+      const key = tileKey(w.kind, w.index)
+      inflight.current.add(key)
+      const start = w.index * TILE
+      window.api.renderAudioTile({ recordId, kind: w.kind, start, seconds: TILE, ...(w.kind === 'processed' ? { look, generation: gen } : {}) })
+        .then(async (r) => {
+          if (!r.ok) { if (r.reason !== 'CANCELLED') failed.current.set(key, r.message); return }
+          if (w.kind === 'processed' && gen !== genRef.current) return
+          const buffer = await decode(transport().ctx, r.tile.file)
+          if (w.kind === 'processed' && gen !== genRef.current) return
+          const loaded: Loaded = { key, kind: w.kind, index: w.index, gen, buffer, offset: r.tile.offset, peaks: r.tile.peaks, gainDb: r.tile.gainDb, lufs: r.tile.lufs, truePeak: r.tile.truePeak, channels: r.tile.channels }
+          if (w.kind === 'processed' && refGainRef.current === null) { refGainRef.current = r.tile.gainDb; transport().setRefGain(r.tile.gainDb) }
+          setTiles((prev) => { const next = new Map(prev); next.set(key, loaded); return next })
+        })
+        .catch((e) => failed.current.set(key, errText(e)))
+        .finally(() => { inflight.current.delete(key); setTick((n) => n + 1) })
+    }
+  }, [recordId, lookKey, lookOk, first, last, playIndex, tiles, tick, duration])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Display clock + loop at the window end; drop chunks far outside the window to keep memory bounded.
+  useEffect(() => {
     let raf = 0
-    const tick = () => { setTime(transport().time); raf = requestAnimationFrame(tick) }
-    raf = requestAnimationFrame(tick)
+    const step = () => { const t = transport(); t.tick(); setTime(t.time); if (!t.playing) setPlaying(false); raf = requestAnimationFrame(step) }
+    raf = requestAnimationFrame(step)
     return () => cancelAnimationFrame(raf)
-  }, [playing])
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setTiles((prev) => {
+      let changed = false; const next = new Map(prev)
+      for (const [k, t] of prev) if (t.index < first - 6 || t.index > last + 6) { next.delete(k); changed = true }
+      return changed ? next : prev
+    })
+  }, [first, last])
 
   const play = () => void transport().play().then(() => setPlaying(transport().playing))
   const pause = () => { transport().pause(); setPlaying(false); setTime(transport().time) }
   const seek = (t: number) => { transport().seek(t); setTime(transport().time) }
   const pick = (s: Side) => { transport().setSide(s); setWhich(s) }
-  const toggleLoop = () => setLoop((l) => { transport().setLoop(!l); return !l })
+  const toggleLoop = () => setLoop((l) => { transport().loop = !l; return !l })
+  const moveWindow = (start: number) => onWinStart(Math.round(Math.min(maxStart, Math.max(0, start)) * 10) / 10)
+  const onWheel = (e: React.WheelEvent) => { const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY; if (d) moveWindow(winStart + d * 0.05) }
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
       if (e.key === ' ') { e.preventDefault(); playing ? pause() : play() }
       else if (e.key.toLowerCase() === 's') pick(which === 'original' ? 'processed' : 'original')
+      else if (e.key === 'ArrowLeft') moveWindow(winStart - (e.shiftKey ? 30 : 5))
+      else if (e.key === 'ArrowRight') moveWindow(winStart + (e.shiftKey ? 30 : 5))
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   })  // eslint-disable-line react-hooks/exhaustive-deps
 
-  const audible = which === 'processed' ? processed : original
+  const gen = genRef.current
+  const ready = { processed: 0, original: 0, stale: 0 }
+  for (let i = first; i <= last; i++) {
+    const p = tiles.get(tileKey('processed', i)), o = tiles.get(tileKey('original', i))
+    if (p) { if (p.gen === gen) ready.processed++; else ready.stale++ }
+    if (o) ready.original++
+  }
+  const total = last - first + 1
+  const cur = tiles.get(tileKey('processed', Math.min(last, Math.max(first, playIndex))))
+  const refGain = refGainRef.current
+  const procLufs = cur ? cur.lufs + (refGain === null ? 0 : refGain - cur.gainDb) : null
+  const firstFailure = [...failed.current.entries()].find(([k]) => { const i = Number(k.split(':')[1]); return i >= first && i <= last })
+
   return (
     <div className="rounded-xl border border-border bg-surface">
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
-        <Button size="sm" onClick={playing ? pause : play} disabled={(loading || !!loadError) && !playing}>{playing ? <Pause size={14} /> : <Play size={14} />} {playing ? 'Pause' : 'Play'}</Button>
+        <Button size="sm" onClick={playing ? pause : play}>{playing ? <Pause size={14} /> : <Play size={14} />} {playing ? 'Pause' : 'Play'}</Button>
         <div className="inline-flex overflow-hidden rounded-lg border border-border text-xs">
           {(['original', 'processed'] as const).map((w) => (
             <button key={w} type="button" onClick={() => pick(w)} className={clsx('px-3 h-8 no-drag transition-colors', which === w ? 'bg-accent/15 text-accent font-medium' : 'text-muted hover:text-text')}>{w === 'original' ? 'Original' : 'Processed'}</button>
           ))}
         </div>
-        <button type="button" onClick={toggleLoop} className={clsx('inline-flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs no-drag', loop ? 'border-accent/40 text-accent bg-accent/10' : 'border-border text-muted')} title="Loop the excerpt"><Repeat size={13} /> Loop</button>
-        <span className="text-xs tabular-nums text-muted">{fmtTime(startOffset + time)} / {fmtTime(startOffset + duration)}</span>
-        <label className="inline-flex h-8 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-muted" title="Off: the original plays exactly as recorded. On: the original gets one fixed gain so it sits at the processed loudness — louder never sounds better, so you judge tone and noise alone. The final clip is not affected either way.">
-          <Switch checked={matchLoudness} onChange={onMatchLoudness} label="Match loudness" /> Match loudness
+        <button type="button" onClick={toggleLoop} className={clsx('inline-flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs no-drag', loop ? 'border-accent/40 text-accent bg-accent/10' : 'border-border text-muted')} title="Loop the window"><Repeat size={13} /> Loop</button>
+        <span className="text-xs tabular-nums text-muted">{fmtTime(time)} · window {fmtTime(winStart)}–{fmtTime(winStart + WINDOW)}{Number.isFinite(duration) ? ` of ${fmtTime(duration)}` : ''}</span>
+        <label className="inline-flex h-8 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-muted" title="Off: the original plays exactly as recorded. On: the original gets one fixed gain so it sits at the look's target loudness — louder never sounds better, so you judge tone and noise alone. The final clip is not affected either way.">
+          <Switch checked={matchLoudness} onChange={setMatchLoudness} label="Match loudness" disabled={!overview} /> Match loudness
         </label>
-        {(stale || loading) && <span className="inline-flex items-center gap-1 text-xs text-muted"><Spinner className="text-accent" /> {stale ? 'rendering the new knobs…' : 'loading…'}</span>}
-        {loadError && !loading && <span className="inline-flex items-center gap-1 text-xs text-err"><AlertTriangle size={13} /> {loadError}</span>}
-        <span className="ml-auto text-[11px] text-muted">Space = play/pause · S = switch · both lanes share one clock</span>
+        {ready.processed < total && lookOk && <span className="inline-flex items-center gap-1 text-xs text-muted"><Spinner className="text-accent" /> {ready.processed}/{total} chunks{ready.stale ? ` · ${ready.stale} from the previous knobs still playing` : ''}</span>}
+        <span className="ml-auto text-[11px] text-muted">Space play · S switch · ←/→ move · scroll over the lanes</span>
       </div>
-      <div className={clsx('px-4 py-3 space-y-2 transition-opacity', stale && 'opacity-80')}>
-        <Lane label="Original" side={original} active={which === 'original'} time={time} duration={duration} onSeek={seek} onPick={() => pick('original')} />
-        <Lane label="Processed" side={processed} active={which === 'processed'} time={time} duration={duration} onSeek={seek} onPick={() => pick('processed')} />
-        <TimeAxis startOffset={startOffset} duration={duration} />
+      <div className="px-4 py-3 space-y-2" onWheel={onWheel}>
+        <Lane label="Original" kind="original" tiles={tiles} gen={gen} active={which === 'original'} time={time} winStart={winStart} onSeek={seek} onPick={() => pick('original')} />
+        <Lane label="Processed" kind="processed" tiles={tiles} gen={gen} active={which === 'processed'} time={time} winStart={winStart} onSeek={seek} onPick={() => pick('processed')} />
+        <TimeAxis startOffset={winStart} duration={WINDOW} />
+        <Overview overview={overview} winStart={winStart} time={time} onMove={moveWindow} />
       </div>
       <div className="grid grid-cols-2 gap-x-6 gap-y-1 border-t border-border px-4 py-3 text-xs sm:grid-cols-4">
-        <Stat label={matchLoudness ? 'Loudness (original matched)' : 'Loudness'} value={`${audible.lufs.toFixed(1)} LUFS`}
-          hint={matchLoudness ? `original raised to ${original.lufs.toFixed(1)} · processed ${processed.lufs.toFixed(1)}` : `original ${original.lufs.toFixed(1)} · processed ${processed.lufs.toFixed(1)} (${db(processed.lufs - original.lufs, 'LU')})`} />
-        <Stat label="True peak" value={db(audible.truePeak, 'dBTP')} hint={`original ${db(original.truePeak, '')} · processed ${db(processed.truePeak, '')}`} />
-        <Stat label="Gain applied" value={db(processed.gainDb)} hint="by the loudness stage" />
-        <Stat label="Channels" value={processed.channels === 2 ? 'stereo' : 'mono'} hint={processed.channels === 2 ? 'reverb makes it stereo' : undefined} />
-        {(processed.warnings.length > 0 || original.warnings.length > 0) && <div className="col-span-full text-[11px] text-warn">{[...processed.warnings, ...original.warnings].join(' · ')}</div>}
+        <Stat label="Processed loudness" value={procLufs !== null && Number.isFinite(procLufs) ? `${procLufs.toFixed(1)} LUFS` : '—'} hint="at the playhead, all chunks at one gain" />
+        <Stat label="Original loudness" value={overview && Number.isFinite(overview.lufs) ? `${overview.lufs.toFixed(1)} LUFS` : '—'} hint={matchLoudness ? 'raised to the target while matching' : 'whole recording, as recorded'} />
+        <Stat label="Gain applied" value={refGain === null ? '—' : db(refGain)} hint="by the loudness stage" />
+        <Stat label="Channels" value={cur ? (cur.channels === 2 ? 'stereo' : 'mono') : '—'} hint={cur?.channels === 2 ? 'reverb makes it stereo' : undefined} />
+        {firstFailure && <div className="col-span-full flex items-center gap-1 text-[11px] text-warn"><AlertTriangle size={12} /> A chunk could not be rendered: {firstFailure[1]}</div>}
       </div>
     </div>
   )
 }
 
-function Lane({ label, side, active, time, duration, onSeek, onPick }: { label: string; side: AudioPreviewSide; active: boolean; time: number; duration: number; onSeek: (t: number) => void; onPick: () => void }) {
+function Lane({ label, kind, tiles, gen, active, time, winStart, onSeek, onPick }: { label: string; kind: Side; tiles: Map<string, Loaded>; gen: number; active: boolean; time: number; winStart: number; onSeek: (t: number) => void; onPick: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
     const c = ref.current; if (!c) return
@@ -489,25 +539,76 @@ function Lane({ label, side, active, time, duration, onSeek, onPick }: { label: 
     ctx.clearRect(0, 0, w, h)
     const cs = getComputedStyle(c)
     const colour = active ? cs.getPropertyValue('--accent').trim() || '#6366f1' : cs.getPropertyValue('--muted').trim() || '#64748b'
-    const n = side.peaks.length / 2, mid = h / 2
-    ctx.fillStyle = colour
-    ctx.globalAlpha = active ? 0.95 : 0.55
-    for (let i = 0; i < n; i++) {
-      const x = (i / n) * w
-      const min = side.peaks[i * 2]!, max = side.peaks[i * 2 + 1]!
-      const y1 = mid - max * (mid - 1), y2 = mid - min * (mid - 1)
-      ctx.fillRect(x, y1, Math.max(1, w / n), Math.max(1, y2 - y1))
+    const mid = h / 2, pxPerSec = w / WINDOW
+    const first = Math.floor(winStart / TILE), last = Math.floor((winStart + WINDOW - 0.001) / TILE)
+    for (let i = first; i <= last; i++) {
+      const t = tiles.get(tileKey(kind, i))
+      const x0 = (i * TILE - winStart) * pxPerSec, tw = TILE * pxPerSec
+      if (!t) {   // not rendered yet: hatched
+        ctx.save(); ctx.beginPath(); ctx.rect(Math.max(0, x0), 0, Math.min(w, x0 + tw) - Math.max(0, x0), h); ctx.clip()
+        ctx.strokeStyle = colour; ctx.globalAlpha = 0.15; ctx.lineWidth = 1
+        for (let x = x0 - h; x < x0 + tw; x += 8) { ctx.beginPath(); ctx.moveTo(x, h); ctx.lineTo(x + h, 0); ctx.stroke() }
+        ctx.restore(); continue
+      }
+      const stale = kind === 'processed' && t.gen !== gen
+      ctx.fillStyle = colour
+      ctx.globalAlpha = (active ? 0.95 : 0.55) * (stale ? 0.45 : 1)
+      const n = t.peaks.length / 2, bw = tw / n
+      for (let b = 0; b < n; b++) {
+        const x = x0 + b * bw
+        if (x + bw < 0 || x > w) continue
+        const min = t.peaks[b * 2]!, max = t.peaks[b * 2 + 1]!
+        const y1 = mid - max * (mid - 1), y2 = mid - min * (mid - 1)
+        ctx.fillRect(x, y1, Math.max(1, bw), Math.max(1, y2 - y1))
+      }
     }
     ctx.globalAlpha = 1
-    const px = duration ? (time / duration) * w : 0
     ctx.fillStyle = cs.getPropertyValue('--text').trim() || '#fff'
-    ctx.fillRect(px - 0.5, 0, 1, h)
-  }, [side.peaks, active, time, duration])
+    ctx.fillRect((time - winStart) * pxPerSec - 0.5, 0, 1, h)
+  }, [tiles, gen, kind, active, time, winStart])
   return (
     <div className={clsx('relative rounded-lg border', active ? 'border-accent/50 bg-accent/5' : 'border-border bg-surface-2/40')}>
       <button type="button" onClick={onPick} className={clsx('absolute left-2 top-1.5 z-10 rounded px-1.5 text-[10.5px] no-drag', active ? 'bg-accent text-white' : 'bg-surface text-muted hover:text-text')}>{label}{active ? ' · playing' : ''}</button>
       <canvas ref={ref} className="block h-24 w-full cursor-crosshair"
-        onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); onSeek(((e.clientX - r.left) / r.width) * duration) }} />
+        onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); onSeek(winStart + ((e.clientX - r.left) / r.width) * WINDOW) }} />
+    </div>
+  )
+}
+
+/** The whole recording with the window on it: drag the window, click to centre it there. */
+function Overview({ overview, winStart, time, onMove }: { overview: AudioOverview | null; winStart: number; time: number; onMove: (start: number) => void }) {
+  const ref = useRef<HTMLCanvasElement>(null)
+  const drag = useRef<{ grabOffset: number } | null>(null)
+  const dur = overview?.durationSec ?? 0
+  useEffect(() => {
+    const c = ref.current; if (!c) return
+    const dpr = window.devicePixelRatio || 1
+    const w = c.clientWidth, h = c.clientHeight
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr)
+    const ctx = c.getContext('2d'); if (!ctx) return
+    ctx.scale(dpr, dpr)
+    ctx.clearRect(0, 0, w, h)
+    const cs = getComputedStyle(c)
+    const muted = cs.getPropertyValue('--muted').trim() || '#64748b', accent = cs.getPropertyValue('--accent').trim() || '#6366f1'
+    if (!overview) return
+    const n = overview.peaks.length / 2, mid = h / 2
+    ctx.fillStyle = muted; ctx.globalAlpha = 0.6
+    for (let i = 0; i < n; i++) { const x = (i / n) * w; const min = overview.peaks[i * 2]!, max = overview.peaks[i * 2 + 1]!; ctx.fillRect(x, mid - max * (mid - 1), Math.max(1, w / n), Math.max(1, (max - min) * (mid - 1))) }
+    ctx.globalAlpha = 1
+    const x0 = (winStart / dur) * w, x1 = ((winStart + WINDOW) / dur) * w
+    ctx.fillStyle = accent; ctx.globalAlpha = 0.18; ctx.fillRect(x0, 0, x1 - x0, h); ctx.globalAlpha = 0.9
+    ctx.strokeStyle = accent; ctx.lineWidth = 1.5; ctx.strokeRect(x0 + 0.75, 0.75, x1 - x0 - 1.5, h - 1.5)
+    ctx.fillStyle = cs.getPropertyValue('--text').trim() || '#fff'; ctx.fillRect((time / dur) * w - 0.5, 0, 1, h)
+  }, [overview, winStart, time, dur])
+  const secAt = (e: React.PointerEvent) => { const r = e.currentTarget.getBoundingClientRect(); return ((e.clientX - r.left) / r.width) * dur }
+  return (
+    <div className="relative">
+      <canvas ref={ref} className={clsx('block h-10 w-full rounded-md border border-border bg-surface-2/40', dur ? 'cursor-grab active:cursor-grabbing' : '')}
+        onPointerDown={(e) => { if (!dur) return; const s = secAt(e); const inside = s >= winStart && s <= winStart + WINDOW; drag.current = { grabOffset: inside ? s - winStart : WINDOW / 2 }; e.currentTarget.setPointerCapture(e.pointerId); onMove(s - drag.current.grabOffset) }}
+        onPointerMove={(e) => { if (drag.current && dur) onMove(secAt(e) - drag.current.grabOffset) }}
+        onPointerUp={() => { drag.current = null }} onPointerCancel={() => { drag.current = null }} />
+      {!overview && <div className="absolute inset-0 flex items-center justify-center text-[11px] text-muted"><Spinner className="mr-1 text-accent" /> reading the whole recording…</div>}
+      {overview && <div className="pointer-events-none absolute right-1.5 top-0.5 text-[10px] tabular-nums text-muted">whole recording · drag the window</div>}
     </div>
   )
 }

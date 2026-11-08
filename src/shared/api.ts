@@ -1,5 +1,5 @@
 import type {
-  ActivityEntry, AudioAnalysis, AudioLookState, AudioPreviewInput, AudioPreviewResult, Health, KeywordDef, LibraryRecord, NewReciter, Playlist, PlaylistRule, Privacy, Progress,
+  ActivityEntry, AudioAnalysis, AudioLookState, AudioOverview, AudioTileInput, AudioTileResult, Health, KeywordDef, LibraryRecord, NewReciter, Playlist, PlaylistRule, Privacy, Progress,
   CustomFont, ImportedLook, ReciterInfo, ReciterPatch, RecordPatch, RulePhoto, Settings, StylePatch, StyleRenderInput, StyleSchemaInfo, SurahOption, ThumbnailPreview, ThumbnailRule, TokenValidation, UpdateState,
 } from './types'
 
@@ -53,8 +53,9 @@ export interface Api {
   syncWithYouTube(): Promise<SyncResult>
   // audio editor
   setAudioLook(state: AudioLookState): Promise<void>
-  renderAudioPreview(input: AudioPreviewInput): Promise<AudioPreviewResult>   // processed + original excerpt at the same loudness, with waveform peaks
-  cancelAudioPreview(): Promise<void>
+  renderAudioTile(input: AudioTileInput): Promise<AudioTileResult>   // one 5 s chunk (processed with warm-up pre-roll, or the raw original), with peaks
+  cancelAudioTiles(generation: number): Promise<void>                 // stop rendering processed chunks older than this generation
+  getAudioOverview(recordId: string): Promise<AudioOverview>          // whole-recording waveform for the window strip (cached)
   analyseAudio(recordId: string): Promise<AudioAnalysis>
   // thumbnails
   previewThumbnail(recordId: string): Promise<ThumbnailPreview>
