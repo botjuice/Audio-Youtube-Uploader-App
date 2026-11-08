@@ -1,5 +1,5 @@
 import { clsx } from 'clsx'
-import { AlertTriangle, AudioLines, ChevronsRight, Pause, Play, Repeat, RotateCcw, Save, Undo2, Waves } from 'lucide-react'
+import { AlertTriangle, AudioLines, ChevronsRight, Keyboard, Pause, Play, Repeat, RotateCcw, Save, Undo2, Waves } from 'lucide-react'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AudioAnalysis, AudioLook, AudioOverview } from '@shared/types'
 import { EQ_BANDS, KNOBS, MODULE_ORDER, MODULE_TITLES, SIGNAL_FLOW, countOn, defaultModules, fromLook, toLook, type EqState, type Knob, type ModuleKey, type Modules, type StripKey } from '@core/audio-modules'
@@ -88,7 +88,7 @@ export default function AudioPage() {
       </div>
       <div className="flex min-h-0 flex-1">
         {/* left: the channel strip, simplest module first */}
-        <aside className="w-[420px] shrink-0 overflow-y-auto border-r border-border">
+        <aside className="w-[clamp(300px,34%,420px)] shrink-0 overflow-y-auto border-r border-border">
           <div className="border-b border-border px-4 py-3 text-[11px] leading-snug text-muted">
             <div><span className="font-medium text-text">Signal flow:</span> {SIGNAL_FLOW}.</div>
             <div className="mt-1">Every knob is a raw ffmpeg setting shown in studio units; the EQ sits under the waveforms. Editor only for now: uploads keep the original audio.</div>
@@ -119,7 +119,7 @@ export default function AudioPage() {
             <Button size="sm" variant="ghost" disabled={!record || analysing} onClick={analyse} title="Measure the whole recording: loudness, peaks, hiss, rumble, clipping"><Waves size={13} /> {analysing ? 'Analysing…' : analysis ? 'Re-analyse' : 'Analyse recording'}</Button>
           </div>
           {analysis && (
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-xl border border-border bg-surface px-4 py-3 text-xs sm:grid-cols-4">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-x-4 gap-y-2 rounded-xl border border-border bg-surface px-4 py-3 text-xs">
               <Stat label="Length" value={fmtTime(analysis.durationSec)} />
               <Stat label="Loudness" value={`${analysis.lufs.toFixed(1)} LUFS`} hint={`range ${analysis.lra.toFixed(1)} LU`} />
               <Stat label="True peak" value={db(analysis.truePeak, 'dBTP')} hint={analysis.clipped ? 'clipped' : `${analysis.hotSamplesPct.toFixed(3)} % hot`} tone={analysis.clipped ? 'err' : undefined} />
@@ -252,6 +252,8 @@ function EqEditor({ eq, onChange }: { eq: EqState; onChange: (eq: EqState) => vo
   const [selected, setSelected] = useState<EqNode>('b1')
   const drag = useRef<EqNode | null>(null)
   const freqs = useMemo(() => logFrequencies(300), [])
+  const [width, setWidth] = useState(0)   // redraw the curve at the new size when the column resizes
+  useEffect(() => { const c = ref.current; if (!c) return; const ro = new ResizeObserver(() => setWidth(c.clientWidth)); ro.observe(c); return () => ro.disconnect() }, [])
 
   useEffect(() => {
     const c = ref.current; if (!c) return
@@ -286,7 +288,7 @@ function EqEditor({ eq, onChange }: { eq: EqState; onChange: (eq: EqState) => vo
       if (selected === n.id) { ctx.strokeStyle = text; ctx.lineWidth = 1.5; ctx.globalAlpha = 1; ctx.stroke() }
     }
     ctx.globalAlpha = 1
-  }, [eq, selected, freqs])
+  }, [eq, selected, freqs, width])
 
   const hit = (e: React.PointerEvent<HTMLCanvasElement>): EqNode | null => {
     const r = e.currentTarget.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top
@@ -317,13 +319,15 @@ function EqEditor({ eq, onChange }: { eq: EqState; onChange: (eq: EqState) => vo
   const node = EQ_NODES.find((n) => n.id === selected)!
   return (
     <section className="rounded-xl border border-border bg-surface">
-      <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
-        <div className="text-[13px] font-medium">Equaliser</div>
-        <span className="text-[11px] text-muted">drag a point for frequency and gain (pass filters: up/down for Q) · scroll on the curve for the selected band’s Q · ffmpeg highpass, lowshelf, equalizer ×{EQ_BANDS}, highshelf, lowpass</span>
-        <div className="ml-auto flex items-center gap-2">
-          <Button size="sm" variant="ghost" onClick={() => onChange(defaultModules().eq)} title="All bands off and back to their defaults"><RotateCcw size={13} /> Reset EQ</Button>
-          <Switch checked={eq.on} onChange={(on) => onChange({ ...eq, on })} label="Equaliser" />
+      <div className="border-b border-border px-4 py-2.5">
+        <div className="flex h-8 items-center gap-2">
+          <div className="text-[13px] font-medium">Equaliser</div>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            <Button size="sm" variant="ghost" onClick={() => onChange(defaultModules().eq)} title="All bands off and back to their defaults"><RotateCcw size={13} /> Reset EQ</Button>
+            <Switch checked={eq.on} onChange={(on) => onChange({ ...eq, on })} label="Equaliser" />
+          </div>
         </div>
+        <div className="text-[11px] leading-snug text-muted" title={`ffmpeg filters: highpass, lowshelf, equalizer ×${EQ_BANDS}, highshelf, lowpass`}>Drag a point to set its frequency and gain (the pass filters: up and down sets Q). Scroll on the curve to change the selected band’s width.</div>
       </div>
       <canvas ref={ref} className={clsx('block h-56 w-full cursor-crosshair', !eq.on && 'opacity-70')} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onWheel={onWheel} />
       <div className="flex flex-wrap gap-1.5 border-t border-border px-4 py-2">
@@ -335,13 +339,15 @@ function EqEditor({ eq, onChange }: { eq: EqState; onChange: (eq: EqState) => vo
           </button>
         ) })}
       </div>
-      <div className={clsx('grid grid-cols-1 gap-x-6 gap-y-3 border-t border-border px-4 py-3 sm:grid-cols-3', !eq.on && 'opacity-60')}>
-        <div className="sm:col-span-3 flex items-center gap-3">
-          <span className="inline-block h-3 w-3 rounded-full" style={{ background: node.colour }} />
-          <span className="text-[13px] font-medium">{node.label}</span>
-          <span className="text-[11px] text-muted">{selected === 'hp' ? 'Removes everything below the frequency, 12 dB per octave. Q 0.707 is flat; higher adds a bump at the corner.' : selected === 'lp' ? 'Removes everything above the frequency, 12 dB per octave.' : selected === 'ls' ? 'Raises or lowers everything below the frequency.' : selected === 'hs' ? 'Raises or lowers everything above the frequency.' : 'Boosts or cuts a band around the frequency; Q sets how narrow the band is.'}</span>
-          <label className="ml-auto inline-flex items-center gap-2 text-xs text-muted"><Switch checked={sel.on} onChange={(v) => onChange(withNode(eq, selected, { on: v }))} label={`${node.label} on`} /> on</label>
+      <div className={clsx('border-t border-border px-4 py-3', !eq.on && 'opacity-60')}>
+        <div className="flex items-center gap-2">
+          <span className="inline-block h-3 w-3 shrink-0 rounded-full" style={{ background: node.colour }} />
+          <span className="whitespace-nowrap text-[13px] font-medium">{node.label}</span>
+          <label className="ml-auto inline-flex shrink-0 items-center gap-2 text-xs text-muted"><Switch checked={sel.on} onChange={(v) => onChange(withNode(eq, selected, { on: v }))} label={`${node.label} on`} /> on</label>
         </div>
+        <div className="mt-0.5 text-[11px] leading-snug text-muted">{selected === 'hp' ? 'Removes everything below the frequency, 12 dB per octave. Q 0.707 is flat; higher adds a bump at the corner.' : selected === 'lp' ? 'Removes everything above the frequency, 12 dB per octave.' : selected === 'ls' ? 'Raises or lowers everything below the frequency.' : selected === 'hs' ? 'Raises or lowers everything above the frequency.' : 'Boosts or cuts a band around the frequency; Q sets how narrow the band is.'}</div>
+      </div>
+      <div className={clsx('grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-x-6 gap-y-3 px-4 pb-3', !eq.on && 'opacity-60')}>
         <KnobRow knob={FREQ_KNOB} value={sel.freq} disabled={!eq.on || !sel.on} onChange={(v) => onChange(withNode(eq, selected, { freq: Number(v) }))} />
         {sel.gain !== null && <KnobRow knob={GAIN_KNOB} value={sel.gain} disabled={!eq.on || !sel.on} onChange={(v) => onChange(withNode(eq, selected, { gain: Number(v) }))} />}
         <KnobRow knob={Q_KNOB} value={sel.q} disabled={!eq.on || !sel.on} onChange={(v) => onChange(withNode(eq, selected, { q: Number(v) }))} />
@@ -629,6 +635,17 @@ function decode(ctx: AudioContext, file: string): Promise<AudioBuffer> {
 }
 
 type Mode = 'loop' | 'continuous'
+
+function Segmented<T extends string>({ label, value, onChange, options }: { label: string; value: T; onChange: (v: T) => void; options: { value: T; label: React.ReactNode; title?: string }[] }) {
+  return (
+    <div className="inline-flex h-8 shrink-0 overflow-hidden rounded-lg border border-border text-xs" role="radiogroup" aria-label={label}>
+      {options.map((o) => (
+        <button key={o.value} type="button" role="radio" aria-checked={value === o.value} onClick={() => onChange(o.value)} title={o.title}
+          className={clsx('inline-flex items-center gap-1 whitespace-nowrap px-2.5 no-drag transition-colors', value === o.value ? 'bg-accent/15 font-medium text-accent' : 'text-muted hover:text-text')}>{o.label}</button>
+      ))}
+    </div>
+  )
+}
 /** remembered across recordings for the session */
 let lastMode: Mode = 'loop'
 /** a lane/axis/overview places itself each animation frame: `viewStart` = recording second at the lanes' left edge */
@@ -837,29 +854,23 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
   return (
     <div className="rounded-xl border border-border bg-surface">
       <div className="border-b border-border px-4 py-2.5">
-        <div className="flex h-8 items-center gap-2 whitespace-nowrap">
+        <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" onClick={playing ? pause : play} className="w-24 shrink-0 justify-center">{playing ? <Pause size={14} /> : <Play size={14} />} {playing ? 'Pause' : 'Play'}</Button>
-          <div className="inline-flex shrink-0 overflow-hidden rounded-lg border border-border text-xs">
-            {(['original', 'processed'] as const).map((w) => (
-              <button key={w} type="button" onClick={() => pick(w)} className={clsx('px-3 h-8 no-drag transition-colors', which === w ? 'bg-accent/15 text-accent font-medium' : 'text-muted hover:text-text')}>{w === 'original' ? 'Original' : 'Processed'}</button>
-            ))}
-          </div>
-          <div className="inline-flex shrink-0 overflow-hidden rounded-lg border border-border text-xs" role="radiogroup" aria-label="Playback mode">
-            <button type="button" role="radio" aria-checked={mode === 'loop'} onClick={() => setMode('loop')} title="Loop: play the 45 s window over and over; the needle moves across a fixed waveform"
-              className={clsx('inline-flex h-8 items-center gap-1 px-2.5 no-drag transition-colors', mode === 'loop' ? 'bg-accent/15 text-accent font-medium' : 'text-muted hover:text-text')}><Repeat size={13} /> Loop</button>
-            <button type="button" role="radio" aria-checked={mode === 'continuous'} onClick={() => setMode('continuous')} title="Continuous: play on through the recording; the needle stays in the middle and the waveform scrolls under it"
-              className={clsx('inline-flex h-8 items-center gap-1 px-2.5 no-drag transition-colors', mode === 'continuous' ? 'bg-accent/15 text-accent font-medium' : 'text-muted hover:text-text')}><ChevronsRight size={13} /> Continuous</button>
-          </div>
-          <label className="inline-flex h-8 shrink-0 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-muted" title="Off: the original plays exactly as recorded. On: the original gets one fixed gain so it sits at the levelling target — louder never sounds better, so you judge tone and noise alone. Needs Loudness levelling on. The final clip is not affected either way.">
-            <Switch checked={matchLoudness} onChange={setMatchLoudness} label="Match loudness" disabled={!overview || !look.level} /> Match
+          <Segmented label="Which side you hear" value={which} onChange={pick} options={[{ value: 'original', label: 'Original' }, { value: 'processed', label: 'Processed' }]} />
+          <Segmented label="Playback mode" value={mode} onChange={setMode} options={[
+            { value: 'loop', label: <><Repeat size={13} /> Loop</>, title: 'Loop: play the 45 s window over and over; the needle moves across a fixed waveform' },
+            { value: 'continuous', label: <><ChevronsRight size={13} /> Continuous</>, title: 'Continuous: play on through the recording; the needle stays in the middle and the waveform scrolls under it' },
+          ]} />
+          <label className={clsx('inline-flex h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-border px-2.5 text-xs', look.level ? 'text-muted' : 'text-muted/60')} title="Off: the original plays exactly as recorded. On: the original gets one fixed gain so it sits at the levelling target — louder never sounds better, so you judge tone and noise alone. Needs Loudness levelling on. The final clip is not affected either way.">
+            <Switch checked={matchLoudness} onChange={setMatchLoudness} label="Match loudness" disabled={!overview || !look.level} /> Match loudness
           </label>
-          <span className="ml-auto min-w-0 truncate text-[11px] text-muted" title={mode === 'loop' ? 'Space = play/pause · S = switch side · click a lane to jump · ←/→ move the window 5 s (shift: 30 s) · scroll over the lanes to move the window · drag the window on the overview' : 'Space = play/pause · S = switch side · click a lane to jump · ←/→ jump 5 s (shift: 30 s) · scroll over the lanes to scrub · click or drag on the overview to jump'}>Space · S · ←/→ · scroll · drag</span>
+          <span className="ml-auto inline-flex h-8 shrink-0 items-center text-muted" title={mode === 'loop' ? 'Space play / pause · S switch side · click a lane to jump · ← → move the window 5 s (shift: 30 s) · scroll over the lanes to move the window · drag the window on the overview' : 'Space play / pause · S switch side · click a lane to jump · ← → jump 5 s (shift: 30 s) · scroll over the lanes to scrub · click or drag on the overview to jump'}><Keyboard size={15} /></span>
         </div>
-        <div className="mt-1.5 flex h-4 items-center gap-3 whitespace-nowrap text-[11px] text-muted">
-          <span className="inline-flex min-w-0 flex-1 items-center gap-1 truncate tabular-nums">
-            {ready.processed < total && lookOk ? <><Spinner className="text-accent" /> {ready.processed}/{total} chunks in view{ready.stale ? ` · ${ready.stale} from the previous settings playing` : ''}</> : <span className="text-muted/70">all {total} chunks in view ready</span>}
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[11px] text-muted">
+          <span className="inline-flex items-center gap-1 tabular-nums">
+            {ready.processed < total && lookOk ? <><Spinner className="text-accent" /> {ready.processed} of {total} chunks ready{ready.stale ? ` · ${ready.stale} from the previous settings playing` : ''}</> : <span className="text-muted/70">all {total} chunks in view ready</span>}
           </span>
-          <span className="shrink-0 tabular-nums">{mode === 'loop' ? `${fmtTime(time)} · window ${fmtTime(winStart)}–${fmtTime(winStart + WINDOW)}${ofDuration}` : `${fmtTime(time)}${ofDuration} · continuous`}</span>
+          <span className="tabular-nums">{mode === 'loop' ? `${fmtTime(time)} · window ${fmtTime(winStart)}–${fmtTime(winStart + WINDOW)}${ofDuration}` : `${fmtTime(time)}${ofDuration}`}</span>
         </div>
       </div>
       <div className="px-4 py-3 space-y-2" onWheel={onWheel}>
@@ -868,10 +879,10 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
         <TimeStrip anchor={anchor} duration={duration} register={register} />
         <Overview overview={overview} mode={mode} register={register} getWinStart={() => winRef.current} onMove={onOverviewMove} onSeek={onOverviewSeek} />
       </div>
-      <div className="grid grid-cols-2 gap-x-6 gap-y-1 border-t border-border px-4 py-3 text-xs sm:grid-cols-4">
-        <Stat label="Processed loudness" value={procLufs !== null && Number.isFinite(procLufs) ? `${procLufs.toFixed(1)} LUFS` : '—'} hint="at the playhead, all chunks at one gain" />
-        <Stat label="Original loudness" value={overview && Number.isFinite(overview.lufs) ? `${overview.lufs.toFixed(1)} LUFS` : '—'} hint={matchLoudness ? 'raised to the target while matching' : 'whole recording, as recorded'} />
-        <Stat label="Gain applied" value={refGain === null ? '—' : db(refGain)} hint="by the loudness stage" />
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-x-6 gap-y-2 border-t border-border px-4 py-3 text-xs">
+        <Stat label="Processed loudness" value={procLufs !== null && Number.isFinite(procLufs) ? `${procLufs.toFixed(1)} LUFS` : '—'} hint="at the playhead" />
+        <Stat label="Original loudness" value={overview && Number.isFinite(overview.lufs) ? `${overview.lufs.toFixed(1)} LUFS` : '—'} hint={matchLoudness ? 'raised to the target' : 'whole recording'} />
+        <Stat label="Gain applied" value={refGain === null ? '—' : db(refGain)} hint="loudness levelling" />
         <Stat label="Channels" value={cur ? (cur.channels === 2 ? 'stereo' : 'mono') : '—'} hint={cur?.channels === 2 ? 'reverb makes it stereo' : undefined} />
         {cur && cur.warnings.length > 0 && <div className="col-span-full flex items-center gap-1 text-[11px] text-warn"><AlertTriangle size={12} /> {cur.warnings.join(' · ')}</div>}
         {firstFailure && <div className="col-span-full flex items-center gap-1 text-[11px] text-warn"><AlertTriangle size={12} /> A chunk could not be rendered: {firstFailure[1]}</div>}
@@ -1038,13 +1049,18 @@ const Overview = memo(function Overview({ overview, mode, register, getWinStart,
     if (mode === 'continuous') onSeek(secAt(e)); else onMove(secAt(e) - drag.current.grabOffset)
   }
   return (
+    <div className="pt-1">
+    <div className="mb-1 flex items-center justify-between gap-3 text-[10.5px] text-muted">
+      <span>Whole recording</span>
+      <span>{mode === 'loop' ? 'drag the window to move it' : 'click or drag to jump'}</span>
+    </div>
     <div className="relative">
       <canvas ref={ref} className={clsx('block h-10 w-full rounded-md border border-border bg-surface-2/40', dur ? (mode === 'loop' ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer') : '')}
         onPointerDown={down} onPointerMove={move} onPointerUp={() => { drag.current = null }} onPointerCancel={() => { drag.current = null }} />
       {dur > 0 && <div ref={boxRef} className="pointer-events-none absolute inset-y-0 rounded-sm border-[1.5px] border-accent/90 bg-accent/18" />}
       {dur > 0 && <div ref={needleRef} className="pointer-events-none absolute inset-y-0 w-px bg-text" />}
       {!overview && <div className="absolute inset-0 flex items-center justify-center text-[11px] text-muted"><Spinner className="mr-1 text-accent" /> reading the whole recording…</div>}
-      {overview && <div className="pointer-events-none absolute right-1.5 top-0.5 text-[10px] tabular-nums text-muted">whole recording · {mode === 'loop' ? 'drag the window' : 'click or drag to jump'}</div>}
+    </div>
     </div>
   )
 })
