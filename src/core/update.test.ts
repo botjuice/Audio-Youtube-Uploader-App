@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compareVersions, parseLatestYml, pickUpdateFile, describeHttpFailure, fetchWithRetry } from './update'
+import { assetApiUrl, compareVersions, describeHttpFailure, fetchWithRetry, parseLatestYml, pickUpdateFile } from './update'
 
 const yml = `version: 2.1.0
 files:
@@ -53,8 +53,13 @@ describe('fetchWithRetry', () => {
     const res = await fetchWithRetry(async () => { calls++; return r(404) }, 'u', undefined, [1, 1], noSleep)
     expect(res.status).toBe(404); expect(calls).toBe(1)
   })
-  it('explains failures in plain words', () => {
+  it('explains failures in plain words, naming the host that answered', () => {
     expect(describeHttpFailure('update feed', 504)).toMatch(/didn't answer \(HTTP 504\).*try again/)
+    expect(describeHttpFailure('update feed', 502, 'https://release-assets.githubusercontent.com/x/y?token=1')).toContain('HTTP 502 from release-assets.githubusercontent.com')
+    expect(describeHttpFailure('update feed', 502, 'not a url')).toContain('(HTTP 502)')
+    expect(assetApiUrl({ assets: [{ name: 'latest.yml', url: 'https://api.github.com/repos/o/r/releases/assets/1' }] }, 'latest.yml')).toBe('https://api.github.com/repos/o/r/releases/assets/1')
+    expect(assetApiUrl({ assets: [] }, 'latest.yml')).toBeNull()
+    expect(assetApiUrl(null, 'latest.yml')).toBeNull()
     expect(describeHttpFailure('update feed', 404)).toMatch(/no file/)
     expect(describeHttpFailure('download server', 403)).toMatch(/refused/)
   })

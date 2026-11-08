@@ -6,7 +6,7 @@ import { createWriteStream, promises as fs } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type { UpdateState } from '@shared/types'
-import { compareVersions, describeHttpFailure, feedFileName, fetchWithRetry, parseLatestYml, pickUpdateFile } from '@core/update'
+import { assetApiUrl, compareVersions, describeHttpFailure, feedFileName, fetchWithRetry, parseLatestYml, pickUpdateFile, type ReleaseInfo } from '@core/update'
 import { activity } from './log'
 
 const execFileP = promisify(execFile)
@@ -36,6 +36,37 @@ export class Updater extends EventEmitter {
   private deps!: UpdaterDeps
   private file: string | null = null
   private sha512: string | null = null
+  /** The GitHub REST release record, fetched once per check: notes, page URL and asset API URLs. */
+  private release: ReleaseInfo | null = null
+
+  private async fetchRelease(): Promise<ReleaseInfo | null> {
+    try {
+      const r = await fetchWithRetry(fetch, API_LATEST, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'yoosy-joosy' } })
+      return r.ok ? ((await r.json()) as ReleaseInfo) : null
+    } catch { return null }
+  }
+
+  /**
+   * Fetch a release asset by name. The public `releases/download` path goes through GitHub's own download
+   * handler, which some networks and outages break (5xx) while the REST asset endpoint still works — so a
+   * failed public fetch falls back to the API path. Both end at the same storage host.
+   */
+  private async fetchAsset(what: string, name: string, cacheBust = false): Promise<Response> {
+    const headers: Record<string, string> = cacheBust ? { 'Cache-Control': 'no-cache' } : {}
+    let primary: Error
+    try {
+      const res = await fetchWithRetry(fetch, FEED_BASE + name, { headers, redirect: 'follow' })
+      if (res.ok) return res
+      primary = new Error(describeHttpFailure(what, res.status, res.url))
+    } catch (e) { primary = e instanceof Error ? e : new Error(String(e)) }
+    this.release ??= await this.fetchRelease()
+    const api = assetApiUrl(this.release, name)
+    if (!api) throw primary
+    activity.warn(`${primary.message} Trying GitHub's API path instead.`)
+    const res = await fetchWithRetry(fetch, api, { headers: { ...headers, Accept: 'application/octet-stream', 'User-Agent': 'yoosy-joosy' }, redirect: 'follow' })
+    if (!res.ok) throw new Error(describeHttpFailure(what, res.status, res.url))
+    return res
+  }
   private timer: NodeJS.Timeout | null = null
   private inflight: Promise<unknown> | null = null
   /** Set once install begins; the watcher checks it so no new run starts. */
@@ -68,10 +99,9 @@ export class Updater extends EventEmitter {
     if (this.inflight) { await this.inflight.catch(() => {}); return this.state }
     const p = (async () => {
       this.set({ status: 'checking', error: null })
+      this.release = null
       try {
-        // GitHub's asset gateway sometimes answers 5xx for a moment; a couple of retries hide that from the user.
-        const res = await fetchWithRetry(fetch, FEED_BASE + feedFileName(process.platform), { headers: { 'Cache-Control': 'no-cache' }, redirect: 'follow' })
-        if (!res.ok) throw new Error(describeHttpFailure('update feed', res.status))
+        const res = await this.fetchAsset('update feed', feedFileName(process.platform), true)
         const info = parseLatestYml(await res.text())
         const checkedAt = new Date().toISOString()
         if (compareVersions(info.version, this.state.current) <= 0) {
@@ -86,12 +116,10 @@ export class Updater extends EventEmitter {
           this.set({ status: 'ready', latest: info.version, checkedAt }); return
         }
         this.file = null
-        let notes: string | null = null, releaseUrl: string | null = `https://github.com/${REPO}/releases/latest`
-        try {
-          const r = await fetch(API_LATEST, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'yoosy-joosy' } })
-          if (r.ok) { const j = (await r.json()) as { body?: string; html_url?: string }; notes = j.body?.trim() || null; releaseUrl = j.html_url ?? releaseUrl }
-        } catch { /* notes are optional */ }
-        this.pendingUrl = FEED_BASE + file.url
+        this.release ??= await this.fetchRelease()
+        const notes = this.release?.body?.trim() || null
+        const releaseUrl = this.release?.html_url ?? `https://github.com/${REPO}/releases/latest`
+        this.pendingUrl = file.url
         this.set({ status: 'available', latest: info.version, notes, releaseUrl, checkedAt, percent: 0 })
         activity.info(`Update available: v${info.version} (you have v${this.state.current})`)
       } catch (e) {
@@ -102,6 +130,7 @@ export class Updater extends EventEmitter {
     try { await p } finally { this.inflight = null }
     return this.state
   }
+  /** Asset file name of the installer to download (resolved against the public path, then the API path). */
   private pendingUrl: string | null = null
 
   async download(): Promise<UpdateState> {
@@ -112,12 +141,12 @@ export class Updater extends EventEmitter {
       const dir = join(app.getPath('userData'), 'updates')
       await fs.mkdir(dir, { recursive: true })
       for (const f of await fs.readdir(dir)) await fs.rm(join(dir, f), { recursive: true, force: true }) // only ever keep one
-      const target = join(dir, basename(new URL(this.pendingUrl!).pathname))
+      const target = join(dir, basename(this.pendingUrl!))
       const tmp = `${target}.part`
       this.set({ status: 'downloading', percent: 0, error: null })
       try {
-        const res = await fetchWithRetry(fetch, this.pendingUrl!, { redirect: 'follow' })
-        if (!res.ok || !res.body) throw new Error(describeHttpFailure('download server', res.status))
+        const res = await this.fetchAsset('download server', this.pendingUrl!)
+        if (!res.body) throw new Error('Download returned no data.')
         const total = Number(res.headers.get('content-length') ?? 0)
         const hash = createHash('sha512')
         const out = createWriteStream(tmp)

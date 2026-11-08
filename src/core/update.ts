@@ -40,12 +40,20 @@ export interface FetchLike { (url: string, init?: RequestInit): Promise<{ ok: bo
 /** HTTP statuses worth another try: the server or a gateway in front of it hiccupped, not us. */
 export const isTransientStatus = (status: number): boolean => status === 408 || status === 429 || status >= 500
 
-/** Plain words for a failed feed/download response. */
-export function describeHttpFailure(what: string, status: number): string {
-  if (isTransientStatus(status)) return `GitHub's ${what} didn't answer (HTTP ${status}). This is usually brief — try again in a few minutes.`
-  if (status === 404) return `GitHub's ${what} has no file for this release yet (HTTP 404). Try again later.`
-  return `GitHub's ${what} refused the request (HTTP ${status}).`
+/** Plain words for a failed feed/download response; `finalUrl` names the host that actually answered (after redirects). */
+export function describeHttpFailure(what: string, status: number, finalUrl?: string): string {
+  let host = ''
+  try { if (finalUrl) host = ` from ${new URL(finalUrl).host}` } catch { /* not a URL */ }
+  if (isTransientStatus(status)) return `GitHub's ${what} didn't answer (HTTP ${status}${host}). This is usually brief — try again in a few minutes.`
+  if (status === 404) return `GitHub's ${what} has no file for this release yet (HTTP 404${host}). Try again later.`
+  return `GitHub's ${what} refused the request (HTTP ${status}${host}).`
 }
+
+/** The GitHub REST view of a release: enough to find an asset's API download URL when the public path is failing. */
+export interface ReleaseAsset { name: string; url: string; browser_download_url?: string }
+export interface ReleaseInfo { tag_name?: string; body?: string; html_url?: string; assets?: ReleaseAsset[] }
+export const assetApiUrl = (release: ReleaseInfo | null | undefined, name: string): string | null =>
+  release?.assets?.find((a) => a.name === name)?.url ?? null
 
 /**
  * fetch with a few retries on transient failures (network errors, 5xx, 429/408), waiting `delaysMs[i]`
