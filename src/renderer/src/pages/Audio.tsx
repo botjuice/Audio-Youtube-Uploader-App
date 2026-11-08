@@ -242,6 +242,8 @@ const ENTER = 0.012
 class TileTransport {
   // the plugin writes 48 kHz; decoding into a 44.1 kHz context would resample every chunk on its own and roughen the joins
   readonly ctx = new AudioContext({ sampleRate: 48000 })
+  /** every voice goes through here (one place to meter or tap the mix) */
+  readonly master = this.ctx.createGain()
   side: Side = 'processed'
   loop = true
   playing = false
@@ -256,6 +258,8 @@ class TileTransport {
   refGain: number | null = null
   /** extra gain on the original side (loudness match), linear */
   originalGain = 1
+
+  constructor() { this.master.connect(this.ctx.destination) }
 
   get time(): number { return this.playing ? this.ctx.currentTime - this.startedAt : this.pos }
 
@@ -283,7 +287,7 @@ class TileTransport {
     const g = this.target(t)
     if (ramp > 0) { gain.gain.setValueAtTime(0, at); gain.gain.linearRampToValueAtTime(g, at + ramp) } else gain.gain.setValueAtTime(g, at)
     if (endAt - (post + JOIN) > at + ramp) { gain.gain.setValueAtTime(g, endAt - (post + JOIN)); gain.gain.linearRampToValueAtTime(0, endAt) }
-    src.connect(gain).connect(this.ctx.destination)
+    src.connect(gain).connect(this.master)
     src.start(at, offset, dur)
     const v: Voice = { src, gain, tile: t, endAt }
     src.onended = () => { if (into.get(t.key) === v) into.delete(t.key) }
@@ -422,6 +426,7 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
   const tRef = useRef<TileTransport | null>(null)
   const transport = () => (tRef.current ??= new TileTransport())
   useEffect(() => () => { tRef.current?.dispose(); tRef.current = null }, [])
+  useEffect(() => { (window as unknown as { __yjTransport?: TileTransport }).__yjTransport = transport() })   // diagnostics hook (devtools)
 
   const [overview, setOverview] = useState<AudioOverview | null>(null)
   useEffect(() => {
@@ -506,8 +511,12 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
 
   // Display clock + loop at the window end; drop chunks far outside the window to keep memory bounded.
   useEffect(() => {
-    let raf = 0
-    const step = () => { const t = transport(); t.tick(); setTime(t.time); if (!t.playing) setPlaying(false); raf = requestAnimationFrame(step) }
+    let raf = 0, last = 0
+    const step = (now: number) => {
+      const t = transport(); t.tick()
+      if (now - last > 33) { last = now; setTime(t.time); if (!t.playing) setPlaying(false) }   // ~30 fps is plenty for a playhead; the waveforms themselves never redraw for time
+      raf = requestAnimationFrame(step)
+    }
     raf = requestAnimationFrame(step)
     return () => cancelAnimationFrame(raf)
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
@@ -594,13 +603,13 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
 
 function Lane({ label, kind, tiles, gen, active, time, winStart, onSeek, onPick }: { label: string; kind: Side; tiles: Map<string, Loaded>; gen: number; active: boolean; time: number; winStart: number; onSeek: (t: number) => void; onPick: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null)
-  useEffect(() => {
+  useEffect(() => {   // waveform only — not on every playhead move
     const c = ref.current; if (!c) return
     const dpr = window.devicePixelRatio || 1
     const w = c.clientWidth, h = c.clientHeight
-    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr)
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr) }
     const ctx = c.getContext('2d'); if (!ctx) return
-    ctx.scale(dpr, dpr)
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, w, h)
     const cs = getComputedStyle(c)
     const colour = active ? cs.getPropertyValue('--accent').trim() || '#6366f1' : cs.getPropertyValue('--muted').trim() || '#64748b'
@@ -628,14 +637,14 @@ function Lane({ label, kind, tiles, gen, active, time, winStart, onSeek, onPick 
       }
     }
     ctx.globalAlpha = 1
-    ctx.fillStyle = cs.getPropertyValue('--text').trim() || '#fff'
-    ctx.fillRect((time - winStart) * pxPerSec - 0.5, 0, 1, h)
-  }, [tiles, gen, kind, active, time, winStart])
+  }, [tiles, gen, kind, active, winStart])
+  const pct = Math.min(100, Math.max(0, ((time - winStart) / WINDOW) * 100))
   return (
     <div className={clsx('relative rounded-lg border', active ? 'border-accent/50 bg-accent/5' : 'border-border bg-surface-2/40')}>
       <button type="button" onClick={onPick} className={clsx('absolute left-2 top-1.5 z-10 rounded px-1.5 text-[10.5px] no-drag', active ? 'bg-accent text-white' : 'bg-surface text-muted hover:text-text')}>{label}{active ? ' · playing' : ''}</button>
       <canvas ref={ref} className="block h-24 w-full cursor-crosshair"
         onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); onSeek(winStart + ((e.clientX - r.left) / r.width) * WINDOW) }} />
+      <div className="pointer-events-none absolute inset-y-0 w-px bg-text" style={{ left: `${pct}%` }} />
     </div>
   )
 }
@@ -649,9 +658,9 @@ function Overview({ overview, winStart, time, onMove }: { overview: AudioOvervie
     const c = ref.current; if (!c) return
     const dpr = window.devicePixelRatio || 1
     const w = c.clientWidth, h = c.clientHeight
-    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr)
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr) }
     const ctx = c.getContext('2d'); if (!ctx) return
-    ctx.scale(dpr, dpr)
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, w, h)
     const cs = getComputedStyle(c)
     const muted = cs.getPropertyValue('--muted').trim() || '#64748b', accent = cs.getPropertyValue('--accent').trim() || '#6366f1'
@@ -663,8 +672,7 @@ function Overview({ overview, winStart, time, onMove }: { overview: AudioOvervie
     const x0 = (winStart / dur) * w, x1 = ((winStart + WINDOW) / dur) * w
     ctx.fillStyle = accent; ctx.globalAlpha = 0.18; ctx.fillRect(x0, 0, x1 - x0, h); ctx.globalAlpha = 0.9
     ctx.strokeStyle = accent; ctx.lineWidth = 1.5; ctx.strokeRect(x0 + 0.75, 0.75, x1 - x0 - 1.5, h - 1.5)
-    ctx.fillStyle = cs.getPropertyValue('--text').trim() || '#fff'; ctx.fillRect((time / dur) * w - 0.5, 0, 1, h)
-  }, [overview, winStart, time, dur])
+  }, [overview, winStart, dur])
   const secAt = (e: React.PointerEvent) => { const r = e.currentTarget.getBoundingClientRect(); return ((e.clientX - r.left) / r.width) * dur }
   return (
     <div className="relative">
@@ -672,6 +680,7 @@ function Overview({ overview, winStart, time, onMove }: { overview: AudioOvervie
         onPointerDown={(e) => { if (!dur) return; const s = secAt(e); const inside = s >= winStart && s <= winStart + WINDOW; drag.current = { grabOffset: inside ? s - winStart : WINDOW / 2 }; e.currentTarget.setPointerCapture(e.pointerId); onMove(s - drag.current.grabOffset) }}
         onPointerMove={(e) => { if (drag.current && dur) onMove(secAt(e) - drag.current.grabOffset) }}
         onPointerUp={() => { drag.current = null }} onPointerCancel={() => { drag.current = null }} />
+      {dur > 0 && <div className="pointer-events-none absolute inset-y-0 w-px bg-text" style={{ left: `${Math.min(100, Math.max(0, (time / dur) * 100))}%` }} />}
       {!overview && <div className="absolute inset-0 flex items-center justify-center text-[11px] text-muted"><Spinner className="mr-1 text-accent" /> reading the whole recording…</div>}
       {overview && <div className="pointer-events-none absolute right-1.5 top-0.5 text-[10px] tabular-nums text-muted">whole recording · drag the window</div>}
     </div>
