@@ -294,12 +294,21 @@ class TileTransport {
     into.set(t.key, v)
   }
 
+  /**
+   * Glide a gain to a value from `at`. A linear ramp here would be wrong: after cancelling, it interpolates
+   * from the *previous* event, which may be seconds old, so it lands as an instant step. An exponential
+   * approach starts from whatever the value is at `at`, so it always fades. Reaches the target within `fade`.
+   */
+  private glide(g: AudioParam, value: number, at: number, fade: number): void {
+    g.cancelAndHoldAtTime(at)
+    g.setTargetAtTime(value, at, fade / 4)
+  }
+
   /** Fade a voice out and stop it, starting a little ahead so the ramp really renders. */
   private stop(v: Voice, fade: number, at = this.ctx.currentTime + LEAD): void {
     v.src.onended = null
-    const g = v.gain.gain
-    g.cancelAndHoldAtTime(at); g.linearRampToValueAtTime(0, at + fade)
-    try { v.src.stop(at + fade + 0.01) } catch { /* already stopped */ }
+    this.glide(v.gain.gain, 0, at, fade)
+    try { v.src.stop(at + fade + 0.02) } catch { /* already stopped */ }
   }
 
   private stopAll(fade: number): void {
@@ -397,7 +406,7 @@ class TileTransport {
     for (const v of all) {
       const g = v.gain.gain, target = this.target(v.tile)
       if (v.endAt <= at) continue
-      g.cancelAndHoldAtTime(at); g.linearRampToValueAtTime(target, at + ENTER)
+      this.glide(g, target, at, ENTER)
       const fadeStart = v.endAt - 2 * JOIN   // keep the join fade-out that the cancel just removed
       if (fadeStart > at + ENTER) { g.setValueAtTime(target, fadeStart); g.linearRampToValueAtTime(0, v.endAt) }
     }
