@@ -234,6 +234,11 @@ interface Loaded {
 }
 interface Voice { src: AudioBufferSourceNode; gain: GainNode; tile: Loaded; endAt: number }
 
+/** Gain changes must be scheduled a little ahead: anything at "now" is already rendered and lands as a hard step. */
+const LEAD = 0.012
+/** Fade when a voice starts or stops mid-waveform (play, pause, seek, side switch). */
+const ENTER = 0.012
+
 class TileTransport {
   // the plugin writes 48 kHz; decoding into a 44.1 kHz context would resample every chunk on its own and roughen the joins
   readonly ctx = new AudioContext({ sampleRate: 48000 })
@@ -245,6 +250,8 @@ class TileTransport {
   private win = { start: 0, end: WINDOW }
   private tiles = new Map<string, Loaded>()
   private voices = new Map<string, Voice>()
+  /** the next lap of the loop, scheduled ahead on the audio clock so the wrap is gapless */
+  private lap: { at: number; startedAt: number; voices: Map<string, Voice> } | null = null
   /** processed chunks are each levelled on their own; play them all at the gain of the first chunk of this look */
   refGain: number | null = null
   /** extra gain on the original side (loudness match), linear */
@@ -258,53 +265,68 @@ class TileTransport {
   }
   private target(t: Loaded): number { return t.kind === this.side ? this.linearGain(t) : 0 }
 
-  private schedule(t: Loaded, replacing: boolean): void {
-    const now = this.ctx.currentTime
-    const lead = 0.005
-    // play from JOIN before the chunk to JOIN after it, ramping at both ends so neighbours crossfade
+  /**
+   * Start one chunk's voice. `ref` is the earliest ctx time it may sound (now + lead, or the loop wrap);
+   * `base` is the ctx time of recording second 0 for the lap it belongs to.
+   */
+  private schedule(t: Loaded, into: Map<string, Voice>, base: number, ref: number, fadeIn: number): void {
     const pre = Math.min(JOIN, t.offset)
     const post = Math.min(JOIN, Math.max(0, t.buffer.duration - t.offset - TILE))
-    const begin = this.startedAt + t.index * TILE - pre
-    const endAt = this.startedAt + t.index * TILE + TILE + post
-    let at = begin, offset = t.offset - pre
-    if (begin < now + lead) { const skip = now + lead - begin; offset += skip; at = now + lead }
+    const begin = base + t.index * TILE - pre
+    const endAt = base + t.index * TILE + TILE + post
+    let at = begin, offset = t.offset - pre, ramp = pre + JOIN   // natural join: ramp over the overlap
+    if (begin < ref) { const skip = ref - begin; offset += skip; at = ref; ramp = fadeIn }   // entering mid-chunk
     const dur = endAt - at
     if (dur <= 0.01) return
     const src = this.ctx.createBufferSource(); src.buffer = t.buffer
     const gain = this.ctx.createGain()
     const g = this.target(t)
-    const ramp = replacing ? XFADE : (at === begin ? pre + JOIN : 0)
     if (ramp > 0) { gain.gain.setValueAtTime(0, at); gain.gain.linearRampToValueAtTime(g, at + ramp) } else gain.gain.setValueAtTime(g, at)
     if (endAt - (post + JOIN) > at + ramp) { gain.gain.setValueAtTime(g, endAt - (post + JOIN)); gain.gain.linearRampToValueAtTime(0, endAt) }
     src.connect(gain).connect(this.ctx.destination)
     src.start(at, offset, dur)
     const v: Voice = { src, gain, tile: t, endAt }
-    src.onended = () => { if (this.voices.get(t.key) === v) this.voices.delete(t.key) }
-    this.voices.set(t.key, v)
+    src.onended = () => { if (into.get(t.key) === v) into.delete(t.key) }
+    into.set(t.key, v)
   }
 
-  private stop(v: Voice, fade: number): void {
-    const at = this.ctx.currentTime
+  /** Fade a voice out and stop it, starting a little ahead so the ramp really renders. */
+  private stop(v: Voice, fade: number, at = this.ctx.currentTime + LEAD): void {
     v.src.onended = null
-    v.gain.gain.cancelScheduledValues(at); v.gain.gain.setValueAtTime(v.gain.gain.value, at); v.gain.gain.linearRampToValueAtTime(0, at + fade)
+    const g = v.gain.gain
+    g.cancelAndHoldAtTime(at); g.linearRampToValueAtTime(0, at + fade)
     try { v.src.stop(at + fade + 0.01) } catch { /* already stopped */ }
+  }
+
+  private stopAll(fade: number): void {
+    for (const v of this.voices.values()) this.stop(v, fade)
+    this.voices.clear()
+    this.disarmLoop()
   }
 
   private inWindow(t: Loaded): boolean { const s = t.index * TILE; return s < this.win.end && s + TILE > this.win.start }
 
+  private startLap(base: number, ref: number, fadeIn: number): Map<string, Voice> {
+    const into = new Map<string, Voice>()
+    for (const t of this.tiles.values()) if (this.inWindow(t)) this.schedule(t, into, base, ref, fadeIn)
+    return into
+  }
+
   /** Replace the chunk set. New or re-rendered chunks in the window start at their exact position (crossfading over a stale one); chunks that left the window stop. */
   setTiles(next: Map<string, Loaded>): void {
+    this.disarmLoop()
     for (const [key, v] of [...this.voices]) {
       const t = next.get(key)
-      if (!t || !this.inWindow(t)) { this.stop(v, 0.01); this.voices.delete(key) }
+      if (!t || !this.inWindow(t)) { this.stop(v, ENTER); this.voices.delete(key) }
     }
     if (this.playing) {
+      const ref = this.ctx.currentTime + LEAD
       for (const t of next.values()) {
         if (!this.inWindow(t)) continue
         const live = this.voices.get(t.key)
         if (live && live.tile === t) continue
         if (live) this.stop(live, XFADE)
-        this.schedule(t, !!live)
+        this.schedule(t, this.voices, this.startedAt, ref, live ? XFADE : ENTER)
       }
     }
     this.tiles = next
@@ -320,43 +342,66 @@ class TileTransport {
     if (this.playing) return
     await this.ctx.resume()
     if (this.pos < this.win.start || this.pos >= this.win.end) this.pos = this.win.start
-    this.startedAt = this.ctx.currentTime + 0.005 - this.pos
+    const ref = this.ctx.currentTime + LEAD
+    this.startedAt = ref - this.pos
     this.playing = true
-    for (const t of this.tiles.values()) if (this.inWindow(t)) this.schedule(t, false)
+    this.voices = this.startLap(this.startedAt, ref, ENTER)
   }
 
   pause(): void {
     if (!this.playing) return
     this.pos = this.time
-    for (const v of this.voices.values()) this.stop(v, 0.008)
-    this.voices.clear()
+    this.stopAll(ENTER)
     this.playing = false
   }
 
   seek(t: number): void {
     const c = Math.min(Math.max(this.win.start, t), this.win.end - 0.05)
     if (!this.playing) { this.pos = c; return }
-    for (const v of this.voices.values()) this.stop(v, 0.008)
-    this.voices.clear()
-    this.startedAt = this.ctx.currentTime + 0.005 - c
-    for (const tile of this.tiles.values()) if (this.inWindow(tile)) this.schedule(tile, false)
+    this.stopAll(ENTER)
+    const ref = this.ctx.currentTime + LEAD
+    this.startedAt = ref - c
+    this.voices = this.startLap(this.startedAt, ref, ENTER)
   }
 
-  /** Called from the display loop: wrap at the window end. */
-  tick(): void { if (this.playing && this.time >= this.win.end) { if (this.loop) this.seek(this.win.start); else this.pause() } }
+  /** Arm the next lap shortly before the window ends: its voices are scheduled on the audio clock, the current ones fade out into them. */
+  private armLoop(): void {
+    const wrapAt = this.startedAt + this.win.end
+    const base = wrapAt - this.win.start
+    const voices = this.startLap(base, wrapAt, ENTER)
+    for (const v of this.voices.values()) this.stop(v, ENTER, wrapAt)
+    this.lap = { at: wrapAt, startedAt: base, voices }
+  }
+  private disarmLoop(): void {
+    if (!this.lap) return
+    for (const v of this.lap.voices.values()) { v.src.onended = null; try { v.src.stop() } catch { /* not started */ } }
+    this.lap = null
+  }
+
+  /** Called from the display loop. */
+  tick(): void {
+    if (!this.playing) return
+    const now = this.ctx.currentTime
+    if (this.lap && now >= this.lap.at) { this.startedAt = this.lap.startedAt; this.voices = this.lap.voices; this.lap = null; return }
+    if (this.loop) { if (!this.lap && this.time >= this.win.end - 0.5) this.armLoop() }
+    else if (this.time >= this.win.end) this.pause()
+  }
 
   private retarget(): void {
-    const at = this.ctx.currentTime
-    for (const v of this.voices.values()) {
+    const at = this.ctx.currentTime + LEAD
+    const all = [...this.voices.values(), ...(this.lap ? this.lap.voices.values() : [])]
+    for (const v of all) {
       const g = v.gain.gain, target = this.target(v.tile)
-      g.cancelScheduledValues(at); g.setValueAtTime(g.value, at); g.linearRampToValueAtTime(target, at + 0.015)
+      if (v.endAt <= at) continue
+      g.cancelAndHoldAtTime(at); g.linearRampToValueAtTime(target, at + ENTER)
       const fadeStart = v.endAt - 2 * JOIN   // keep the join fade-out that the cancel just removed
-      if (fadeStart > at + 0.015) { g.setValueAtTime(target, fadeStart); g.linearRampToValueAtTime(0, v.endAt) }
+      if (fadeStart > at + ENTER) { g.setValueAtTime(target, fadeStart); g.linearRampToValueAtTime(0, v.endAt) }
     }
   }
   setSide(side: Side): void { this.side = side; this.retarget() }
   setOriginalGain(g: number): void { this.originalGain = g; this.retarget() }
   setRefGain(g: number | null): void { this.refGain = g; this.retarget() }
+  setLoop(loop: boolean): void { this.loop = loop; if (!loop) this.disarmLoop() }
   dispose(): void { this.pause(); void this.ctx.close() }
 }
 
@@ -478,7 +523,7 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
   const pause = () => { transport().pause(); setPlaying(false); setTime(transport().time) }
   const seek = (t: number) => { transport().seek(t); setTime(transport().time) }
   const pick = (s: Side) => { transport().setSide(s); setWhich(s) }
-  const toggleLoop = () => setLoop((l) => { transport().loop = !l; return !l })
+  const toggleLoop = () => setLoop((l) => { transport().setLoop(!l); return !l })
   const moveWindow = (start: number) => onWinStart(Math.round(Math.min(maxStart, Math.max(0, start)) * 10) / 10)
   const onWheel = (e: React.WheelEvent) => { const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY; if (d) moveWindow(winStart + d * 0.05) }
   useEffect(() => {
@@ -509,20 +554,26 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
 
   return (
     <div className="rounded-xl border border-border bg-surface">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
-        <Button size="sm" onClick={playing ? pause : play}>{playing ? <Pause size={14} /> : <Play size={14} />} {playing ? 'Pause' : 'Play'}</Button>
-        <div className="inline-flex overflow-hidden rounded-lg border border-border text-xs">
-          {(['original', 'processed'] as const).map((w) => (
-            <button key={w} type="button" onClick={() => pick(w)} className={clsx('px-3 h-8 no-drag transition-colors', which === w ? 'bg-accent/15 text-accent font-medium' : 'text-muted hover:text-text')}>{w === 'original' ? 'Original' : 'Processed'}</button>
-          ))}
+      <div className="border-b border-border px-4 py-2.5">
+        <div className="flex items-center gap-2 whitespace-nowrap">
+          <Button size="sm" onClick={playing ? pause : play} className="w-24 justify-center">{playing ? <Pause size={14} /> : <Play size={14} />} {playing ? 'Pause' : 'Play'}</Button>
+          <div className="inline-flex overflow-hidden rounded-lg border border-border text-xs">
+            {(['original', 'processed'] as const).map((w) => (
+              <button key={w} type="button" onClick={() => pick(w)} className={clsx('px-3 h-8 no-drag transition-colors', which === w ? 'bg-accent/15 text-accent font-medium' : 'text-muted hover:text-text')}>{w === 'original' ? 'Original' : 'Processed'}</button>
+            ))}
+          </div>
+          <button type="button" onClick={toggleLoop} className={clsx('inline-flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs no-drag', loop ? 'border-accent/40 text-accent bg-accent/10' : 'border-border text-muted')} title="Loop the window"><Repeat size={13} /> Loop</button>
+          <label className="inline-flex h-8 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-muted" title="Off: the original plays exactly as recorded. On: the original gets one fixed gain so it sits at the look's target loudness — louder never sounds better, so you judge tone and noise alone. The final clip is not affected either way.">
+            <Switch checked={matchLoudness} onChange={setMatchLoudness} label="Match loudness" disabled={!overview} /> Match loudness
+          </label>
+          <span className="ml-auto min-w-0 truncate text-xs tabular-nums text-muted">{fmtTime(time)} · window {fmtTime(winStart)}–{fmtTime(winStart + WINDOW)}{Number.isFinite(duration) ? ` of ${fmtTime(duration)}` : ''}</span>
         </div>
-        <button type="button" onClick={toggleLoop} className={clsx('inline-flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs no-drag', loop ? 'border-accent/40 text-accent bg-accent/10' : 'border-border text-muted')} title="Loop the window"><Repeat size={13} /> Loop</button>
-        <span className="text-xs tabular-nums text-muted">{fmtTime(time)} · window {fmtTime(winStart)}–{fmtTime(winStart + WINDOW)}{Number.isFinite(duration) ? ` of ${fmtTime(duration)}` : ''}</span>
-        <label className="inline-flex h-8 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-muted" title="Off: the original plays exactly as recorded. On: the original gets one fixed gain so it sits at the look's target loudness — louder never sounds better, so you judge tone and noise alone. The final clip is not affected either way.">
-          <Switch checked={matchLoudness} onChange={setMatchLoudness} label="Match loudness" disabled={!overview} /> Match loudness
-        </label>
-        {ready.processed < total && lookOk && <span className="inline-flex items-center gap-1 text-xs text-muted"><Spinner className="text-accent" /> {ready.processed}/{total} chunks{ready.stale ? ` · ${ready.stale} from the previous knobs still playing` : ''}</span>}
-        <span className="ml-auto text-[11px] text-muted">Space play · S switch · ←/→ move · scroll over the lanes</span>
+        <div className="mt-1.5 flex h-4 items-center gap-2 whitespace-nowrap text-[11px] text-muted">
+          <span className="inline-flex w-64 shrink-0 items-center gap-1 tabular-nums">
+            {ready.processed < total && lookOk ? <><Spinner className="text-accent" /> {ready.processed}/{total} chunks{ready.stale ? ` · ${ready.stale} from the previous knobs playing` : ''}</> : <span className="text-muted/70">all {total} chunks ready</span>}
+          </span>
+          <span className="ml-auto truncate">Space play · S switch · ←/→ move · scroll over the lanes · drag the window below</span>
+        </div>
       </div>
       <div className="px-4 py-3 space-y-2" onWheel={onWheel}>
         <Lane label="Original" kind="original" tiles={tiles} gen={gen} active={which === 'original'} time={time} winStart={winStart} onSeek={seek} onPick={() => pick('original')} />
