@@ -1,6 +1,6 @@
 import { clsx } from 'clsx'
-import { AlertTriangle, AudioLines, Pause, Play, Repeat, RotateCcw, Save, Undo2, Waves } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, AudioLines, ChevronsRight, Pause, Play, Repeat, RotateCcw, Save, Undo2, Waves } from 'lucide-react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AudioAnalysis, AudioLook, AudioOverview } from '@shared/types'
 import { EQ_BANDS, KNOBS, MODULE_ORDER, MODULE_TITLES, SIGNAL_FLOW, countOn, defaultModules, fromLook, toLook, type EqState, type Knob, type ModuleKey, type Modules, type StripKey } from '@core/audio-modules'
 import { eqResponseDb, logFrequencies } from '@core/eq-response'
@@ -387,6 +387,8 @@ interface Voice {
  * main thread, so 50 ms of slack; it is imperceptible on a pause, seek or switch.
  */
 const LEAD = 0.05
+/** How far ahead of the playhead voices are scheduled; further chunks get theirs as playback approaches. */
+const HORIZON = 15
 /** Fade when a voice starts or stops mid-waveform (play, pause, seek, side switch). */
 const ENTER = 0.012
 
@@ -445,16 +447,27 @@ class TileTransport {
     const pre = Math.min(JOIN, t.offset)
     const post = Math.min(JOIN, Math.max(0, t.buffer.duration - t.offset - TILE))
     const begin = base + t.index * TILE - pre
-    const endAt = base + t.index * TILE + TILE + post
+    const nominalEnd = base + t.index * TILE + TILE
+    const endAt = nominalEnd + post
     let at = begin, offset = t.offset - pre, ramp = pre + JOIN   // natural join: ramp over the overlap
-    if (begin < ref) { const skip = ref - begin; offset += skip; at = ref; ramp = fadeIn }   // entering mid-chunk
+    if (begin < ref) {   // entering mid-chunk
+      // The playhead is already in this chunk's tail overlap: the next chunk covers that moment on its own.
+      // (Starting both would fade this one in and cut it off ten milliseconds later — a click.)
+      if (ref > nominalEnd - JOIN) return
+      const skip = ref - begin; offset += skip; at = ref; ramp = fadeIn
+    }
     const dur = endAt - at
     if (dur <= 0.01) return
     const src = this.ctx.createBufferSource(); src.buffer = t.buffer
     const gain = this.ctx.createGain(), mute = this.ctx.createGain()
     const g = this.compensation(t)
+    // A GainNode is 1 until its first event. The source's start rounds to a sample frame, sometimes the one just
+    // before `at`, which would then play at full level: a single-sample spike. So the envelope starts at 0 from the outset.
+    gain.gain.setValueAtTime(0, 0)
     if (ramp > 0) { gain.gain.setValueAtTime(0, at); gain.gain.linearRampToValueAtTime(g, at + ramp) } else gain.gain.setValueAtTime(g, at)
-    if (endAt - (post + JOIN) > at + ramp) { gain.gain.setValueAtTime(g, endAt - (post + JOIN)); gain.gain.linearRampToValueAtTime(0, endAt) }
+    // every voice ends on a fade, however short it is
+    const fadeOutStart = Math.max(at + ramp, endAt - (post + JOIN))
+    if (fadeOutStart < endAt) { gain.gain.setValueAtTime(g, fadeOutStart); gain.gain.linearRampToValueAtTime(0, endAt) }
     mute.gain.setValueAtTime(1, 0)
     src.connect(gain).connect(mute).connect(this.bus[t.kind])
     src.start(at, offset, dur)
@@ -483,11 +496,22 @@ class TileTransport {
   }
 
   private inWindow(t: Loaded): boolean { const s = t.index * TILE; return s < this.win.end && s + TILE > this.win.start }
+  /** Voices exist only for chunks near the playhead (`at` = recording time): keeps every seek and chunk arrival a small amount of work. */
+  private inHorizon(t: Loaded, at: number): boolean { const s = t.index * TILE; return s < at + HORIZON && s + TILE > at - TILE }
 
   private startLap(base: number, ref: number, fadeIn: number): Map<string, Voice> {
     const into = new Map<string, Voice>()
-    for (const t of this.tiles.values()) if (this.inWindow(t)) this.schedule(t, into, base, ref, fadeIn)
+    const at = ref - base
+    for (const t of this.tiles.values()) if (this.inWindow(t) && this.inHorizon(t, at)) this.schedule(t, into, base, ref, fadeIn)
     return into
+  }
+
+  /** As playback moves on, add voices for the chunks that come within the horizon. */
+  private lastExtend = -1
+  private extend(): void {
+    if (!this.playing) return
+    const ref = this.ctx.currentTime + LEAD, at = ref - this.startedAt
+    for (const t of this.tiles.values()) if (this.inWindow(t) && this.inHorizon(t, at) && !this.voices.has(t.key)) this.schedule(t, this.voices, this.startedAt, ref, ENTER)
   }
 
   /** Replace the chunk set. New or re-rendered chunks in the window start at their exact position (crossfading over a stale one); chunks that left the window stop. */
@@ -499,10 +523,11 @@ class TileTransport {
       if (!t || !this.inWindow(t)) { this.stop(v, ENTER); this.voices.delete(key) }
     }
     if (this.playing) {
-      const ref = this.ctx.currentTime + LEAD
+      const ref = this.ctx.currentTime + LEAD, at = ref - this.startedAt
       for (const t of next.values()) {
         if (!this.inWindow(t)) continue
         const live = this.voices.get(t.key)
+        if (!live && !this.inHorizon(t, at)) continue
         if (live && live.tile === t) continue
         if (live) this.stop(live, XFADE)
         this.schedule(t, this.voices, this.startedAt, ref, live ? XFADE : ENTER)
@@ -511,9 +536,12 @@ class TileTransport {
     this.tiles = next
   }
 
-  setWindow(start: number): void {
-    this.win = { start, end: start + WINDOW }
-    if (this.time < start || this.time >= start + WINDOW) this.seek(start)
+  setWindow(start: number): void { this.setRange(start, start + WINDOW) }
+
+  /** The span playback is confined to: the 45 s window in loop mode, the whole recording in continuous mode. */
+  setRange(start: number, end: number): void {
+    this.win = { start, end }
+    if (this.time < start || this.time >= end) this.seek(start)
     else this.setTiles(this.tiles)
   }
 
@@ -564,7 +592,9 @@ class TileTransport {
   tick(): void {
     if (!this.playing) return
     const now = this.ctx.currentTime
-    if (this.lap && now >= this.lap.at) { this.log(`commit lap (late by ${(now - this.lap.at).toFixed(3)})`); this.startedAt = this.lap.startedAt; this.voices = this.lap.voices; this.lap = null; return }
+    if (this.lap && now >= this.lap.at) { this.log(`commit lap (late by ${(now - this.lap.at).toFixed(3)})`); this.startedAt = this.lap.startedAt; this.voices = this.lap.voices; this.lap = null; this.lastExtend = -1; return }
+    const idx = Math.floor(this.time / TILE)
+    if (idx !== this.lastExtend) { this.lastExtend = idx; this.extend() }
     if (this.loop) { if (!this.lap && this.time >= this.win.end - 0.5) this.armLoop() }
     else if (this.time >= this.win.end) this.pause()
   }
@@ -598,6 +628,12 @@ function decode(ctx: AudioContext, file: string): Promise<AudioBuffer> {
   return p
 }
 
+type Mode = 'loop' | 'continuous'
+/** remembered across recordings for the session */
+let lastMode: Mode = 'loop'
+/** a lane/axis/overview places itself each animation frame: `viewStart` = recording second at the lanes' left edge */
+type Placer = (viewStart: number, time: number) => void
+
 function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId: string; look: AudioLook; lookOk: boolean; winStart: number; onWinStart: (s: number) => void }) {
   const notify = useStore((s) => s.notify)
   const tRef = useRef<TileTransport | null>(null)
@@ -617,7 +653,7 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
 
   const [which, setWhich] = useState<Side>('processed')
   const [playing, setPlaying] = useState(false)
-  const [loop, setLoop] = useState(true)
+  const [mode, setModeState] = useState<Mode>(lastMode)
   const [time, setTime] = useState(winStart)
   const [matchLoudness, setMatchLoudness] = useState(false)
   const [tiles, setTiles] = useState<Map<string, Loaded>>(() => new Map())
@@ -629,6 +665,11 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
   const failed = useRef(new Map<string, string>())
   const refGainRef = useRef<number | null>(null)
 
+  // live values for the animation loop and event handlers (no re-subscribing every render)
+  const modeRef = useRef(mode); modeRef.current = mode
+  const winRef = useRef(winStart); winRef.current = winStart
+  const durRef = useRef(duration); durRef.current = duration
+
   // look changed → new generation: processed chunks become stale (kept playing until replaced), old renders cancelled
   useEffect(() => {
     genRef.current = Math.max(genRef.current + 1, Date.now())
@@ -639,7 +680,14 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
     setTick((n) => n + 1)
   }, [lookKey])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { transport().setWindow(winStart); setTime(transport().time) }, [winStart])  // eslint-disable-line react-hooks/exhaustive-deps
+  // what playback is confined to: the window (loop) or the whole recording (continuous)
+  useEffect(() => {
+    const t = transport()
+    t.setLoop(mode === 'loop')
+    if (mode === 'loop') t.setWindow(winStart)
+    else t.setRange(0, Number.isFinite(duration) ? duration : Infinity)
+    setTime(t.time)
+  }, [winStart, mode, duration])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { transport().setTiles(tiles) }, [tiles])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const t = transport()
@@ -647,18 +695,22 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
     t.setOriginalGain(matchLoudness && overview && target !== null && Number.isFinite(overview.lufs) ? Math.pow(10, (target - overview.lufs) / 20) : 1)
   }, [matchLoudness, overview, lookKey])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Scheduler: which chunks the window needs, nearest to the playhead first, then ahead, then behind.
-  const first = Math.floor(winStart / TILE), last = Math.floor((winStart + WINDOW - 0.001) / TILE)
+  // The lanes show [viewStart, viewStart + 45 s]: the fixed window in loop mode, centred on the playhead in continuous mode.
+  const viewStart = mode === 'loop' ? winStart : time - WINDOW / 2
+  const lastTile = Number.isFinite(duration) ? Math.max(0, Math.ceil(duration / TILE) - 1) : Infinity
+  const first = Math.max(0, Math.floor(viewStart / TILE)), last = Math.min(lastTile, Math.floor((viewStart + WINDOW - 0.001) / TILE))
   const playIndex = Math.floor(time / TILE)
+
+  // Scheduler: the chunks the view needs. Loop: nearest the playhead first. Continuous: the playhead and ahead first, then behind.
   useEffect(() => {
-    if (!lookOk) return
+    if (!lookOk || last < first) return
     const centre = Math.min(last, Math.max(first, playIndex))
-    const order: number[] = [centre]
-    for (let d = 1; order.length < last - first + 1; d++) { if (centre + d <= last) order.push(centre + d); if (centre - d >= first) order.push(centre - d) }
+    const order: number[] = []
+    if (mode === 'continuous') { for (let i = centre; i <= last; i++) order.push(i); for (let i = centre - 1; i >= first; i--) order.push(i) }
+    else { order.push(centre); for (let d = 1; order.length < last - first + 1; d++) { if (centre + d <= last) order.push(centre + d); if (centre - d >= first) order.push(centre - d) } }
     const gen = genRef.current
     const want: { kind: Side; index: number }[] = []
     for (const index of order) {
-      if (Number.isFinite(duration) && index * TILE >= duration) continue
       for (const kind of ['processed', 'original'] as const) {
         const key = tileKey(kind, index), have = tiles.get(key)
         const fresh = have && (kind === 'original' || have.gen === gen)
@@ -683,20 +735,35 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
         .catch((e) => failed.current.set(key, errText(e)))
         .finally(() => { inflight.current.delete(key); setTick((n) => n + 1) })
     }
-  }, [recordId, lookKey, lookOk, first, last, playIndex, tiles, tick, duration])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [recordId, lookKey, lookOk, first, last, playIndex, tiles, tick, mode])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Display clock + loop at the window end; drop chunks far outside the window to keep memory bounded.
+  // Animation loop: the audio clock drives the picture. Every frame each lane, the axis and the overview are slid
+  // into place (CSS transforms, no redraw). A jump (seek, window move) eases over ~100 ms instead of snapping.
+  const placers = useRef(new Set<Placer>())
+  const register = useCallback((p: Placer) => { placers.current.add(p); return () => { placers.current.delete(p) } }, [])
+  const dispRef = useRef(winStart)
+  const [anchor, setAnchor] = useState(() => Math.floor(winStart) - WINDOW)
+  const anchorRef = useRef(anchor); anchorRef.current = anchor
   useEffect(() => {
-    let raf = 0, last = 0
+    let raf = 0, lastText = 0, lastFrame = performance.now()
     const step = (now: number) => {
       const t = transport(); t.tick()
-      if (now - last > 33) { last = now; setTime(t.time); if (!t.playing) setPlaying(false) }   // ~30 fps is plenty for a playhead; the waveforms themselves never redraw for time
+      const tm = t.time
+      const target = modeRef.current === 'loop' ? winRef.current : tm - WINDOW / 2
+      const diff = target - dispRef.current, dt = now - lastFrame
+      lastFrame = now
+      dispRef.current = Math.abs(diff) > 0.25 ? dispRef.current + diff * (1 - Math.exp(-dt / 35)) : target
+      const vs = dispRef.current
+      for (const p of placers.current) p(vs, tm)
+      // the lanes draw a strip three windows wide; re-centre it before the view reaches its edge
+      if (vs < anchorRef.current + WINDOW * 0.25 || vs > anchorRef.current + WINDOW * 1.75) { anchorRef.current = Math.floor(vs) - WINDOW; setAnchor(anchorRef.current) }
+      if (now - lastText > 33) { lastText = now; setTime(tm); if (!t.playing) setPlaying(false) }
       raf = requestAnimationFrame(step)
     }
     raf = requestAnimationFrame(step)
     return () => cancelAnimationFrame(raf)
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
+  useEffect(() => {   // drop chunks far outside the view to keep memory bounded
     setTiles((prev) => {
       let changed = false; const next = new Map(prev)
       for (const [k, t] of prev) if (t.index < first - 6 || t.index > last + 6) { next.delete(k); changed = true }
@@ -708,17 +775,46 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
   const pause = () => { transport().pause(); setPlaying(false); setTime(transport().time) }
   const seek = (t: number) => { transport().seek(t); setTime(transport().time) }
   const pick = (s: Side) => { transport().setSide(s); setWhich(s) }
-  const toggleLoop = () => setLoop((l) => { transport().setLoop(!l); return !l })
   const moveWindow = (start: number) => onWinStart(Math.round(Math.min(maxStart, Math.max(0, start)) * 10) / 10)
-  const onWheel = (e: React.WheelEvent) => { const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY; if (d) moveWindow(winStart + d * 0.05) }
+  const setMode = (m: Mode) => {
+    if (m === mode) return
+    lastMode = m
+    if (m === 'loop') {   // the window opens around wherever continuous playback has got to
+      const t = transport().time
+      const start = Math.round(Math.min(maxStart, Math.max(0, t - WINDOW / 2)) * 10) / 10
+      onWinStart(start)
+      winRef.current = start
+    }
+    setModeState(m)
+  }
+  // continuous mode: wheel and dragging seek; coalesce bursts so a trackpad doesn't restart playback 60 times a second
+  const pendingSeek = useRef<{ to: number; timer: number } | null>(null)
+  const seekSoon = (to: number) => {
+    const clamped = Math.min(Math.max(0, to), Number.isFinite(durRef.current) ? durRef.current - 0.05 : to)
+    if (pendingSeek.current) { pendingSeek.current.to = clamped; return }
+    pendingSeek.current = { to: clamped, timer: window.setTimeout(() => { const p = pendingSeek.current; pendingSeek.current = null; if (p) seek(p.to) }, 60) }
+  }
+  const seekBase = () => pendingSeek.current?.to ?? transport().time
+  const onWheel = (e: React.WheelEvent) => {
+    const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
+    if (!d) return
+    if (modeRef.current === 'continuous') seekSoon(seekBase() + d * 0.05)
+    else moveWindow(winStart + d * 0.05)
+  }
+  const onLaneSeek = useCallback((frac: number) => { const to = dispRef.current + frac * WINDOW; if (modeRef.current === 'continuous') seekSoon(to); else seek(to) }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+  const onPickOriginal = useCallback(() => pick('original'), [])  // eslint-disable-line react-hooks/exhaustive-deps
+  const onPickProcessed = useCallback(() => pick('processed'), [])  // eslint-disable-line react-hooks/exhaustive-deps
+  const onOverviewMove = useCallback((start: number) => moveWindow(start), [maxStart])  // eslint-disable-line react-hooks/exhaustive-deps
+  const onOverviewSeek = useCallback((to: number) => seekSoon(to), [])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
+      const step = e.shiftKey ? 30 : 5
       if (e.key === ' ') { e.preventDefault(); playing ? pause() : play() }
       else if (e.key.toLowerCase() === 's') pick(which === 'original' ? 'processed' : 'original')
-      else if (e.key === 'ArrowLeft') moveWindow(winStart - (e.shiftKey ? 30 : 5))
-      else if (e.key === 'ArrowRight') moveWindow(winStart + (e.shiftKey ? 30 : 5))
+      else if (e.key === 'ArrowLeft') { if (mode === 'continuous') seekSoon(seekBase() - step); else moveWindow(winStart - step) }
+      else if (e.key === 'ArrowRight') { if (mode === 'continuous') seekSoon(seekBase() + step); else moveWindow(winStart + step) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -731,11 +827,12 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
     if (p) { if (p.gen === gen) ready.processed++; else ready.stale++ }
     if (o) ready.original++
   }
-  const total = last - first + 1
+  const total = Math.max(0, last - first + 1)
   const cur = tiles.get(tileKey('processed', Math.min(last, Math.max(first, playIndex))))
   const refGain = refGainRef.current
   const procLufs = cur ? cur.lufs + (refGain === null ? 0 : refGain - cur.gainDb) : null
   const firstFailure = [...failed.current.entries()].find(([k]) => { const i = Number(k.split(':')[1]); return i >= first && i <= last })
+  const ofDuration = Number.isFinite(duration) ? ` of ${fmtTime(duration)}` : ''
 
   return (
     <div className="rounded-xl border border-border bg-surface">
@@ -747,24 +844,29 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
               <button key={w} type="button" onClick={() => pick(w)} className={clsx('px-3 h-8 no-drag transition-colors', which === w ? 'bg-accent/15 text-accent font-medium' : 'text-muted hover:text-text')}>{w === 'original' ? 'Original' : 'Processed'}</button>
             ))}
           </div>
-          <button type="button" onClick={toggleLoop} className={clsx('inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border px-2.5 text-xs no-drag', loop ? 'border-accent/40 text-accent bg-accent/10' : 'border-border text-muted')} title="Loop the window"><Repeat size={13} /> Loop</button>
+          <div className="inline-flex shrink-0 overflow-hidden rounded-lg border border-border text-xs" role="radiogroup" aria-label="Playback mode">
+            <button type="button" role="radio" aria-checked={mode === 'loop'} onClick={() => setMode('loop')} title="Loop: play the 45 s window over and over; the needle moves across a fixed waveform"
+              className={clsx('inline-flex h-8 items-center gap-1 px-2.5 no-drag transition-colors', mode === 'loop' ? 'bg-accent/15 text-accent font-medium' : 'text-muted hover:text-text')}><Repeat size={13} /> Loop</button>
+            <button type="button" role="radio" aria-checked={mode === 'continuous'} onClick={() => setMode('continuous')} title="Continuous: play on through the recording; the needle stays in the middle and the waveform scrolls under it"
+              className={clsx('inline-flex h-8 items-center gap-1 px-2.5 no-drag transition-colors', mode === 'continuous' ? 'bg-accent/15 text-accent font-medium' : 'text-muted hover:text-text')}><ChevronsRight size={13} /> Continuous</button>
+          </div>
           <label className="inline-flex h-8 shrink-0 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-muted" title="Off: the original plays exactly as recorded. On: the original gets one fixed gain so it sits at the levelling target — louder never sounds better, so you judge tone and noise alone. Needs Loudness levelling on. The final clip is not affected either way.">
             <Switch checked={matchLoudness} onChange={setMatchLoudness} label="Match loudness" disabled={!overview || !look.level} /> Match
           </label>
-          <span className="ml-auto min-w-0 truncate text-[11px] text-muted" title="Space = play/pause · S = switch side · ←/→ move the window 5 s (shift: 30 s) · scroll over the lanes to move · drag the window on the overview">Space · S · ←/→ · scroll · drag</span>
+          <span className="ml-auto min-w-0 truncate text-[11px] text-muted" title={mode === 'loop' ? 'Space = play/pause · S = switch side · click a lane to jump · ←/→ move the window 5 s (shift: 30 s) · scroll over the lanes to move the window · drag the window on the overview' : 'Space = play/pause · S = switch side · click a lane to jump · ←/→ jump 5 s (shift: 30 s) · scroll over the lanes to scrub · click or drag on the overview to jump'}>Space · S · ←/→ · scroll · drag</span>
         </div>
         <div className="mt-1.5 flex h-4 items-center gap-3 whitespace-nowrap text-[11px] text-muted">
           <span className="inline-flex min-w-0 flex-1 items-center gap-1 truncate tabular-nums">
-            {ready.processed < total && lookOk ? <><Spinner className="text-accent" /> {ready.processed}/{total} chunks{ready.stale ? ` · ${ready.stale} from the previous settings playing` : ''}</> : <span className="text-muted/70">all {total} chunks ready</span>}
+            {ready.processed < total && lookOk ? <><Spinner className="text-accent" /> {ready.processed}/{total} chunks in view{ready.stale ? ` · ${ready.stale} from the previous settings playing` : ''}</> : <span className="text-muted/70">all {total} chunks in view ready</span>}
           </span>
-          <span className="shrink-0 tabular-nums">{fmtTime(time)} · window {fmtTime(winStart)}–{fmtTime(winStart + WINDOW)}{Number.isFinite(duration) ? ` of ${fmtTime(duration)}` : ''}</span>
+          <span className="shrink-0 tabular-nums">{mode === 'loop' ? `${fmtTime(time)} · window ${fmtTime(winStart)}–${fmtTime(winStart + WINDOW)}${ofDuration}` : `${fmtTime(time)}${ofDuration} · continuous`}</span>
         </div>
       </div>
       <div className="px-4 py-3 space-y-2" onWheel={onWheel}>
-        <Lane label="Original" kind="original" tiles={tiles} gen={gen} active={which === 'original'} time={time} winStart={winStart} onSeek={seek} onPick={() => pick('original')} />
-        <Lane label="Processed" kind="processed" tiles={tiles} gen={gen} active={which === 'processed'} time={time} winStart={winStart} onSeek={seek} onPick={() => pick('processed')} />
-        <TimeAxis startOffset={winStart} duration={WINDOW} />
-        <Overview overview={overview} winStart={winStart} time={time} onMove={moveWindow} />
+        <Lane label="Original" kind="original" tiles={tiles} gen={gen} active={which === 'original'} anchor={anchor} duration={duration} register={register} onSeekFrac={onLaneSeek} onPick={onPickOriginal} />
+        <Lane label="Processed" kind="processed" tiles={tiles} gen={gen} active={which === 'processed'} anchor={anchor} duration={duration} register={register} onSeekFrac={onLaneSeek} onPick={onPickProcessed} />
+        <TimeStrip anchor={anchor} duration={duration} register={register} />
+        <Overview overview={overview} mode={mode} register={register} getWinStart={() => winRef.current} onMove={onOverviewMove} onSeek={onOverviewSeek} />
       </div>
       <div className="grid grid-cols-2 gap-x-6 gap-y-1 border-t border-border px-4 py-3 text-xs sm:grid-cols-4">
         <Stat label="Processed loudness" value={procLufs !== null && Number.isFinite(procLufs) ? `${procLufs.toFixed(1)} LUFS` : '—'} hint="at the playhead, all chunks at one gain" />
@@ -778,25 +880,53 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
   )
 }
 
-function Lane({ label, kind, tiles, gen, active, time, winStart, onSeek, onPick }: { label: string; kind: Side; tiles: Map<string, Loaded>; gen: number; active: boolean; time: number; winStart: number; onSeek: (t: number) => void; onPick: () => void }) {
-  const ref = useRef<HTMLCanvasElement>(null)
-  useEffect(() => {   // waveform only — not on every playhead move
-    const c = ref.current; if (!c) return
+/** Measures an element's width and keeps it current. */
+function useWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
+  const ref = useRef<T>(null)
+  const [w, setW] = useState(0)
+  useEffect(() => {
+    const el = ref.current; if (!el) return
+    setW(el.clientWidth)
+    const ro = new ResizeObserver(() => setW(el.clientWidth))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return [ref, w]
+}
+
+/**
+ * One waveform lane. The canvas holds a strip three windows wide starting at `anchor` and is drawn only when
+ * chunks or the anchor change; every animation frame it is slid so `viewStart` sits at the left edge, and the
+ * needle is placed at the playhead (in continuous mode that is always the middle).
+ */
+const Lane = memo(function Lane({ label, kind, tiles, gen, active, anchor, duration, register, onSeekFrac, onPick }: {
+  label: string; kind: Side; tiles: Map<string, Loaded>; gen: number; active: boolean; anchor: number; duration: number
+  register: (p: Placer) => () => void; onSeekFrac: (frac: number) => void; onPick: () => void
+}) {
+  const [boxRef, cw] = useWidth<HTMLDivElement>()
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const needleRef = useRef<HTMLDivElement>(null)
+  const drawnAnchor = useRef(anchor)
+  useEffect(() => {
+    const c = canvasRef.current; if (!c || !cw) return
     const dpr = window.devicePixelRatio || 1
-    const w = c.clientWidth, h = c.clientHeight
+    const w = cw * 3, h = c.clientHeight
     if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr) }
+    c.style.width = `${w}px`
     const ctx = c.getContext('2d'); if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, w, h)
     const cs = getComputedStyle(c)
     const colour = active ? cs.getPropertyValue('--accent').trim() || '#6366f1' : cs.getPropertyValue('--muted').trim() || '#64748b'
-    const mid = h / 2, pxPerSec = w / WINDOW
-    const first = Math.floor(winStart / TILE), last = Math.floor((winStart + WINDOW - 0.001) / TILE)
-    for (let i = first; i <= last; i++) {
+    const mid = h / 2, pxPerSec = cw / WINDOW
+    const lastIdx = Number.isFinite(duration) ? Math.ceil(duration / TILE) - 1 : Infinity
+    const firstI = Math.max(0, Math.floor(anchor / TILE)), lastI = Math.min(lastIdx, Math.floor((anchor + 3 * WINDOW) / TILE))
+    for (let i = firstI; i <= lastI; i++) {
       const t = tiles.get(tileKey(kind, i))
-      const x0 = (i * TILE - winStart) * pxPerSec, tw = TILE * pxPerSec
+      const x0 = (i * TILE - anchor) * pxPerSec
+      const tw = (Math.min(TILE, Number.isFinite(duration) ? duration - i * TILE : TILE)) * pxPerSec
       if (!t) {   // not rendered yet: hatched
-        ctx.save(); ctx.beginPath(); ctx.rect(Math.max(0, x0), 0, Math.min(w, x0 + tw) - Math.max(0, x0), h); ctx.clip()
+        ctx.save(); ctx.beginPath(); ctx.rect(x0, 0, tw, h); ctx.clip()
         ctx.strokeStyle = colour; ctx.globalAlpha = 0.15; ctx.lineWidth = 1
         for (let x = x0 - h; x < x0 + tw; x += 8) { ctx.beginPath(); ctx.moveTo(x, h); ctx.lineTo(x + h, 0); ctx.stroke() }
         ctx.restore(); continue
@@ -804,73 +934,117 @@ function Lane({ label, kind, tiles, gen, active, time, winStart, onSeek, onPick 
       const stale = kind === 'processed' && t.gen !== gen
       ctx.fillStyle = colour
       ctx.globalAlpha = (active ? 0.95 : 0.55) * (stale ? 0.45 : 1)
-      const n = t.peaks.length / 2, bw = tw / n
+      const n = t.peaks.length / 2, bw = (TILE * pxPerSec) / n
       for (let b = 0; b < n; b++) {
         const x = x0 + b * bw
-        if (x + bw < 0 || x > w) continue
+        if (x - x0 > tw) break
         const min = t.peaks[b * 2]!, max = t.peaks[b * 2 + 1]!
         const y1 = mid - max * (mid - 1), y2 = mid - min * (mid - 1)
         ctx.fillRect(x, y1, Math.max(1, bw), Math.max(1, y2 - y1))
       }
     }
     ctx.globalAlpha = 1
-  }, [tiles, gen, kind, active, winStart])
-  const pct = Math.min(100, Math.max(0, ((time - winStart) / WINDOW) * 100))
+    drawnAnchor.current = anchor
+  }, [tiles, gen, kind, active, anchor, duration, cw])
+  useEffect(() => register((viewStart, time) => {
+    const c = canvasRef.current, n = needleRef.current
+    if (!c || !n || !cw) return
+    c.style.transform = `translate3d(${(-(viewStart - drawnAnchor.current) / WINDOW) * cw}px,0,0)`
+    const frac = (time - viewStart) / WINDOW
+    n.style.transform = `translate3d(${frac * cw}px,0,0)`
+    n.style.opacity = frac < 0 || frac > 1 ? '0' : '1'
+  }), [register, cw])
   return (
-    <div className={clsx('relative rounded-lg border', active ? 'border-accent/50 bg-accent/5' : 'border-border bg-surface-2/40')}>
+    <div ref={boxRef} className={clsx('relative h-24 overflow-hidden rounded-lg border', active ? 'border-accent/50 bg-accent/5' : 'border-border bg-surface-2/40')}>
+      <canvas ref={canvasRef} className="absolute inset-y-0 left-0 h-full cursor-crosshair will-change-transform"
+        onClick={(e) => { const r = boxRef.current!.getBoundingClientRect(); onSeekFrac((e.clientX - r.left) / r.width) }} />
+      <div ref={needleRef} className="pointer-events-none absolute inset-y-0 left-0 w-px bg-text will-change-transform" />
       <button type="button" onClick={onPick} className={clsx('absolute left-2 top-1.5 z-10 rounded px-1.5 text-[10.5px] no-drag', active ? 'bg-accent text-white' : 'bg-surface text-muted hover:text-text')}>{label}{active ? ' · playing' : ''}</button>
-      <canvas ref={ref} className="block h-24 w-full cursor-crosshair"
-        onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); onSeek(winStart + ((e.clientX - r.left) / r.width) * WINDOW) }} />
-      <div className="pointer-events-none absolute inset-y-0 w-px bg-text" style={{ left: `${pct}%` }} />
     </div>
   )
-}
+})
 
-/** The whole recording with the window on it: drag the window, click to centre it there. */
-function Overview({ overview, winStart, time, onMove }: { overview: AudioOverview | null; winStart: number; time: number; onMove: (start: number) => void }) {
+/** Time labels on the same three-window strip as the lanes, slid with them. */
+const TimeStrip = memo(function TimeStrip({ anchor, duration, register }: { anchor: number; duration: number; register: (p: Placer) => () => void }) {
+  const [boxRef, cw] = useWidth<HTMLDivElement>()
+  const stripRef = useRef<HTMLDivElement>(null)
+  const drawnAnchor = useRef(anchor)
+  drawnAnchor.current = anchor
+  const ticks: number[] = []
+  for (let t = Math.ceil(anchor / 5) * 5; t <= anchor + 3 * WINDOW; t += 5) if (t >= 0 && (!Number.isFinite(duration) || t <= duration)) ticks.push(t)
+  useEffect(() => register((viewStart) => {
+    const s = stripRef.current; if (!s || !cw) return
+    s.style.transform = `translate3d(${(-(viewStart - drawnAnchor.current) / WINDOW) * cw}px,0,0)`
+  }), [register, cw])
+  return (
+    <div ref={boxRef} className="relative h-4 overflow-hidden text-[10px] tabular-nums text-muted">
+      <div ref={stripRef} className="absolute inset-y-0 left-0 will-change-transform" style={{ width: cw * 3 }}>
+        {ticks.map((t) => <span key={t} className="absolute -translate-x-1/2" style={{ left: ((t - anchor) / WINDOW) * cw }}>{fmtTime(t)}</span>)}
+      </div>
+    </div>
+  )
+})
+
+/**
+ * The whole recording with the view on it. Loop mode: drag the window, or click to centre it there.
+ * Continuous mode: click or drag to jump; the view follows the playhead.
+ */
+const Overview = memo(function Overview({ overview, mode, register, getWinStart, onMove, onSeek }: {
+  overview: AudioOverview | null; mode: Mode; register: (p: Placer) => () => void; getWinStart: () => number
+  onMove: (start: number) => void; onSeek: (to: number) => void
+}) {
   const ref = useRef<HTMLCanvasElement>(null)
+  const boxRef = useRef<HTMLDivElement>(null), needleRef = useRef<HTMLDivElement>(null)
   const drag = useRef<{ grabOffset: number } | null>(null)
   const dur = overview?.durationSec ?? 0
   useEffect(() => {
     const c = ref.current; if (!c) return
-    const dpr = window.devicePixelRatio || 1
-    const w = c.clientWidth, h = c.clientHeight
-    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr) }
-    const ctx = c.getContext('2d'); if (!ctx) return
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    ctx.clearRect(0, 0, w, h)
-    const cs = getComputedStyle(c)
-    const muted = cs.getPropertyValue('--muted').trim() || '#64748b', accent = cs.getPropertyValue('--accent').trim() || '#6366f1'
-    if (!overview) return
-    const n = overview.peaks.length / 2, mid = h / 2
-    ctx.fillStyle = muted; ctx.globalAlpha = 0.6
-    for (let i = 0; i < n; i++) { const x = (i / n) * w; const min = overview.peaks[i * 2]!, max = overview.peaks[i * 2 + 1]!; ctx.fillRect(x, mid - max * (mid - 1), Math.max(1, w / n), Math.max(1, (max - min) * (mid - 1))) }
-    ctx.globalAlpha = 1
-    const x0 = (winStart / dur) * w, x1 = ((winStart + WINDOW) / dur) * w
-    ctx.fillStyle = accent; ctx.globalAlpha = 0.18; ctx.fillRect(x0, 0, x1 - x0, h); ctx.globalAlpha = 0.9
-    ctx.strokeStyle = accent; ctx.lineWidth = 1.5; ctx.strokeRect(x0 + 0.75, 0.75, x1 - x0 - 1.5, h - 1.5)
-  }, [overview, winStart, dur])
-  const secAt = (e: React.PointerEvent) => { const r = e.currentTarget.getBoundingClientRect(); return ((e.clientX - r.left) / r.width) * dur }
+    const draw = () => {
+      const dpr = window.devicePixelRatio || 1
+      const w = c.clientWidth, h = c.clientHeight
+      if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr) }
+      const ctx = c.getContext('2d'); if (!ctx) return
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.clearRect(0, 0, w, h)
+      if (!overview) return
+      const muted = getComputedStyle(c).getPropertyValue('--muted').trim() || '#64748b'
+      const n = overview.peaks.length / 2, mid = h / 2
+      ctx.fillStyle = muted; ctx.globalAlpha = 0.6
+      for (let i = 0; i < n; i++) { const x = (i / n) * w; const min = overview.peaks[i * 2]!, max = overview.peaks[i * 2 + 1]!; ctx.fillRect(x, mid - max * (mid - 1), Math.max(1, w / n), Math.max(1, (max - min) * (mid - 1))) }
+      ctx.globalAlpha = 1
+    }
+    draw()
+    const ro = new ResizeObserver(draw); ro.observe(c)
+    return () => ro.disconnect()
+  }, [overview])
+  useEffect(() => register((viewStart, time) => {
+    const b = boxRef.current, n = needleRef.current
+    if (!b || !n || !dur) return
+    b.style.left = `${(viewStart / dur) * 100}%`; b.style.width = `${(WINDOW / dur) * 100}%`
+    n.style.left = `${Math.min(100, Math.max(0, (time / dur) * 100))}%`
+  }), [register, dur])
+  const secAt = (e: React.PointerEvent) => { const r = e.currentTarget.getBoundingClientRect(); return Math.min(dur, Math.max(0, ((e.clientX - r.left) / r.width) * dur)) }
+  const down = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!dur) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    const s = secAt(e)
+    if (mode === 'continuous') { drag.current = { grabOffset: 0 }; onSeek(s); return }
+    const ws = getWinStart(), inside = s >= ws && s <= ws + WINDOW
+    drag.current = { grabOffset: inside ? s - ws : WINDOW / 2 }
+    onMove(s - drag.current.grabOffset)
+  }
+  const move = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!drag.current || !dur) return
+    if (mode === 'continuous') onSeek(secAt(e)); else onMove(secAt(e) - drag.current.grabOffset)
+  }
   return (
     <div className="relative">
-      <canvas ref={ref} className={clsx('block h-10 w-full rounded-md border border-border bg-surface-2/40', dur ? 'cursor-grab active:cursor-grabbing' : '')}
-        onPointerDown={(e) => { if (!dur) return; const s = secAt(e); const inside = s >= winStart && s <= winStart + WINDOW; drag.current = { grabOffset: inside ? s - winStart : WINDOW / 2 }; e.currentTarget.setPointerCapture(e.pointerId); onMove(s - drag.current.grabOffset) }}
-        onPointerMove={(e) => { if (drag.current && dur) onMove(secAt(e) - drag.current.grabOffset) }}
-        onPointerUp={() => { drag.current = null }} onPointerCancel={() => { drag.current = null }} />
-      {dur > 0 && <div className="pointer-events-none absolute inset-y-0 w-px bg-text" style={{ left: `${Math.min(100, Math.max(0, (time / dur) * 100))}%` }} />}
+      <canvas ref={ref} className={clsx('block h-10 w-full rounded-md border border-border bg-surface-2/40', dur ? (mode === 'loop' ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer') : '')}
+        onPointerDown={down} onPointerMove={move} onPointerUp={() => { drag.current = null }} onPointerCancel={() => { drag.current = null }} />
+      {dur > 0 && <div ref={boxRef} className="pointer-events-none absolute inset-y-0 rounded-sm border-[1.5px] border-accent/90 bg-accent/18" />}
+      {dur > 0 && <div ref={needleRef} className="pointer-events-none absolute inset-y-0 w-px bg-text" />}
       {!overview && <div className="absolute inset-0 flex items-center justify-center text-[11px] text-muted"><Spinner className="mr-1 text-accent" /> reading the whole recording…</div>}
-      {overview && <div className="pointer-events-none absolute right-1.5 top-0.5 text-[10px] tabular-nums text-muted">whole recording · drag the window</div>}
+      {overview && <div className="pointer-events-none absolute right-1.5 top-0.5 text-[10px] tabular-nums text-muted">whole recording · {mode === 'loop' ? 'drag the window' : 'click or drag to jump'}</div>}
     </div>
   )
-}
-
-function TimeAxis({ startOffset, duration }: { startOffset: number; duration: number }) {
-  const step = duration > 120 ? 30 : duration > 60 ? 10 : 5
-  const ticks: number[] = []
-  for (let t = 0; t <= duration + 0.01; t += step) ticks.push(t)
-  return (
-    <div className="relative h-4 text-[10px] tabular-nums text-muted">
-      {ticks.map((t) => <span key={t} className="absolute -translate-x-1/2" style={{ left: `${(t / duration) * 100}%` }}>{fmtTime(startOffset + t)}</span>)}
-    </div>
-  )
-}
+})
