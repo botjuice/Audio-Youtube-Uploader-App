@@ -257,48 +257,184 @@ function Knob({ info, look, resolved, errors, onChange }: { info: LookFieldInfo;
   )
 }
 
-// ── A/B player: two lanes, one clock ──────────────────────────────────────────
+// ── A/B transport: decoded buffers on one Web Audio clock ─────────────────────
+//
+// Two <audio> elements would have to reload on every re-render (a gap, and a reload that resets the
+// position). Instead both excerpts are decoded once and played from AudioBufferSourceNodes started at
+// the same context time. A new render starts fresh sources at the exact current position and
+// crossfades them in over a few milliseconds while the old ones fade out; switching sides is a gain ramp.
+
+type Side = 'original' | 'processed'
+interface Pair<T> { original: T; processed: T }
+interface Voice { src: AudioBufferSourceNode; gain: GainNode }
+const XFADE = 0.03
+
+class Transport {
+  readonly ctx = new AudioContext()
+  private buffers: Pair<AudioBuffer> | null = null
+  private voices: Pair<Voice> | null = null
+  private startedAt = 0      // ctx time at which position 0 played (while playing)
+  private position = 0       // position while paused
+  playing = false
+  side: Side = 'processed'
+  loop = true
+  onEnded: (() => void) | null = null
+
+  get duration(): number { return this.buffers ? Math.min(this.buffers.original.duration, this.buffers.processed.duration) : 0 }
+  get time(): number {
+    if (!this.playing || !this.buffers) return this.position
+    const t = this.ctx.currentTime - this.startedAt
+    return this.loop && this.duration > 0 ? t % this.duration : Math.min(t, this.duration)
+  }
+
+  private voice(buffer: AudioBuffer, audible: boolean, at: number, offset: number): Voice {
+    const src = this.ctx.createBufferSource()
+    src.buffer = buffer
+    src.loop = this.loop; src.loopStart = 0; src.loopEnd = this.duration
+    const gain = this.ctx.createGain()
+    gain.gain.setValueAtTime(audible ? 1 : 0, at)
+    src.connect(gain).connect(this.ctx.destination)
+    src.start(at, offset)
+    return { src, gain }
+  }
+
+  private startVoices(at: number, offset: number): Pair<Voice> {
+    const b = this.buffers!
+    const v = { original: this.voice(b.original, this.side === 'original', at, offset), processed: this.voice(b.processed, this.side === 'processed', at, offset) }
+    v[this.side].src.onended = () => { if (!this.loop && this.voices === v) { this.playing = false; this.position = 0; this.onEnded?.() } }
+    return v
+  }
+
+  private stopVoices(v: Pair<Voice>, at: number, fade: number): void {
+    for (const side of ['original', 'processed'] as const) {
+      const { src, gain } = v[side]
+      src.onended = null
+      gain.gain.cancelScheduledValues(at); gain.gain.setValueAtTime(gain.gain.value, at); gain.gain.linearRampToValueAtTime(0, at + fade)
+      try { src.stop(at + fade + 0.01) } catch { /* already stopped */ }
+    }
+  }
+
+  /** New render: keep playing without a gap — the new voices start at the current position and crossfade in. */
+  load(buffers: Pair<AudioBuffer>): void {
+    const wasPlaying = this.playing
+    const pos = this.time
+    const old = this.voices
+    this.buffers = buffers
+    this.position = Math.min(pos, Math.max(0, this.duration - 0.05))
+    if (wasPlaying) {
+      const at = this.ctx.currentTime + 0.005
+      const v = this.startVoices(at, this.position)
+      v[this.side].gain.gain.setValueAtTime(0, at); v[this.side].gain.gain.linearRampToValueAtTime(1, at + XFADE)
+      if (old) this.stopVoices(old, at, XFADE)
+      this.voices = v
+      this.startedAt = at - this.position
+    } else if (old) { this.stopVoices(old, this.ctx.currentTime, 0.005); this.voices = null }
+  }
+
+  async play(): Promise<void> {
+    if (!this.buffers || this.playing) return
+    await this.ctx.resume()
+    const at = this.ctx.currentTime + 0.005
+    this.voices = this.startVoices(at, this.position)
+    this.startedAt = at - this.position
+    this.playing = true
+  }
+
+  pause(): void {
+    if (!this.playing) return
+    this.position = this.time
+    if (this.voices) this.stopVoices(this.voices, this.ctx.currentTime, 0.008)
+    this.voices = null
+    this.playing = false
+  }
+
+  seek(t: number): void {
+    const c = Math.min(Math.max(0, t), Math.max(0, this.duration - 0.05))
+    if (!this.playing) { this.position = c; return }
+    const at = this.ctx.currentTime + 0.005
+    if (this.voices) this.stopVoices(this.voices, at, 0.008)
+    this.voices = this.startVoices(at, c)
+    this.startedAt = at - c
+  }
+
+  setSide(side: Side): void {
+    this.side = side
+    if (!this.voices) return
+    const at = this.ctx.currentTime
+    for (const s of ['original', 'processed'] as const) {
+      const g = this.voices[s].gain.gain
+      g.cancelScheduledValues(at); g.setValueAtTime(g.value, at); g.linearRampToValueAtTime(s === side ? 1 : 0, at + 0.015)
+      this.voices[s].src.onended = s === side ? () => { if (!this.loop && this.voices) { this.playing = false; this.position = 0; this.onEnded?.() } } : null
+    }
+  }
+
+  setLoop(loop: boolean): void {
+    this.loop = loop
+    if (this.voices) for (const s of ['original', 'processed'] as const) this.voices[s].src.loop = loop
+  }
+
+  dispose(): void { this.pause(); void this.ctx.close() }
+}
+
+const decoded = new Map<string, Promise<AudioBuffer>>()
+function decode(ctx: AudioContext, file: string): Promise<AudioBuffer> {
+  let p = decoded.get(file)
+  if (!p) {
+    p = fetch(audioUrl(file)).then((r) => { if (!r.ok) throw new Error(`Could not load ${file.split('/').pop()} (${r.status})`); return r.arrayBuffer() }).then((ab) => ctx.decodeAudioData(ab))
+    decoded.set(file, p)
+    p.catch(() => decoded.delete(file))
+    if (decoded.size > 12) decoded.delete(decoded.keys().next().value!)   // the plugin caches files; we keep a few decodes around for quick A/B of knob states
+  }
+  return p
+}
 
 function AbPlayer({ processed, original, startOffset, stale }: { processed: AudioPreviewSide; original: AudioPreviewSide; startOffset: number; stale: boolean }) {
-  const [which, setWhich] = useState<'original' | 'processed'>('processed')
-  // Served by the app's yj-audio:// protocol (blob: media is refused on a file:// page).
-  const urls = useMemo(() => ({ o: audioUrl(original.file), p: audioUrl(processed.file) }), [original.file, processed.file])
+  const notify = useStore((s) => s.notify)
+  const tRef = useRef<Transport | null>(null)
+  const transport = () => (tRef.current ??= new Transport())
+  const [which, setWhich] = useState<Side>('processed')
   const [playing, setPlaying] = useState(false)
   const [loop, setLoop] = useState(true)
   const [time, setTime] = useState(0)
-  const oRef = useRef<HTMLAudioElement>(null), pRef = useRef<HTMLAudioElement>(null)
-  const duration = Math.min(processed.durationSec, original.durationSec) || processed.durationSec
-  const keepRef = useRef({ time: 0, playing: false })
-  keepRef.current = { time, playing }
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [duration, setDuration] = useState(Math.min(processed.durationSec, original.durationSec) || processed.durationSec)
+  useEffect(() => () => { tRef.current?.dispose(); tRef.current = null }, [])
 
-  useEffect(() => {   // new media loaded → restore position and keep playing if we were
-    const o = oRef.current, p = pRef.current
-    if (!o || !p) return
-    const t = Math.min(keepRef.current.time, Math.max(0, duration - 0.1))
-    const onReady = () => { o.currentTime = t; p.currentTime = t; if (keepRef.current.playing) void Promise.all([o.play(), p.play()]).catch(() => {}) }
-    if (p.readyState >= 1) onReady(); else p.addEventListener('loadedmetadata', onReady, { once: true })
-    return () => p.removeEventListener('loadedmetadata', onReady)
-  }, [urls, duration])
+  // Decode the new pair and hand it to the transport (which keeps playing through the swap). Newest wins.
+  const loadSeq = useRef(0)
+  useEffect(() => {
+    const t = transport(), mine = ++loadSeq.current
+    let live = true
+    setLoading(true); setLoadError(null)
+    Promise.all([decode(t.ctx, original.file), decode(t.ctx, processed.file)]).then(([o, p]) => {
+      if (!live || mine !== loadSeq.current) return
+      t.load({ original: o, processed: p })
+      setDuration(t.duration); setTime(t.time); setLoading(false)
+    }).catch((e) => { if (live && mine === loadSeq.current) { setLoading(false); setLoadError(errText(e)); notify('error', errText(e)) } })
+    return () => { live = false }
+  }, [original.file, processed.file])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {   // which side is audible
-    if (oRef.current) oRef.current.muted = which !== 'original'
-    if (pRef.current) pRef.current.muted = which !== 'processed'
-  }, [which, urls])
+  useEffect(() => { transport().onEnded = () => { setPlaying(false); setTime(0) } }, [])
+  useEffect(() => {   // clock display while playing
+    if (!playing) return
+    let raf = 0
+    const tick = () => { setTime(transport().time); raf = requestAnimationFrame(tick) }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [playing])
 
-  const both = () => [oRef.current, pRef.current].filter((a): a is HTMLAudioElement => !!a)
-  const play = () => { void Promise.all(both().map((a) => a.play())).catch(() => {}); setPlaying(true) }
-  const pause = () => { both().forEach((a) => a.pause()); setPlaying(false) }
-  const seek = (t: number) => { const c = Math.min(Math.max(0, t), Math.max(0, duration - 0.05)); both().forEach((a) => { a.currentTime = c }); setTime(c) }
-  const onTick = (a: HTMLAudioElement) => {
-    const t = a.currentTime; setTime(t)
-    for (const b of both()) if (b !== a && Math.abs(b.currentTime - t) > 0.08) b.currentTime = t   // keep the silent lane on the same clock
-  }
+  const play = () => void transport().play().then(() => setPlaying(transport().playing))
+  const pause = () => { transport().pause(); setPlaying(false); setTime(transport().time) }
+  const seek = (t: number) => { transport().seek(t); setTime(transport().time) }
+  const pick = (s: Side) => { transport().setSide(s); setWhich(s) }
+  const toggleLoop = () => setLoop((l) => { transport().setLoop(!l); return !l })
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
       if (e.key === ' ') { e.preventDefault(); playing ? pause() : play() }
-      else if (e.key.toLowerCase() === 's') setWhich((w) => (w === 'original' ? 'processed' : 'original'))
+      else if (e.key.toLowerCase() === 's') pick(which === 'original' ? 'processed' : 'original')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -306,22 +442,23 @@ function AbPlayer({ processed, original, startOffset, stale }: { processed: Audi
 
   const audible = which === 'processed' ? processed : original
   return (
-    <div className={clsx('rounded-xl border border-border bg-surface', stale && 'opacity-70')}>
+    <div className="rounded-xl border border-border bg-surface">
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
-        <Button size="sm" onClick={playing ? pause : play}>{playing ? <Pause size={14} /> : <Play size={14} />} {playing ? 'Pause' : 'Play'}</Button>
+        <Button size="sm" onClick={playing ? pause : play} disabled={(loading || !!loadError) && !playing}>{playing ? <Pause size={14} /> : <Play size={14} />} {playing ? 'Pause' : 'Play'}</Button>
         <div className="inline-flex overflow-hidden rounded-lg border border-border text-xs">
           {(['original', 'processed'] as const).map((w) => (
-            <button key={w} type="button" onClick={() => setWhich(w)} className={clsx('px-3 h-8 no-drag transition-colors', which === w ? 'bg-accent/15 text-accent font-medium' : 'text-muted hover:text-text')}>{w === 'original' ? 'Original' : 'Processed'}</button>
+            <button key={w} type="button" onClick={() => pick(w)} className={clsx('px-3 h-8 no-drag transition-colors', which === w ? 'bg-accent/15 text-accent font-medium' : 'text-muted hover:text-text')}>{w === 'original' ? 'Original' : 'Processed'}</button>
           ))}
         </div>
-        <button type="button" onClick={() => setLoop((l) => !l)} className={clsx('inline-flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs no-drag', loop ? 'border-accent/40 text-accent bg-accent/10' : 'border-border text-muted')} title="Loop the excerpt"><Repeat size={13} /> Loop</button>
+        <button type="button" onClick={toggleLoop} className={clsx('inline-flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs no-drag', loop ? 'border-accent/40 text-accent bg-accent/10' : 'border-border text-muted')} title="Loop the excerpt"><Repeat size={13} /> Loop</button>
         <span className="text-xs tabular-nums text-muted">{fmtTime(startOffset + time)} / {fmtTime(startOffset + duration)}</span>
-        {stale && <span className="inline-flex items-center gap-1 text-xs text-muted"><Spinner className="text-accent" /> rendering the new knobs…</span>}
+        {(stale || loading) && <span className="inline-flex items-center gap-1 text-xs text-muted"><Spinner className="text-accent" /> {stale ? 'rendering the new knobs…' : 'loading…'}</span>}
+        {loadError && !loading && <span className="inline-flex items-center gap-1 text-xs text-err"><AlertTriangle size={13} /> {loadError}</span>}
         <span className="ml-auto text-[11px] text-muted">Space = play/pause · S = switch · both lanes share one clock</span>
       </div>
-      <div className="px-4 py-3 space-y-2">
-        <Lane label="Original" side={original} active={which === 'original'} time={time} duration={duration} onSeek={seek} onPick={() => setWhich('original')} />
-        <Lane label="Processed" side={processed} active={which === 'processed'} time={time} duration={duration} onSeek={seek} onPick={() => setWhich('processed')} />
+      <div className={clsx('px-4 py-3 space-y-2 transition-opacity', stale && 'opacity-80')}>
+        <Lane label="Original" side={original} active={which === 'original'} time={time} duration={duration} onSeek={seek} onPick={() => pick('original')} />
+        <Lane label="Processed" side={processed} active={which === 'processed'} time={time} duration={duration} onSeek={seek} onPick={() => pick('processed')} />
         <TimeAxis startOffset={startOffset} duration={duration} />
       </div>
       <div className="grid grid-cols-2 gap-x-6 gap-y-1 border-t border-border px-4 py-3 text-xs sm:grid-cols-4">
@@ -331,8 +468,6 @@ function AbPlayer({ processed, original, startOffset, stale }: { processed: Audi
         <Stat label="Channels" value={processed.channels === 2 ? 'stereo' : 'mono'} hint={processed.channels === 2 ? 'reverb makes it stereo' : undefined} />
         {(processed.warnings.length > 0 || original.warnings.length > 0) && <div className="col-span-full text-[11px] text-warn">{[...processed.warnings, ...original.warnings].join(' · ')}</div>}
       </div>
-      <audio ref={oRef} src={urls.o} loop={loop} preload="auto" onTimeUpdate={(e) => which === 'original' && onTick(e.currentTarget)} onEnded={() => !loop && setPlaying(false)} />
-      <audio ref={pRef} src={urls.p} loop={loop} preload="auto" onTimeUpdate={(e) => which === 'processed' && onTick(e.currentTarget)} onEnded={() => !loop && setPlaying(false)} />
     </div>
   )
 }

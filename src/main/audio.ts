@@ -132,7 +132,7 @@ export const audioUrl = (file: string) => `${AUDIO_SCHEME}://preview/?p=${encode
 
 /** Must run before app ready. */
 export function registerAudioScheme(): void {
-  protocol.registerSchemesAsPrivileged([{ scheme: AUDIO_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: false } }])
+  protocol.registerSchemesAsPrivileged([{ scheme: AUDIO_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true, bypassCSP: false } }])
 }
 
 /** After app ready: serve preview files from the open library's audio folder, nothing else. Byte ranges are honoured so <audio> can seek. */
@@ -141,7 +141,7 @@ export function installAudioProtocol(getLibrary: () => string | null | undefined
     try {
       const library = getLibrary()
       const file = new URL(req.url).searchParams.get('p')
-      if (!library || !file) return new Response('No library open', { status: 404 })
+      if (!library || !file) return new Response('No library open', { status: 404, headers: { 'Access-Control-Allow-Origin': '*' } })
       const target = previewFilePath(library, file)
       const size = (await fs.stat(target)).size
       const type = target.toLowerCase().endsWith('.flac') ? 'audio/flac' : 'application/octet-stream'
@@ -154,11 +154,12 @@ export function installAudioProtocol(getLibrary: () => string | null | undefined
         status = 206
       }
       const body = Readable.toWeb(createReadStream(target, { start, end })) as unknown as ReadableStream
-      const headers: Record<string, string> = { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Length': String(end - start + 1), 'Cache-Control': 'no-store' }
+      // the window is a file:// page, so a fetch() to this scheme is cross-origin and needs CORS
+      const headers: Record<string, string> = { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Length': String(end - start + 1), 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges' }
       if (status === 206) headers['Content-Range'] = `bytes ${start}-${end}/${size}`
       return new Response(body, { status, headers })
     } catch (e) {
-      return new Response(e instanceof Error ? e.message : String(e), { status: 403 })
+      return new Response(e instanceof Error ? e.message : String(e), { status: 403, headers: { 'Access-Control-Allow-Origin': '*' } })
     }
   })
 }
