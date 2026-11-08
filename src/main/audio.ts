@@ -102,27 +102,33 @@ async function cutOriginal(library: string, audioPath: string, start: number, se
   return out
 }
 
-// Processed chunks of an old look are pointless the moment the look changes: the editor bumps the generation and we abort them.
-let currentGeneration = 0
-const inflight = new Map<AbortController, number>()
+// Processed chunks of an old look are pointless the moment the look changes: the editor sends a newer generation token
+// (a timestamp, so it survives page reloads) and we abort older renders — per recording, so switching recordings doesn't
+// cancel anything.
+const currentGeneration = new Map<string, number>()
+const inflight = new Map<AbortController, { path: string; gen: number }>()
 const MAX_CONCURRENT = 2
 let running = 0
 const queue: (() => void)[] = []
 const slot = () => new Promise<void>((res) => { if (running < MAX_CONCURRENT) { running++; res() } else queue.push(() => { running++; res() }) })
 const release = () => { running--; queue.shift()?.() }
 
-export function cancelAudioTiles(generation: number): void {
-  if (generation > currentGeneration) currentGeneration = generation
-  for (const [ac, gen] of inflight) if (gen > 0 && gen < currentGeneration) ac.abort()
+export function cancelAudioTiles(generation: number, audioPath?: string): void {
+  const paths = audioPath ? [audioPath] : [...currentGeneration.keys()]
+  for (const path of paths) {
+    if (generation > (currentGeneration.get(path) ?? 0)) currentGeneration.set(path, generation)
+    const cur = currentGeneration.get(path) ?? 0
+    for (const [ac, x] of inflight) if (x.path === path && x.gen > 0 && x.gen < cur) ac.abort()
+  }
 }
 
 /** Render one chunk: the raw original (cut only) or the processed audio with a warm-up pre-roll the player skips. */
 export async function renderAudioTile(library: string, audioPath: string, input: AudioTileInput): Promise<AudioTileResult> {
   const gen = input.kind === 'processed' ? (input.generation ?? 0) : 0
-  if (gen) cancelAudioTiles(gen)
-  if (gen && gen < currentGeneration) return { ok: false, reason: 'CANCELLED', message: 'superseded' }
+  if (gen) cancelAudioTiles(gen, audioPath)
+  if (gen && gen < (currentGeneration.get(audioPath) ?? 0)) return { ok: false, reason: 'CANCELLED', message: 'superseded' }
   const ac = new AbortController()
-  inflight.set(ac, gen)
+  inflight.set(ac, { path: audioPath, gen })
   await slot()
   try {
     if (ac.signal.aborted) return { ok: false, reason: 'CANCELLED', message: 'superseded' }

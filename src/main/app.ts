@@ -424,7 +424,7 @@ class YoosyApp {
     return renderAudioTile(library, this.recordAudioPath(input.recordId), input)
   }
 
-  async cancelAudioTiles(generation: number): Promise<void> { cancelAudioTiles(generation) }
+  async cancelAudioTiles(generation: number, recordId?: string): Promise<void> { cancelAudioTiles(generation, recordId ? this.recordAudioPath(recordId) : undefined) }
 
   getAudioOverview(recordId: string): Promise<AudioOverview> { return audioOverview(this.req().library, this.recordAudioPath(recordId)) }
 

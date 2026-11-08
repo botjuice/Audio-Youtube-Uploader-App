@@ -38,7 +38,7 @@ export function registerIpc(): void {
     syncWithYouTube: () => yoosy.syncWithYouTube(),
     setAudioLook: (_w, st) => yoosy.setAudioLook(st),
     renderAudioTile: (_w, input) => yoosy.renderAudioTile(input),
-    cancelAudioTiles: (_w, g) => yoosy.cancelAudioTiles(g),
+    cancelAudioTiles: (_w, g, id) => yoosy.cancelAudioTiles(g, id),
     getAudioOverview: (_w, id) => yoosy.getAudioOverview(id),
     analyseAudio: (_w, id) => yoosy.analyseAudio(id),
     previewThumbnail: (_w, id) => yoosy.previewThumbnail(id),

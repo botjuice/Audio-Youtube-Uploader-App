@@ -54,7 +54,7 @@ export interface Api {
   // audio editor
   setAudioLook(state: AudioLookState): Promise<void>
   renderAudioTile(input: AudioTileInput): Promise<AudioTileResult>   // one 5 s chunk (processed with warm-up pre-roll, or the raw original), with peaks
-  cancelAudioTiles(generation: number): Promise<void>                 // stop rendering processed chunks older than this generation
+  cancelAudioTiles(generation: number, recordId?: string): Promise<void>   // stop rendering processed chunks older than this generation (for one recording, or all)
   getAudioOverview(recordId: string): Promise<AudioOverview>          // whole-recording waveform for the window strip (cached)
   analyseAudio(recordId: string): Promise<AudioAnalysis>
   // thumbnails

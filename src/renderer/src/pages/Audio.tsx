@@ -395,7 +395,8 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
   const [matchLoudness, setMatchLoudness] = useState(false)
   const [tiles, setTiles] = useState<Map<string, Loaded>>(() => new Map())
   const [tick, setTick] = useState(0)
-  const genRef = useRef(1)
+  // generation = a timestamp: strictly newer than anything the main process has seen, even after a page reload
+  const genRef = useRef(Date.now())
   const lookKey = JSON.stringify(look)
   const inflight = useRef(new Set<string>())
   const failed = useRef(new Map<string, string>())
@@ -403,11 +404,11 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
 
   // look changed → new generation: processed chunks become stale (kept playing until replaced), old renders cancelled
   useEffect(() => {
-    genRef.current++
+    genRef.current = Math.max(genRef.current + 1, Date.now())
     refGainRef.current = null
     transport().setRefGain(null)
     for (const k of [...failed.current.keys()]) if (k.startsWith('processed:')) failed.current.delete(k)
-    void window.api.cancelAudioTiles(genRef.current)
+    void window.api.cancelAudioTiles(genRef.current, recordId)
     setTick((n) => n + 1)
   }, [lookKey])  // eslint-disable-line react-hooks/exhaustive-deps
 
