@@ -119,12 +119,13 @@ export default function AudioPage() {
             <Button size="sm" variant="ghost" disabled={!record || analysing} onClick={analyse} title="Measure the whole recording: loudness, peaks, hiss, rumble, clipping"><Waves size={13} /> {analysing ? 'Analysing…' : analysis ? 'Re-analyse' : 'Analyse recording'}</Button>
           </div>
           {analysis && (
-            <div className="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-x-4 gap-y-2 rounded-xl border border-border bg-surface px-4 py-3 text-xs">
-              <Stat label="Length" value={fmtTime(analysis.durationSec)} />
-              <Stat label="Loudness" value={`${analysis.lufs.toFixed(1)} LUFS`} hint={`range ${analysis.lra.toFixed(1)} LU`} />
-              <Stat label="True peak" value={db(analysis.truePeak, 'dBTP')} hint={analysis.clipped ? 'clipped' : `${analysis.hotSamplesPct.toFixed(3)} % hot`} tone={analysis.clipped ? 'err' : undefined} />
-              <Stat label="Hiss / rumble" value={`${analysis.hissDb.toFixed(0)} / ${analysis.rumbleDb.toFixed(0)} dB`} hint="relative to the voice; lower is cleaner" />
-              {analysis.hints.length > 0 && <div className="col-span-full mt-1 text-[11px] text-muted">{analysis.hints.join(' · ')}</div>}
+            <div className="@container rounded-xl border border-border bg-surface px-4 py-3 text-xs"><div className="grid grid-cols-2 gap-x-6 gap-y-3 @lg:grid-cols-4">
+              <Stat label="Length" value={fmtTime(analysis.durationSec)} hint={`${Math.round(analysis.sampleRate / 1000)} kHz · ${analysis.channels === 1 ? 'mono' : analysis.channels === 2 ? 'stereo' : `${analysis.channels} ch`}`} />
+              <Stat label="Loudness" value={`${analysis.lufs.toFixed(1)} LUFS`} hint={`range ${analysis.lra.toFixed(1)} LU`} title="Integrated loudness of the whole recording, and how much it varies (loudness range)." />
+              <Stat label="True peak" value={db(analysis.truePeak, 'dBTP')} hint={analysis.clipped ? 'clipped' : `${analysis.hotSamplesPct.toFixed(3)} % near full scale`} tone={analysis.clipped ? 'err' : undefined} title="The highest inter-sample peak. A little above 0 on a decoded AAC file is normal; clipping shows as a large share of samples near full scale." />
+              <Stat label="Hiss · rumble" value={`${analysis.hissDb.toFixed(0)} · ${analysis.rumbleDb.toFixed(0)} dB`} hint="below the voice" title="Background hiss and low rumble, measured relative to the voice. Lower (more negative) is cleaner." />
+            </div>
+              {analysis.hints.length > 0 && <div className="mt-3 border-t border-border pt-2 text-[11px] text-muted">{analysis.hints.join(' · ')}</div>}
             </div>
           )}
           {errors.length > 0 && (
@@ -139,12 +140,12 @@ export default function AudioPage() {
   )
 }
 
-function Stat({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: 'err' }) {
+function Stat({ label, value, hint, tone, title }: { label: string; value: string; hint?: string; tone?: 'err'; title?: string }) {
   return (
-    <div>
+    <div className="min-w-0" title={title}>
       <div className="text-[11px] text-muted">{label}</div>
-      <div className={clsx('tabular-nums', tone === 'err' && 'text-err')}>{value}</div>
-      {hint && <div className="text-[10.5px] text-muted">{hint}</div>}
+      <div className={clsx('whitespace-nowrap text-[13px] tabular-nums', tone === 'err' && 'text-err')}>{value}</div>
+      {hint && <div className="truncate text-[10.5px] text-muted" title={hint}>{hint}</div>}
     </div>
   )
 }
@@ -879,13 +880,14 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
         <TimeStrip anchor={anchor} duration={duration} register={register} />
         <Overview overview={overview} mode={mode} register={register} getWinStart={() => winRef.current} onMove={onOverviewMove} onSeek={onOverviewSeek} />
       </div>
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-x-6 gap-y-2 border-t border-border px-4 py-3 text-xs">
-        <Stat label="Processed loudness" value={procLufs !== null && Number.isFinite(procLufs) ? `${procLufs.toFixed(1)} LUFS` : '—'} hint="at the playhead" />
-        <Stat label="Original loudness" value={overview && Number.isFinite(overview.lufs) ? `${overview.lufs.toFixed(1)} LUFS` : '—'} hint={matchLoudness ? 'raised to the target' : 'whole recording'} />
-        <Stat label="Gain applied" value={refGain === null ? '—' : db(refGain)} hint="loudness levelling" />
-        <Stat label="Channels" value={cur ? (cur.channels === 2 ? 'stereo' : 'mono') : '—'} hint={cur?.channels === 2 ? 'reverb makes it stereo' : undefined} />
-        {cur && cur.warnings.length > 0 && <div className="col-span-full flex items-center gap-1 text-[11px] text-warn"><AlertTriangle size={12} /> {cur.warnings.join(' · ')}</div>}
-        {firstFailure && <div className="col-span-full flex items-center gap-1 text-[11px] text-warn"><AlertTriangle size={12} /> A chunk could not be rendered: {firstFailure[1]}</div>}
+      <div className="@container border-t border-border px-4 py-3 text-xs"><div className="grid grid-cols-2 gap-x-6 gap-y-3 @lg:grid-cols-4">
+        <Stat label="Processed" value={procLufs !== null && Number.isFinite(procLufs) ? `${procLufs.toFixed(1)} LUFS` : '—'} hint="at the playhead" />
+        <Stat label="Original" value={overview && Number.isFinite(overview.lufs) ? `${overview.lufs.toFixed(1)} LUFS` : '—'} hint={matchLoudness ? 'raised to the target' : 'whole recording'} />
+        <Stat label="Levelling gain" value={refGain === null ? '—' : db(refGain)} hint="loudness levelling" />
+        <Stat label="Output" value={cur ? (cur.channels === 2 ? 'stereo' : 'mono') : '—'} hint={cur?.channels === 2 ? 'reverb makes it stereo' : 'processed side'} />
+        </div>
+        {cur && cur.warnings.length > 0 && <div className="mt-2 flex items-center gap-1 text-[11px] text-warn"><AlertTriangle size={12} /> {cur.warnings.join(' · ')}</div>}
+        {firstFailure && <div className="mt-2 flex items-center gap-1 text-[11px] text-warn"><AlertTriangle size={12} /> A chunk could not be rendered: {firstFailure[1]}</div>}
       </div>
     </div>
   )
