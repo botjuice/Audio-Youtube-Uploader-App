@@ -232,18 +232,38 @@ interface Loaded {
   key: string; kind: Side; index: number; gen: number
   buffer: AudioBuffer; offset: number; peaks: number[]; gainDb: number; lufs: number; truePeak: number; channels: number
 }
-interface Voice { src: AudioBufferSourceNode; gain: GainNode; tile: Loaded; endAt: number }
+interface Voice {
+  src: AudioBufferSourceNode
+  /** fixed join envelope + per-chunk level compensation; written once at creation, never cancelled */
+  gain: GainNode
+  /** stop/pause/seek fades; only ever carries explicitly anchored ramps */
+  mute: GainNode
+  tile: Loaded
+  endAt: number
+  stopAt?: number
+}
 
-/** Gain changes must be scheduled a little ahead: anything at "now" is already rendered and lands as a hard step. */
-const LEAD = 0.012
+/**
+ * Gain changes must be scheduled ahead of the render head: anything the audio thread has already passed lands
+ * as a hard step. `currentTime` lags by a few ms and a seek issues ~36 nodes' worth of automation from the
+ * main thread, so 50 ms of slack; it is imperceptible on a pause, seek or switch.
+ */
+const LEAD = 0.05
 /** Fade when a voice starts or stops mid-waveform (play, pause, seek, side switch). */
 const ENTER = 0.012
 
+/**
+ * Why three gain stages: Web Audio automation that is *cancelled* behaves subtly (a later ramp interpolates
+ * from the previous event, which may be seconds old). So nothing here is ever cancelled on a voice: the join
+ * envelope is written once, stops are explicit ramps on a separate mute node, and which side is audible is
+ * decided on two bus gains that carry nothing but side switches.
+ */
 class TileTransport {
   // the plugin writes 48 kHz; decoding into a 44.1 kHz context would resample every chunk on its own and roughen the joins
   readonly ctx = new AudioContext({ sampleRate: 48000 })
   /** every voice goes through here (one place to meter or tap the mix) */
   readonly master = this.ctx.createGain()
+  private readonly bus: Record<Side, GainNode> = { original: this.ctx.createGain(), processed: this.ctx.createGain() }
   side: Side = 'processed'
   loop = true
   playing = false
@@ -259,15 +279,25 @@ class TileTransport {
   /** extra gain on the original side (loudness match), linear */
   originalGain = 1
 
-  constructor() { this.master.connect(this.ctx.destination) }
+  constructor() {
+    this.master.connect(this.ctx.destination)
+    for (const side of ['original', 'processed'] as const) {
+      this.bus[side].gain.setValueAtTime(this.busTarget(side), 0)
+      this.bus[side].connect(this.master)
+    }
+  }
 
   get time(): number { return this.playing ? this.ctx.currentTime - this.startedAt : this.pos }
 
-  private linearGain(t: Loaded): number {
-    if (t.kind === 'original') return this.originalGain
-    return this.refGain === null ? 1 : Math.pow(10, (this.refGain - t.gainDb) / 20)
+  /** Diagnostics: with `window.__yjDebug = true`, every scheduling decision is appended to `window.__yjLog` with the audio-clock time. */
+  private log(msg: string): void {
+    const w = window as unknown as { __yjDebug?: boolean; __yjLog?: string[] }
+    if (!w.__yjDebug) return
+    ;(w.__yjLog ??= []).push(`${this.ctx.currentTime.toFixed(3)} ${msg}`)
   }
-  private target(t: Loaded): number { return t.kind === this.side ? this.linearGain(t) : 0 }
+
+  private busTarget(side: Side): number { return side !== this.side ? 0 : side === 'original' ? this.originalGain : 1 }
+  private compensation(t: Loaded): number { return t.kind === 'original' || this.refGain === null ? 1 : Math.pow(10, (this.refGain - t.gainDb) / 20) }
 
   /**
    * Start one chunk's voice. `ref` is the earliest ctx time it may sound (now + lead, or the loop wrap);
@@ -283,32 +313,29 @@ class TileTransport {
     const dur = endAt - at
     if (dur <= 0.01) return
     const src = this.ctx.createBufferSource(); src.buffer = t.buffer
-    const gain = this.ctx.createGain()
-    const g = this.target(t)
+    const gain = this.ctx.createGain(), mute = this.ctx.createGain()
+    const g = this.compensation(t)
     if (ramp > 0) { gain.gain.setValueAtTime(0, at); gain.gain.linearRampToValueAtTime(g, at + ramp) } else gain.gain.setValueAtTime(g, at)
     if (endAt - (post + JOIN) > at + ramp) { gain.gain.setValueAtTime(g, endAt - (post + JOIN)); gain.gain.linearRampToValueAtTime(0, endAt) }
-    src.connect(gain).connect(this.master)
+    mute.gain.setValueAtTime(1, 0)
+    src.connect(gain).connect(mute).connect(this.bus[t.kind])
     src.start(at, offset, dur)
-    const v: Voice = { src, gain, tile: t, endAt }
+    this.log(`schedule ${t.key} at=${at.toFixed(3)} offset=${offset.toFixed(3)} dur=${dur.toFixed(3)} ramp=${ramp.toFixed(3)} g=${g.toFixed(3)} end=${endAt.toFixed(3)}`)
+    const v: Voice = { src, gain, mute, tile: t, endAt }
     src.onended = () => { if (into.get(t.key) === v) into.delete(t.key) }
     into.set(t.key, v)
   }
 
-  /**
-   * Glide a gain to a value from `at`. A linear ramp here would be wrong: after cancelling, it interpolates
-   * from the *previous* event, which may be seconds old, so it lands as an instant step. An exponential
-   * approach starts from whatever the value is at `at`, so it always fades. Reaches the target within `fade`.
-   */
-  private glide(g: AudioParam, value: number, at: number, fade: number): void {
-    g.cancelAndHoldAtTime(at)
-    g.setTargetAtTime(value, at, fade / 4)
-  }
-
-  /** Fade a voice out and stop it, starting a little ahead so the ramp really renders. */
+  /** Fade a voice out and stop it. The mute node is 1 until its first stop, so anchoring at 1 is exact; an earlier re-stop replaces a later one. */
   private stop(v: Voice, fade: number, at = this.ctx.currentTime + LEAD): void {
+    if (v.stopAt !== undefined && v.stopAt <= at) return
+    this.log(`stop ${v.tile.key} at=${at.toFixed(3)} fade=${fade} (voice end ${v.endAt.toFixed(3)})`)
     v.src.onended = null
-    this.glide(v.gain.gain, 0, at, fade)
+    const m = v.mute.gain
+    m.cancelScheduledValues(at)
+    m.setValueAtTime(1, at); m.linearRampToValueAtTime(0, at + fade)
     try { v.src.stop(at + fade + 0.02) } catch { /* already stopped */ }
+    v.stopAt = at
   }
 
   private stopAll(fade: number): void {
@@ -327,6 +354,7 @@ class TileTransport {
 
   /** Replace the chunk set. New or re-rendered chunks in the window start at their exact position (crossfading over a stale one); chunks that left the window stop. */
   setTiles(next: Map<string, Loaded>): void {
+    this.log(`setTiles n=${next.size}`)
     this.disarmLoop()
     for (const [key, v] of [...this.voices]) {
       const t = next.get(key)
@@ -369,6 +397,7 @@ class TileTransport {
   }
 
   seek(t: number): void {
+    this.log(`seek ${t.toFixed(3)}`)
     const c = Math.min(Math.max(this.win.start, t), this.win.end - 0.05)
     if (!this.playing) { this.pos = c; return }
     this.stopAll(ENTER)
@@ -381,12 +410,14 @@ class TileTransport {
   private armLoop(): void {
     const wrapAt = this.startedAt + this.win.end
     const base = wrapAt - this.win.start
+    this.log(`armLoop wrapAt=${wrapAt.toFixed(3)} base=${base.toFixed(3)} current voices=${[...this.voices.keys()].join(',')}`)
     const voices = this.startLap(base, wrapAt, ENTER)
     for (const v of this.voices.values()) this.stop(v, ENTER, wrapAt)
     this.lap = { at: wrapAt, startedAt: base, voices }
   }
   private disarmLoop(): void {
     if (!this.lap) return
+    this.log('disarmLoop')
     for (const v of this.lap.voices.values()) { v.src.onended = null; try { v.src.stop() } catch { /* not started */ } }
     this.lap = null
   }
@@ -395,27 +426,26 @@ class TileTransport {
   tick(): void {
     if (!this.playing) return
     const now = this.ctx.currentTime
-    if (this.lap && now >= this.lap.at) { this.startedAt = this.lap.startedAt; this.voices = this.lap.voices; this.lap = null; return }
+    if (this.lap && now >= this.lap.at) { this.log(`commit lap (late by ${(now - this.lap.at).toFixed(3)})`); this.startedAt = this.lap.startedAt; this.voices = this.lap.voices; this.lap = null; return }
     if (this.loop) { if (!this.lap && this.time >= this.win.end - 0.5) this.armLoop() }
     else if (this.time >= this.win.end) this.pause()
   }
 
+  /** Side and loudness-match changes glide on the two bus gains, which carry nothing else. */
   private retarget(): void {
     const at = this.ctx.currentTime + LEAD
-    const all = [...this.voices.values(), ...(this.lap ? this.lap.voices.values() : [])]
-    for (const v of all) {
-      const g = v.gain.gain, target = this.target(v.tile)
-      if (v.endAt <= at) continue
-      this.glide(g, target, at, ENTER)
-      const fadeStart = v.endAt - 2 * JOIN   // keep the join fade-out that the cancel just removed
-      if (fadeStart > at + ENTER) { g.setValueAtTime(target, fadeStart); g.linearRampToValueAtTime(0, v.endAt) }
+    this.log(`retarget side=${this.side} originalGain=${this.originalGain.toFixed(3)}`)
+    for (const side of ['original', 'processed'] as const) {
+      const g = this.bus[side].gain
+      g.cancelAndHoldAtTime(at); g.setTargetAtTime(this.busTarget(side), at, ENTER / 4)
     }
   }
   setSide(side: Side): void { this.side = side; this.retarget() }
   setOriginalGain(g: number): void { this.originalGain = g; this.retarget() }
-  setRefGain(g: number | null): void { this.refGain = g; this.retarget() }
+  /** Known once the first processed chunk of a look arrives — before any voice of that look is scheduled. */
+  setRefGain(g: number | null): void { this.refGain = g }
   setLoop(loop: boolean): void { this.loop = loop; if (!loop) this.disarmLoop() }
-  dispose(): void { this.pause(); void this.ctx.close() }
+  dispose(): void { this.pause(); setTimeout(() => void this.ctx.close(), 100) }
 }
 
 const decoded = new Map<string, Promise<AudioBuffer>>()
