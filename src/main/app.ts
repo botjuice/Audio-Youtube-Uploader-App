@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, nativeTheme, shell } from 'electron'
 import { promises as fs } from 'node:fs'
 import { basename, extname, join } from 'node:path'
-import type { CustomFont, Health, ImportedLook, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, RulePhoto, Settings, StylePatch, StyleRenderInput, StyleSchemaInfo, ThumbnailRule, TokenValidation } from '@shared/types'
+import type { AudioAnalysis, AudioLookState, AudioPreviewInput, AudioPreviewResult, CustomFont, Health, ImportedLook, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, RulePhoto, Settings, StylePatch, StyleRenderInput, StyleSchemaInfo, ThumbnailRule, TokenValidation } from '@shared/types'
 import type { LibrarySnapshot, SurahEntry, SyncResult } from '@shared/api'
 import { DEFAULT_SURAHS, conditionKey, describeRule, describeThumbRule, nextQuotaReset, normaliseQuota, normaliseThumbRules, reciterKey, remainingUploads, surahKey, validateRule, validateThumbRule, validateToken } from '@core/index'
 import { ffmpegAvailable, ffmpegPath } from './ffmpeg'
@@ -13,6 +13,8 @@ import { Pipeline } from './pipeline'
 import { mergeSettings, openLibraryStore, secrets, settings, type LibraryStore } from './store'
 import { Watcher } from './watcher'
 import { updater } from './updater'
+import { DEFAULT_AUDIO_LOOK, analyseRecording, cancelAudioPreview, renderAudioPreview, sweepAudioPreviews } from './audio'
+import { describeLook as describeAudioLook, validateLook } from '../plugins/audio/index'
 import { buildSampleJob, buildThumbnailJob, disposeThumbnails, packLook, pruneDefaultLook, unpackLook, fontPathsInRules, renderJob, resolveRulePhoto, ruleFontsDir, rulePhotoPath, rulePhotosDir, styleForRecord, styleProblems, styleSchema, surahOptions, toPreview } from './thumbnails'
 import { setThumbnail } from './google/youtube'
 import { THUMBNAIL_COST_UNITS, addQuota } from '@core/quota'
@@ -108,6 +110,7 @@ class YoosyApp {
         // the thumbnail rules file always carries exactly one default rule; its patch never repeats the plugin's factory values
         await this.store.thumbRules.update((d) => { d.rules = pruneDefaultLook(normaliseThumbRules(d.rules ?? [])) })
         await this.rescan()
+        void sweepAudioPreviews(path).then((n) => { if (n) activity.info(`Removed ${n} old audio preview file${n === 1 ? '' : 's'}`) }).catch(() => {})
         activity.info(`Library opened: ${path}`)
       } catch (e) {
         activity.error(`Could not open library ${path}: ${e instanceof Error ? e.message : e}`)
@@ -203,6 +206,7 @@ class YoosyApp {
       keywords: this.store?.rules.get().keywords ?? [],
       thumbnailRules: this.store?.thumbRules.get().rules ?? [],
       playlists: this.store?.playlists.get().items ?? [],
+      audioLook: this.store?.audioLook.get() ?? DEFAULT_AUDIO_LOOK,
     }
   }
 
@@ -397,6 +401,33 @@ class YoosyApp {
   }
 
   /** Let the user pick a font file for a rule; a copy goes into the library and its absolute path is what the style patch stores. */
+  // ── audio editor ──────────────────────────────────────────────────────────
+  private recordAudioPath(recordId: string): string {
+    const { library } = this.req()
+    const rec = this.snapshot.records.find((r) => r.id === recordId)
+    if (!rec) throw new Error('Unknown recording')
+    return join(library, rec.reciterFolder, rec.fileName)
+  }
+
+  async setAudioLook(state: AudioLookState): Promise<void> {
+    const { store } = this.req()
+    const v = validateLook(state.look ?? {})
+    if (!v.ok) throw new Error(v.errors.map((e) => `${e.key}: ${e.message}`).join('\n'))
+    const sample = state.sample && this.snapshot.records.some((r) => r.id === state.sample!.recordId) ? { recordId: state.sample.recordId, start: Math.max(0, Number(state.sample.start) || 0) } : null
+    await store.audioLook.replace({ look: state.look ?? {}, sample })
+    activity.info(`Audio look saved: ${describeAudioLook(v.look)}`)
+    this.broadcast('evt:library', this.getLibrary())
+  }
+
+  renderAudioPreview(input: AudioPreviewInput): Promise<AudioPreviewResult> {
+    const { library } = this.req()
+    return renderAudioPreview(library, this.recordAudioPath(input.recordId), input)
+  }
+
+  async cancelAudioPreview(): Promise<void> { cancelAudioPreview() }
+
+  analyseAudio(recordId: string): Promise<AudioAnalysis> { return analyseRecording(this.recordAudioPath(recordId)) }
+
   /** Save a rule's look as a JSON file the user can keep or send to another machine. */
   async exportThumbnailLook(win: BrowserWindow | null, input: { rule: ThumbnailRule; look: StylePatch }): Promise<{ path: string } | null> {
     const slug = (input.rule.label?.trim() || describeThumbRule(input.rule)).replace(/[^\w\u0600-\u06FF.-]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'look'

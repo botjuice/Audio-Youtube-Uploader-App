@@ -1,5 +1,5 @@
 import type {
-  ActivityEntry, Health, KeywordDef, LibraryRecord, NewReciter, Playlist, PlaylistRule, Privacy, Progress,
+  ActivityEntry, AudioAnalysis, AudioLookState, AudioPreviewInput, AudioPreviewResult, Health, KeywordDef, LibraryRecord, NewReciter, Playlist, PlaylistRule, Privacy, Progress,
   CustomFont, ImportedLook, ReciterInfo, ReciterPatch, RecordPatch, RulePhoto, Settings, StylePatch, StyleRenderInput, StyleSchemaInfo, SurahOption, ThumbnailPreview, ThumbnailRule, TokenValidation, UpdateState,
 } from './types'
 
@@ -10,6 +10,7 @@ export interface LibrarySnapshot {
   keywords: KeywordDef[]
   thumbnailRules: ThumbnailRule[]   // list order = priority; the last one is the default look
   playlists: Playlist[]          // cached channel playlists (may be stale until refreshed)
+  audioLook: AudioLookState      // the Default audio look (editor only; uploads keep the original audio)
 }
 
 export interface SurahEntry { key: string; arabic: string; source: 'default' | 'user' }
@@ -50,6 +51,11 @@ export interface Api {
   refreshPlaylists(): Promise<Playlist[]>
   createPlaylist(title: string, privacy: Privacy): Promise<Playlist>
   syncWithYouTube(): Promise<SyncResult>
+  // audio editor
+  setAudioLook(state: AudioLookState): Promise<void>
+  renderAudioPreview(input: AudioPreviewInput): Promise<AudioPreviewResult>   // processed + original excerpt at the same loudness, with waveform peaks
+  cancelAudioPreview(): Promise<void>
+  analyseAudio(recordId: string): Promise<AudioAnalysis>
   // thumbnails
   previewThumbnail(recordId: string): Promise<ThumbnailPreview>
   retryThumbnail(recordId: string): Promise<void>

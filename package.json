@@ -19,7 +19,8 @@
     "thumb": "electron out/main/thumbnail-cli.js",
     "thumb:golden": "electron out/main/thumbnail-cli.js --golden /tmp/thumb-golden",
     "thumb:sweep": "electron out/main/thumbnail-cli.js --sweep /tmp/thumb-sweep",
-    "thumb:hostile": "electron out/main/thumbnail-cli.js --hostile /tmp/thumb-hostile"
+    "thumb:hostile": "electron out/main/thumbnail-cli.js --hostile /tmp/thumb-hostile",
+    "audio": "node out/main/audio-cli.js"
   },
   "author": "Umo & Co.",
   "license": "MIT",

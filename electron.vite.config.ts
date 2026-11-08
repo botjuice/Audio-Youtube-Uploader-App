@@ -14,8 +14,8 @@ export default defineConfig({
     resolve: { alias: aliases },
     build: {
       rollupOptions: {
-        // thumbnail-cli: standalone entry for the thumbnail plugin (renders a job file without the app)
-        input: { index: resolve('src/main/index.ts'), 'thumbnail-cli': resolve('src/plugins/thumbnail/cli.ts') },
+        // thumbnail-cli / audio-cli: standalone entries for the plugins (run without the app)
+        input: { index: resolve('src/main/index.ts'), 'thumbnail-cli': resolve('src/plugins/thumbnail/cli.ts'), 'audio-cli': resolve('src/plugins/audio/cli.ts') },
         output: { format: 'es' },
       },
     },

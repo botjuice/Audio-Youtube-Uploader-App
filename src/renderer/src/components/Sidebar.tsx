@@ -1,7 +1,7 @@
 import { clsx } from 'clsx'
 import { useSyncExternalStore } from 'react'
 import logo from '../assets/logo.png'
-import { Activity, ListMusic, Settings as SettingsIcon, Users, LibraryBig, MonitorPlay, Gauge, Moon, Sun, Image as ImageIcon } from 'lucide-react'
+import { AudioLines, Activity, ListMusic, Settings as SettingsIcon, Users, LibraryBig, MonitorPlay, Gauge, Moon, Sun, Image as ImageIcon } from 'lucide-react'
 import { IconButton } from './ui'
 import { useStore, type Page } from '@/store'
 import { fmtUntil } from '@/lib/format'
@@ -13,6 +13,7 @@ const NAV: { id: Page; label: string; icon: typeof LibraryBig }[] = [
   { id: 'playlists', label: 'Playlists', icon: ListMusic },
   { id: 'reciters', label: 'Reciters', icon: Users },
   { id: 'thumbnails', label: 'Thumbnail rules', icon: ImageIcon },
+  { id: 'audio', label: 'Audio', icon: AudioLines },
   { id: 'activity', label: 'Activity', icon: Activity },
   { id: 'settings', label: 'Settings', icon: SettingsIcon },
 ]

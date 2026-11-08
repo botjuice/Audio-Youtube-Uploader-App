@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { ActivityEntry, Health, Progress, Settings, UpdateState } from '@shared/types'
 import type { LibrarySnapshot } from '@shared/api'
 
-export type Page = 'library' | 'playlists' | 'reciters' | 'thumbnails' | 'settings' | 'activity'
+export type Page = 'library' | 'playlists' | 'reciters' | 'thumbnails' | 'audio' | 'settings' | 'activity'
 export interface Toast { id: number; kind: 'info' | 'success' | 'error'; text: string }
 
 interface State {
@@ -26,7 +26,7 @@ interface State {
   saveSettings(patch: Partial<Settings>): Promise<void>
 }
 
-const EMPTY: LibrarySnapshot = { reciters: [], records: [], rules: [], keywords: [], thumbnailRules: [], playlists: [] }
+const EMPTY: LibrarySnapshot = { reciters: [], records: [], rules: [], keywords: [], thumbnailRules: [], playlists: [], audioLook: { look: {}, sample: null } }
 let seq = 0
 
 export const errText = (e: unknown): string =>

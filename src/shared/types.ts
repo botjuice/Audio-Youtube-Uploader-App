@@ -175,6 +175,20 @@ export interface StyleRenderInput { sample: ThumbnailSample; style: StylePatch; 
 export interface RulePhoto { file: string; dataUrl: string }
 
 /** A font file the user supplied, copied into <library>/.yoosyjoosy/fonts/. `path` is what goes into the style patch. */
+// ── Audio editor ──────────────────────────────────────────────────────────────
+export type { LookPatch as AudioLookPatch, LookFieldInfo as AudioFieldInfo } from '../plugins/audio/look'
+export type { AudioAnalysis } from '../plugins/audio/types'
+/** The one audio look (a patch over the plugin's factory defaults) plus the editor's last sample. Editor only for now: uploads still use the original audio. */
+export interface AudioLookState { look: import('../plugins/audio/look').LookPatch; sample: { recordId: string; start: number } | null }
+export interface AudioPreviewInput { recordId: string; start: number; seconds: number; look: import('../plugins/audio/look').LookPatch }
+export interface AudioPreviewSide {
+  file: string            // FLAC the plugin wrote; the window plays it through the yj-audio:// protocol
+  durationSec: number; channels: number; lufs: number; truePeak: number; gainDb: number; warnings: string[]
+  /** waveform envelope: [min, max] pairs in −1…1, interleaved */
+  peaks: number[]
+}
+export type AudioPreviewResult = { ok: true; processed: AudioPreviewSide; original: AudioPreviewSide } | { ok: false; reason: string; message: string }
+
 /** Result of importing a thumbnail look file: the file (font paths already pointing at restored local copies) and what was adjusted. */
 export interface ImportedLook { file: import('../core/look-file').LookFile; notes: string[] }
 

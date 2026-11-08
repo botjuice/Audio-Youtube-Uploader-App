@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { yoosy } from './app'
 import { registerIpc } from './ipc'
+import { installAudioProtocol, registerAudioScheme } from './audio'
 import { activity } from './log'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
@@ -99,8 +100,11 @@ function buildTray(): void {
   yoosy.onBroadcast((ch) => { if (ch === 'evt:health') refresh() })
 }
 
+registerAudioScheme()
+
 void app.whenReady().then(async () => {
   installMenu()
+  installAudioProtocol(() => yoosy.settings.libraryPath)
   if (isMac && !app.isPackaged) app.dock?.setIcon(nativeImage.createFromPath(join(iconsDir, 'icon.png')))
   await yoosy.init()
   registerIpc()
