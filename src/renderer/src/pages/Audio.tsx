@@ -740,24 +740,24 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
   return (
     <div className="rounded-xl border border-border bg-surface">
       <div className="border-b border-border px-4 py-2.5">
-        <div className="flex items-center gap-2 whitespace-nowrap">
-          <Button size="sm" onClick={playing ? pause : play} className="w-24 justify-center">{playing ? <Pause size={14} /> : <Play size={14} />} {playing ? 'Pause' : 'Play'}</Button>
-          <div className="inline-flex overflow-hidden rounded-lg border border-border text-xs">
+        <div className="flex h-8 items-center gap-2 whitespace-nowrap">
+          <Button size="sm" onClick={playing ? pause : play} className="w-24 shrink-0 justify-center">{playing ? <Pause size={14} /> : <Play size={14} />} {playing ? 'Pause' : 'Play'}</Button>
+          <div className="inline-flex shrink-0 overflow-hidden rounded-lg border border-border text-xs">
             {(['original', 'processed'] as const).map((w) => (
               <button key={w} type="button" onClick={() => pick(w)} className={clsx('px-3 h-8 no-drag transition-colors', which === w ? 'bg-accent/15 text-accent font-medium' : 'text-muted hover:text-text')}>{w === 'original' ? 'Original' : 'Processed'}</button>
             ))}
           </div>
-          <button type="button" onClick={toggleLoop} className={clsx('inline-flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs no-drag', loop ? 'border-accent/40 text-accent bg-accent/10' : 'border-border text-muted')} title="Loop the window"><Repeat size={13} /> Loop</button>
-          <label className="inline-flex h-8 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-muted" title="Off: the original plays exactly as recorded. On: the original gets one fixed gain so it sits at the levelling target — louder never sounds better, so you judge tone and noise alone. Needs Loudness levelling on. The final clip is not affected either way.">
-            <Switch checked={matchLoudness} onChange={setMatchLoudness} label="Match loudness" disabled={!overview || !look.level} /> Match loudness
+          <button type="button" onClick={toggleLoop} className={clsx('inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border px-2.5 text-xs no-drag', loop ? 'border-accent/40 text-accent bg-accent/10' : 'border-border text-muted')} title="Loop the window"><Repeat size={13} /> Loop</button>
+          <label className="inline-flex h-8 shrink-0 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-muted" title="Off: the original plays exactly as recorded. On: the original gets one fixed gain so it sits at the levelling target — louder never sounds better, so you judge tone and noise alone. Needs Loudness levelling on. The final clip is not affected either way.">
+            <Switch checked={matchLoudness} onChange={setMatchLoudness} label="Match loudness" disabled={!overview || !look.level} /> Match
           </label>
-          <span className="ml-auto min-w-0 truncate text-xs tabular-nums text-muted">{fmtTime(time)} · window {fmtTime(winStart)}–{fmtTime(winStart + WINDOW)}{Number.isFinite(duration) ? ` of ${fmtTime(duration)}` : ''}</span>
+          <span className="ml-auto min-w-0 truncate text-[11px] text-muted" title="Space = play/pause · S = switch side · ←/→ move the window 5 s (shift: 30 s) · scroll over the lanes to move · drag the window on the overview">Space · S · ←/→ · scroll · drag</span>
         </div>
-        <div className="mt-1.5 flex h-4 items-center gap-2 whitespace-nowrap text-[11px] text-muted">
-          <span className="inline-flex w-64 shrink-0 items-center gap-1 tabular-nums">
-            {ready.processed < total && lookOk ? <><Spinner className="text-accent" /> {ready.processed}/{total} chunks{ready.stale ? ` · ${ready.stale} from the previous knobs playing` : ''}</> : <span className="text-muted/70">all {total} chunks ready</span>}
+        <div className="mt-1.5 flex h-4 items-center gap-3 whitespace-nowrap text-[11px] text-muted">
+          <span className="inline-flex min-w-0 flex-1 items-center gap-1 truncate tabular-nums">
+            {ready.processed < total && lookOk ? <><Spinner className="text-accent" /> {ready.processed}/{total} chunks{ready.stale ? ` · ${ready.stale} from the previous settings playing` : ''}</> : <span className="text-muted/70">all {total} chunks ready</span>}
           </span>
-          <span className="ml-auto truncate">Space play · S switch · ←/→ move · scroll over the lanes · drag the window below</span>
+          <span className="shrink-0 tabular-nums">{fmtTime(time)} · window {fmtTime(winStart)}–{fmtTime(winStart + WINDOW)}{Number.isFinite(duration) ? ` of ${fmtTime(duration)}` : ''}</span>
         </div>
       </div>
       <div className="px-4 py-3 space-y-2" onWheel={onWheel}>
