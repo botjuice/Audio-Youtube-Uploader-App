@@ -33,3 +33,38 @@ export function pickUpdateFile(info: LatestInfo, platform: string, arch: string)
 
 export const feedFileName = (platform: string) =>
   platform === 'darwin' ? 'latest-mac.yml' : platform === 'linux' ? 'latest-linux.yml' : 'latest.yml'
+
+/** A response-like shape so the retry helper can be tested without the network. */
+export interface FetchLike { (url: string, init?: RequestInit): Promise<{ ok: boolean; status: number } & Record<string, unknown>> }
+
+/** HTTP statuses worth another try: the server or a gateway in front of it hiccupped, not us. */
+export const isTransientStatus = (status: number): boolean => status === 408 || status === 429 || status >= 500
+
+/** Plain words for a failed feed/download response. */
+export function describeHttpFailure(what: string, status: number): string {
+  if (isTransientStatus(status)) return `GitHub's ${what} didn't answer (HTTP ${status}). This is usually brief — try again in a few minutes.`
+  if (status === 404) return `GitHub's ${what} has no file for this release yet (HTTP 404). Try again later.`
+  return `GitHub's ${what} refused the request (HTTP ${status}).`
+}
+
+/**
+ * fetch with a few retries on transient failures (network errors, 5xx, 429/408), waiting `delaysMs[i]`
+ * between attempts. A non-transient response is returned as-is for the caller to judge; the last
+ * transient response is returned too, so the caller can report its status.
+ */
+export async function fetchWithRetry<R extends { ok: boolean; status: number }>(
+  fetchFn: (url: string, init?: RequestInit) => Promise<R>, url: string, init?: RequestInit,
+  delaysMs: readonly number[] = [2000, 6000], sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<R> {
+  let lastError: unknown
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetchFn(url, init)
+      if (res.ok || !isTransientStatus(res.status) || attempt >= delaysMs.length) return res
+    } catch (e) {
+      lastError = e
+      if (attempt >= delaysMs.length) throw e
+    }
+    await sleep(delaysMs[attempt]!)
+  }
+}

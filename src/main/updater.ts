@@ -6,7 +6,7 @@ import { createWriteStream, promises as fs } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type { UpdateState } from '@shared/types'
-import { compareVersions, feedFileName, parseLatestYml, pickUpdateFile } from '@core/update'
+import { compareVersions, describeHttpFailure, feedFileName, fetchWithRetry, parseLatestYml, pickUpdateFile } from '@core/update'
 import { activity } from './log'
 
 const execFileP = promisify(execFile)
@@ -69,8 +69,9 @@ export class Updater extends EventEmitter {
     const p = (async () => {
       this.set({ status: 'checking', error: null })
       try {
-        const res = await fetch(FEED_BASE + feedFileName(process.platform), { headers: { 'Cache-Control': 'no-cache' }, redirect: 'follow' })
-        if (!res.ok) throw new Error(`Update feed returned ${res.status}`)
+        // GitHub's asset gateway sometimes answers 5xx for a moment; a couple of retries hide that from the user.
+        const res = await fetchWithRetry(fetch, FEED_BASE + feedFileName(process.platform), { headers: { 'Cache-Control': 'no-cache' }, redirect: 'follow' })
+        if (!res.ok) throw new Error(describeHttpFailure('update feed', res.status))
         const info = parseLatestYml(await res.text())
         const checkedAt = new Date().toISOString()
         if (compareVersions(info.version, this.state.current) <= 0) {
@@ -115,8 +116,8 @@ export class Updater extends EventEmitter {
       const tmp = `${target}.part`
       this.set({ status: 'downloading', percent: 0, error: null })
       try {
-        const res = await fetch(this.pendingUrl!, { redirect: 'follow' })
-        if (!res.ok || !res.body) throw new Error(`Download failed: ${res.status}`)
+        const res = await fetchWithRetry(fetch, this.pendingUrl!, { redirect: 'follow' })
+        if (!res.ok || !res.body) throw new Error(describeHttpFailure('download server', res.status))
         const total = Number(res.headers.get('content-length') ?? 0)
         const hash = createHash('sha512')
         const out = createWriteStream(tmp)
