@@ -194,7 +194,7 @@ export interface AudioTile {
   kind: 'processed' | 'original'
   start: number; seconds: number
   file: string             // FLAC; play through yj-audio://
-  offset: number           // seconds into the file where the tile really begins (pre-roll before it)
+  offset: number           // seconds into the file where the tile really begins (pre-roll before it; ≥0.5 s of post-roll follows the tile)
   peaks: number[]          // [min, max] pairs over the tile only
   gainDb: number           // gain the loudness stage applied to this chunk (0 for original)
   lufs: number; truePeak: number; channels: number

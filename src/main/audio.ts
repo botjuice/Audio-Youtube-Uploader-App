@@ -44,11 +44,11 @@ export function bucketPeaks(samples: Int16Array, buckets: number): number[] {
 }
 
 /** Decode a file to 8 kHz mono PCM through ffmpeg and bucket it (fast: a 45 s excerpt is 360k samples). */
-export function peaksOf(file: string, buckets = PEAK_BUCKETS, signal?: AbortSignal, fromSec = 0): Promise<number[]> {
+export function peaksOf(file: string, buckets = PEAK_BUCKETS, signal?: AbortSignal, fromSec = 0, forSec?: number): Promise<number[]> {
   const bin = ffmpegPath()
   if (!bin) return Promise.reject(new Error('ffmpeg is not available on this computer'))
   return new Promise((res, rej) => {
-    const child = spawn(bin, ['-hide_banner', '-loglevel', 'error', ...(fromSec > 0 ? ['-ss', String(fromSec)] : []), '-i', file, '-ac', '1', '-ar', '8000', '-f', 's16le', 'pipe:1'], { windowsHide: true })
+    const child = spawn(bin, ['-hide_banner', '-loglevel', 'error', ...(fromSec > 0 ? ['-ss', String(fromSec)] : []), ...(forSec ? ['-t', String(forSec)] : []), '-i', file, '-ac', '1', '-ar', '8000', '-f', 's16le', 'pipe:1'], { windowsHide: true })
     const chunks: Buffer[] = []
     let err = ''
     child.stdout.on('data', (c: Buffer) => chunks.push(c))
@@ -71,6 +71,10 @@ export function peaksOf(file: string, buckets = PEAK_BUCKETS, signal?: AbortSign
 
 /** Filters start cold at a chunk's first sample; render this much before the chunk and skip it on playback. */
 export const TILE_PREROLL_S = 4
+/** The original needs no warm-up, only enough before the chunk for the player's 10 ms crossfade and to skip the decoder's first frames. */
+export const ORIGINAL_PREROLL_S = 1
+/** Audio after the nominal chunk end so neighbouring chunks can overlap and crossfade (ffmpeg cuts land a few samples off). */
+export const TILE_POSTROLL_S = 0.5
 const TILE_PEAK_BUCKETS = 160   // per 5 s tile → ~32 per second, plenty for a 45 s window
 
 /** The original, exactly as recorded, cut to a window and stored losslessly (no gain, no processing). */
@@ -125,17 +129,18 @@ export async function renderAudioTile(library: string, audioPath: string, input:
     const h = host(library, ac.signal)
     const start = Math.max(0, input.start), seconds = Math.min(Math.max(0.5, input.seconds), 60)
     if (input.kind === 'original') {
-      const file = await cutOriginal(library, audioPath, start, seconds, ac.signal)
-      const peaks = await peaksOf(file, TILE_PEAK_BUCKETS, ac.signal)
-      const tile: AudioTile = { kind: 'original', start, seconds, file, offset: 0, peaks, gainDb: 0, lufs: NaN, truePeak: NaN, channels: 1 }
+      const pre = Math.min(ORIGINAL_PREROLL_S, start)
+      const file = await cutOriginal(library, audioPath, start - pre, seconds + pre + TILE_POSTROLL_S, ac.signal)
+      const peaks = await peaksOf(file, TILE_PEAK_BUCKETS, ac.signal, pre, seconds)
+      const tile: AudioTile = { kind: 'original', start, seconds, file, offset: pre, peaks, gainDb: 0, lufs: NaN, truePeak: NaN, channels: 1 }
       return { ok: true, tile }
     }
     const v = validateLook(input.look ?? {})
     if (!v.ok) return { ok: false, reason: 'INVALID_LOOK', message: v.errors.map((e) => `${e.key}: ${e.message}`).join('\n') }
     const pre = Math.min(TILE_PREROLL_S, start)
-    const r = await processAudio({ audioPath, look: input.look, preview: { start: start - pre, seconds: seconds + pre } }, h)
+    const r = await processAudio({ audioPath, look: input.look, preview: { start: start - pre, seconds: seconds + pre + TILE_POSTROLL_S } }, h)
     if (!r.ok) return r.reason === 'CANCELLED' ? { ok: false, reason: 'CANCELLED', message: 'superseded' } : r
-    const peaks = await peaksOf(r.file, TILE_PEAK_BUCKETS, ac.signal, pre)
+    const peaks = await peaksOf(r.file, TILE_PEAK_BUCKETS, ac.signal, pre, seconds)
     const tile: AudioTile = { kind: 'processed', start, seconds, file: r.file, offset: pre, peaks, gainDb: r.gainDb, lufs: r.after.lufs, truePeak: r.after.truePeak, channels: r.after.channels }
     return { ok: true, tile }
   } catch (e) {

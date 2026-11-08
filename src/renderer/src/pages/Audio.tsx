@@ -224,16 +224,19 @@ type Side = 'original' | 'processed'
 const TILE = 5
 const WINDOW = 45
 const XFADE = 0.03
+/** neighbouring chunks overlap by this much on each side and crossfade, hiding the few-sample inexactness of ffmpeg cuts */
+const JOIN = 0.01
 const tileKey = (kind: Side, index: number) => `${kind}:${index}`
 
 interface Loaded {
   key: string; kind: Side; index: number; gen: number
   buffer: AudioBuffer; offset: number; peaks: number[]; gainDb: number; lufs: number; truePeak: number; channels: number
 }
-interface Voice { src: AudioBufferSourceNode; gain: GainNode; tile: Loaded }
+interface Voice { src: AudioBufferSourceNode; gain: GainNode; tile: Loaded; endAt: number }
 
 class TileTransport {
-  readonly ctx = new AudioContext()
+  // the plugin writes 48 kHz; decoding into a 44.1 kHz context would resample every chunk on its own and roughen the joins
+  readonly ctx = new AudioContext({ sampleRate: 48000 })
   side: Side = 'processed'
   loop = true
   playing = false
@@ -255,22 +258,27 @@ class TileTransport {
   }
   private target(t: Loaded): number { return t.kind === this.side ? this.linearGain(t) : 0 }
 
-  private schedule(t: Loaded, fadeIn: boolean): void {
+  private schedule(t: Loaded, replacing: boolean): void {
     const now = this.ctx.currentTime
-    const tileStart = t.index * TILE
-    const when = this.startedAt + tileStart
     const lead = 0.005
-    let offset = t.offset, dur = Math.min(TILE, t.buffer.duration - t.offset)
-    let at = when
-    if (when < now + lead) { const skip = now + lead - when; offset += skip; dur -= skip; at = now + lead }
+    // play from JOIN before the chunk to JOIN after it, ramping at both ends so neighbours crossfade
+    const pre = Math.min(JOIN, t.offset)
+    const post = Math.min(JOIN, Math.max(0, t.buffer.duration - t.offset - TILE))
+    const begin = this.startedAt + t.index * TILE - pre
+    const endAt = this.startedAt + t.index * TILE + TILE + post
+    let at = begin, offset = t.offset - pre
+    if (begin < now + lead) { const skip = now + lead - begin; offset += skip; at = now + lead }
+    const dur = endAt - at
     if (dur <= 0.01) return
     const src = this.ctx.createBufferSource(); src.buffer = t.buffer
     const gain = this.ctx.createGain()
     const g = this.target(t)
-    if (fadeIn) { gain.gain.setValueAtTime(0, at); gain.gain.linearRampToValueAtTime(g, at + XFADE) } else gain.gain.setValueAtTime(g, at)
+    const ramp = replacing ? XFADE : (at === begin ? pre + JOIN : 0)
+    if (ramp > 0) { gain.gain.setValueAtTime(0, at); gain.gain.linearRampToValueAtTime(g, at + ramp) } else gain.gain.setValueAtTime(g, at)
+    if (endAt - (post + JOIN) > at + ramp) { gain.gain.setValueAtTime(g, endAt - (post + JOIN)); gain.gain.linearRampToValueAtTime(0, endAt) }
     src.connect(gain).connect(this.ctx.destination)
     src.start(at, offset, dur)
-    const v: Voice = { src, gain, tile: t }
+    const v: Voice = { src, gain, tile: t, endAt }
     src.onended = () => { if (this.voices.get(t.key) === v) this.voices.delete(t.key) }
     this.voices.set(t.key, v)
   }
@@ -339,7 +347,12 @@ class TileTransport {
 
   private retarget(): void {
     const at = this.ctx.currentTime
-    for (const v of this.voices.values()) { const g = v.gain.gain; g.cancelScheduledValues(at); g.setValueAtTime(g.value, at); g.linearRampToValueAtTime(this.target(v.tile), at + 0.015) }
+    for (const v of this.voices.values()) {
+      const g = v.gain.gain, target = this.target(v.tile)
+      g.cancelScheduledValues(at); g.setValueAtTime(g.value, at); g.linearRampToValueAtTime(target, at + 0.015)
+      const fadeStart = v.endAt - 2 * JOIN   // keep the join fade-out that the cancel just removed
+      if (fadeStart > at + 0.015) { g.setValueAtTime(target, fadeStart); g.linearRampToValueAtTime(0, v.endAt) }
+    }
   }
   setSide(side: Side): void { this.side = side; this.retarget() }
   setOriginalGain(g: number): void { this.originalGain = g; this.retarget() }
