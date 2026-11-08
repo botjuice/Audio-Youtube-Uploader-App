@@ -60,3 +60,32 @@ describe('pruneDefaultLook', () => {
     expect(out[1]!.style).toEqual({ photo: { contrast: DEFAULT_STYLE.photo.contrast + 0.2 } })
   })
 })
+
+describe('look files: pack and unpack', () => {
+  it('embeds custom fonts on export and restores them, drops unknown knobs, and reports both', async () => {
+    const { mkdtemp, writeFile, readFile, readdir } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { packLook, unpackLook } = await import('./thumbnails')
+    const src = await mkdtemp(join(tmpdir(), 'look-src-'))
+    const lib = await mkdtemp(join(tmpdir(), 'look-lib-'))
+    const fontPath = join(src, 'MyFont.ttf')
+    await writeFile(fontPath, Buffer.from('not really a font'))
+    const rule = { label: 'Night', overlay: false, style: { reciter: { font: fontPath, scale: 1.2 } } } as never
+    const file = await packLook(rule, { reciter: { font: fontPath, scale: 1.2 }, title: { scale: 0.9 } }, '3.2.2')
+    expect(file.fonts?.[fontPath]).toEqual({ name: 'MyFont.ttf', data: Buffer.from('not really a font').toString('base64') })
+    // simulate another machine: the original path is gone, and the file carries a knob this plugin doesn't know
+    const text = JSON.stringify({ ...file, knobs: { ...file.knobs, future: { thing: 1 } } }).replaceAll(fontPath, '/elsewhere/MyFont.ttf')
+    const out = await unpackLook(text, lib)
+    const restored = (await readdir(join(lib, '.yoosyjoosy', 'fonts')))[0]!
+    expect(restored).toMatch(/^MyFont-\d+\.ttf$/)
+    expect(await readFile(join(lib, '.yoosyjoosy', 'fonts', restored), 'utf8')).toBe('not really a font')
+    expect(out.file.knobs).toEqual({ reciter: { font: join(lib, '.yoosyjoosy', 'fonts', restored), scale: 1.2 } })
+    expect(out.file.look).toEqual({ reciter: { font: join(lib, '.yoosyjoosy', 'fonts', restored), scale: 1.2 }, title: { scale: 0.9 } })
+    expect(out.notes).toEqual(['Font “MyFont.ttf” restored into the library.', 'Skipped a knob this version doesn\'t have: future (unknown knob).'])
+    // a font path that is neither embedded nor present → that knob is dropped with a note
+    const missing = await unpackLook(JSON.stringify({ format: 'yoosy-joosy.thumbnail-look', version: 1, knobs: { meta: { font: '/gone/Font.otf', scale: 1.1 } } }), lib)
+    expect(missing.file.knobs).toEqual({ meta: { scale: 1.1 } })
+    expect(missing.notes[0]).toMatch(/Font file “Font.otf” isn't on this computer/)
+  })
+})

@@ -1,5 +1,5 @@
 import { clsx } from 'clsx'
-import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, FolderOpen, Image as ImageIcon, Layers, Maximize2, Plus, RotateCcw, Trash2, X } from 'lucide-react'
+import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, Download, FolderOpen, Image as ImageIcon, Layers, Maximize2, Plus, RotateCcw, Trash2, Upload, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useStyledPreview } from '@/lib/preview'
@@ -308,6 +308,30 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
   const knobs = countKnobs(rule.style)
   const matches = useMemo(() => countLooks(library.records, rules.some((x) => x.id === rule.id) ? rules.map((x) => (x.id === rule.id ? rule : x)) : [...rules.filter((x) => x.origin !== 'default'), rule, ...rules.filter((x) => x.origin === 'default')]).get(rule.id) ?? 0, [library.records, rules, rule])
 
+  // Export / import: a look file carries the rule's own knobs and its fully resolved look (see core/look-file).
+  const notify = useStore((s) => s.notify)
+  const [importing, setImporting] = useState(false)
+  const fullLook = (): StylePatch => mergePatches(schema!.defaults as unknown as StylePatch, isDefault ? rule.style : mergePatches(defaultStyle, rule.style))
+  const exportLook = async () => {
+    if (!schema) return
+    try { const r = await window.api.exportThumbnailLook({ rule, look: fullLook() }); if (r) notify('success', `Look exported to ${r.path.split(/[\\/]/).pop()}`) }
+    catch (e) { notify('error', errText(e)) }
+  }
+  const importLook = async () => {
+    if (!schema || !baseline) return
+    setImporting(true)
+    try {
+      const r = await window.api.importThumbnailLook()
+      if (!r) return
+      // overlays take the file's changes; base rules take the exact look, stored as differences from what they inherit
+      const style = (rule.overlay ? r.file.knobs : prunePatch(r.file.look as Record<string, unknown>, baseline)) as StylePatch
+      setRule({ ...rule, style })
+      const n = countKnobs(style)
+      notify(r.notes.length ? 'info' : 'success', `Imported ${n} knob${n === 1 ? '' : 's'}${r.file.rule.label ? ` from “${r.file.rule.label}”` : ''}.${r.notes.length ? ` ${r.notes.join(' ')}` : ''}`)
+    } catch (e) { notify('error', errText(e)) }
+    finally { setImporting(false) }
+  }
+
   const patchStyle = (path: string, value: unknown) => {
     if (!baseline) return
     const def = getKnob(baseline, path)
@@ -342,6 +366,8 @@ function RuleEditorModal({ draft, rules, plName, onSave, onDiscard }: {
           <Badge tone={knobs ? 'info' : 'muted'}>{knobs ? `${knobs} knob${knobs === 1 ? '' : 's'} changed` : isDefault ? 'plugin defaults' : 'same as the Default look'}</Badge>
           <span className="text-xs text-muted tabular-nums">{matches} recording{matches === 1 ? '' : 's'} would get this look</span>
           <div className="ml-auto flex items-center gap-2">
+            <Button size="sm" variant="ghost" disabled={!schema} onClick={() => void exportLook()} title="Save this look's knobs as a JSON file (custom fonts included) to keep or use on another computer"><Download size={13} /> Export…</Button>
+            <Button size="sm" variant="ghost" disabled={!schema || importing} onClick={() => void importLook()} title={rule.overlay ? 'Load a look file: this overlay takes the file\'s changed knobs' : 'Load a look file: this rule takes the file\'s exact look (only differences from what it inherits are stored)'}><Upload size={13} /> {importing ? 'Importing…' : 'Import…'}</Button>
             <Button size="sm" variant="ghost" disabled={!knobs} onClick={() => setRule({ ...rule, style: {} })} title={isDefault ? "Back to the plugin's locked design" : 'Back to the Default look'}><RotateCcw size={13} /> {isDefault ? 'Reset all knobs' : 'Reset to Default look'}</Button>
             <IconButton label={dirty ? 'Close (asks before discarding changes)' : 'Close'} onClick={requestClose}><X size={16} /></IconButton>
           </div>

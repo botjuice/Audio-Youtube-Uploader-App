@@ -175,6 +175,9 @@ export interface StyleRenderInput { sample: ThumbnailSample; style: StylePatch; 
 export interface RulePhoto { file: string; dataUrl: string }
 
 /** A font file the user supplied, copied into <library>/.yoosyjoosy/fonts/. `path` is what goes into the style patch. */
+/** Result of importing a thumbnail look file: the file (font paths already pointing at restored local copies) and what was adjusted. */
+export interface ImportedLook { file: import('../core/look-file').LookFile; notes: string[] }
+
 export interface CustomFont { path: string; name: string }
 
 /** The plugin's knob table, so the editor builds its controls from data (ranges, steps, defaults, descriptions). */

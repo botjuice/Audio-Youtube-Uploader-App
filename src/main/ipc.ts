@@ -43,6 +43,8 @@ export function registerIpc(): void {
     chooseRulePhoto: (w, id) => yoosy.chooseRulePhoto(w, id),
     getRulePhoto: (_w, f) => yoosy.getRulePhoto(f),
     chooseFontFile: (w) => yoosy.chooseFontFile(w),
+    exportThumbnailLook: (w, input) => yoosy.exportThumbnailLook(w, input),
+    importThumbnailLook: (w) => yoosy.importThumbnailLook(w),
     listSurahOptions: async () => yoosy.listSurahOptions(),
     startUpload: (_w, ids) => yoosy.startUpload(ids),
     cancelUpload: async () => yoosy.cancelUpload(),

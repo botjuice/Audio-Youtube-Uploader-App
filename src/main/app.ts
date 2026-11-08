@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, nativeTheme, shell } from 'electron'
 import { promises as fs } from 'node:fs'
 import { basename, extname, join } from 'node:path'
-import type { CustomFont, Health, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, RulePhoto, Settings, StyleRenderInput, StyleSchemaInfo, ThumbnailRule, TokenValidation } from '@shared/types'
+import type { CustomFont, Health, ImportedLook, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, RulePhoto, Settings, StylePatch, StyleRenderInput, StyleSchemaInfo, ThumbnailRule, TokenValidation } from '@shared/types'
 import type { LibrarySnapshot, SurahEntry, SyncResult } from '@shared/api'
 import { DEFAULT_SURAHS, conditionKey, describeRule, describeThumbRule, nextQuotaReset, normaliseQuota, normaliseThumbRules, reciterKey, remainingUploads, surahKey, validateRule, validateThumbRule, validateToken } from '@core/index'
 import { ffmpegAvailable, ffmpegPath } from './ffmpeg'
@@ -13,7 +13,7 @@ import { Pipeline } from './pipeline'
 import { mergeSettings, openLibraryStore, secrets, settings, type LibraryStore } from './store'
 import { Watcher } from './watcher'
 import { updater } from './updater'
-import { buildSampleJob, buildThumbnailJob, disposeThumbnails, pruneDefaultLook, fontPathsInRules, renderJob, resolveRulePhoto, ruleFontsDir, rulePhotoPath, rulePhotosDir, styleForRecord, styleProblems, styleSchema, surahOptions, toPreview } from './thumbnails'
+import { buildSampleJob, buildThumbnailJob, disposeThumbnails, packLook, pruneDefaultLook, unpackLook, fontPathsInRules, renderJob, resolveRulePhoto, ruleFontsDir, rulePhotoPath, rulePhotosDir, styleForRecord, styleProblems, styleSchema, surahOptions, toPreview } from './thumbnails'
 import { setThumbnail } from './google/youtube'
 import { THUMBNAIL_COST_UNITS, addQuota } from '@core/quota'
 import type { SurahOption, ThumbnailPreview } from '@shared/types'
@@ -397,6 +397,35 @@ class YoosyApp {
   }
 
   /** Let the user pick a font file for a rule; a copy goes into the library and its absolute path is what the style patch stores. */
+  /** Save a rule's look as a JSON file the user can keep or send to another machine. */
+  async exportThumbnailLook(win: BrowserWindow | null, input: { rule: ThumbnailRule; look: StylePatch }): Promise<{ path: string } | null> {
+    const slug = (input.rule.label?.trim() || describeThumbRule(input.rule)).replace(/[^\w\u0600-\u06FF.-]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'look'
+    const r = await dialog.showSaveDialog(win ?? undefined as never, {
+      title: 'Export this look', defaultPath: join(app.getPath('downloads'), `thumbnail-look-${slug}.json`),
+      filters: [{ name: 'Thumbnail look', extensions: ['json'] }],
+    })
+    if (r.canceled || !r.filePath) return null
+    const file = await packLook(input.rule, input.look, app.getVersion())
+    await fs.writeFile(r.filePath, JSON.stringify(file, null, 2), 'utf8')
+    activity.info(`Thumbnail look exported: ${basename(r.filePath)}`)
+    return { path: r.filePath }
+  }
+
+  /** Pick a look file; returns the parsed look with fonts restored and incompatible knobs dropped (see unpackLook). */
+  async importThumbnailLook(win: BrowserWindow | null): Promise<ImportedLook | null> {
+    const { library } = this.req()
+    const r = await dialog.showOpenDialog(win ?? undefined as never, {
+      title: 'Import a look', filters: [{ name: 'Thumbnail look', extensions: ['json'] }], properties: ['openFile'],
+    })
+    const src = r.filePaths[0]
+    if (!src) return null
+    const st = await fs.stat(src)
+    if (st.size > 64 * 1024 * 1024) throw new Error('That file is larger than 64 MB — not a look file.')
+    const out = await unpackLook(await fs.readFile(src, 'utf8'), library)
+    activity.info(`Thumbnail look imported: ${basename(src)}${out.notes.length ? ` (${out.notes.length} note${out.notes.length === 1 ? '' : 's'})` : ''}`)
+    return out
+  }
+
   async chooseFontFile(win: BrowserWindow | null): Promise<CustomFont | null> {
     const { library } = this.req()
     const r = await dialog.showOpenDialog(win ?? undefined as never, {

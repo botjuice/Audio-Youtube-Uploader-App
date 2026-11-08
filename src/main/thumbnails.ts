@@ -4,10 +4,11 @@
  * src/plugins/thumbnail and imports nothing from here.
  */
 import { promises as fs } from 'node:fs'
-import { basename, join } from 'node:path'
+import { basename, extname, join } from 'node:path'
 
 import type { LibraryRecord, ReciterInfo, Settings, StyleError, StylePatch, StyleSchemaInfo, SurahOption, ThumbnailPreview, ThumbnailRule, ThumbnailSample } from '@shared/types'
-import { prunePatch, resolveThumbnailLook, type ThumbTarget, type ThumbnailLook } from '@core/thumb-rules'
+import { prunePatch, resolveThumbnailLook, setKnob as setKnobPath, type ThumbTarget, type ThumbnailLook } from '@core/thumb-rules'
+import { buildLookFile, parseLookFile, pathKnobs, remapStrings, sanitisePatch, type LookFile, type LookFileFont } from '@core/look-file'
 import { DEFAULT_SURAHS, translateSurah, type SurahDict } from '@core/surahs'
 import { SURAHS_AR } from '../plugins/thumbnail/surahs'
 import { PRAYERS } from '@core/prayers'
@@ -151,3 +152,45 @@ export function surahOptions(): SurahOption[] {
 
 export function disposeThumbnails(): void { disposePlugin() }
 
+
+// ── Look files (export / import) ──────────────────────────────────────────────
+
+/** Build a look file, embedding the custom font files the knobs point at (missing files are left as paths). */
+export async function packLook(rule: Pick<ThumbnailRule, 'label' | 'overlay' | 'origin' | 'style'>, look: StylePatch, appVersion: string): Promise<LookFile> {
+  const fonts: Record<string, LookFileFont> = {}
+  for (const { value } of [...pathKnobs(rule.style ?? {}), ...pathKnobs(look)]) {
+    if (fonts[value]) continue
+    try { fonts[value] = { name: basename(value), data: (await fs.readFile(value)).toString('base64') } } catch { /* not on this machine any more */ }
+  }
+  return buildLookFile(rule, look, { appVersion, styleVersion: manifest.styleVersion }, fonts)
+}
+
+/** Parse a look file: restore embedded fonts into the library, drop knobs this plugin rejects, and say what changed. */
+export async function unpackLook(text: string, library: string): Promise<{ file: LookFile; notes: string[] }> {
+  const file = parseLookFile(text)
+  const notes: string[] = []
+  const remap: Record<string, string> = {}
+  for (const [origPath, font] of Object.entries(file.fonts ?? {})) {
+    if (await fs.access(origPath).then(() => true, () => false)) continue   // same machine, file still there
+    const ext = extname(font.name).toLowerCase() || '.ttf'
+    const stem = basename(font.name, extname(font.name)).replace(/[^\w.-]+/g, '_').slice(0, 60) || 'font'
+    const target = join(ruleFontsDir(library), `${stem}-${Date.now()}${ext}`)
+    await fs.mkdir(ruleFontsDir(library), { recursive: true })
+    await fs.writeFile(target, Buffer.from(font.data, 'base64'))
+    remap[origPath] = target
+    notes.push(`Font “${font.name}” restored into the library.`)
+  }
+  let knobs = remapStrings(file.knobs, remap), look = remapStrings(file.look, remap)
+  // fonts referenced but neither embedded nor present here → the plugin would fail at render time; fall back to the default font
+  for (const [which, patch] of [['knobs', knobs], ['look', look]] as const) {
+    for (const { path, value } of pathKnobs(patch)) {
+      if (await fs.access(value).then(() => true, () => false)) continue
+      const next = setKnobPath(patch as Record<string, unknown>, path, undefined) as StylePatch
+      if (which === 'knobs') knobs = next; else look = next
+      notes.push(`Font file “${basename(value)}” isn't on this computer — that line keeps its current font.`)
+    }
+  }
+  const k = sanitisePatch(knobs, styleProblems), l = sanitisePatch(look, styleProblems)
+  for (const d of [...new Set([...k.dropped, ...l.dropped])]) notes.push(`Skipped a knob this version doesn't have: ${d}.`)
+  return { file: { ...file, knobs: k.patch, look: l.patch }, notes }
+}
