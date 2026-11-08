@@ -74,9 +74,11 @@ describe('look files: pack and unpack', () => {
     const rule = { label: 'Night', overlay: false, style: { reciter: { font: fontPath, scale: 1.2 } } } as never
     const file = await packLook(rule, { reciter: { font: fontPath, scale: 1.2 }, title: { scale: 0.9 } }, '3.2.2')
     expect(file.fonts?.[fontPath]).toEqual({ name: 'MyFont.ttf', data: Buffer.from('not really a font').toString('base64') })
-    // simulate another machine: the original path is gone, and the file carries a knob this plugin doesn't know
-    const text = JSON.stringify({ ...file, knobs: { ...file.knobs, future: { thing: 1 } } }).replaceAll(fontPath, '/elsewhere/MyFont.ttf')
-    const out = await unpackLook(text, lib)
+    // simulate another machine: the font lives at a path that doesn't exist here, and the file carries a knob this plugin doesn't know
+    const { remapStrings } = await import('@core/look-file')
+    const elsewhere = '/elsewhere/MyFont.ttf'
+    const moved = { ...file, knobs: { ...remapStrings(file.knobs, { [fontPath]: elsewhere }), future: { thing: 1 } }, look: remapStrings(file.look, { [fontPath]: elsewhere }), fonts: { [elsewhere]: file.fonts![fontPath]! } }
+    const out = await unpackLook(JSON.stringify(moved), lib)
     const restored = (await readdir(join(lib, '.yoosyjoosy', 'fonts')))[0]!
     expect(restored).toMatch(/^MyFont-\d+\.ttf$/)
     expect(await readFile(join(lib, '.yoosyjoosy', 'fonts', restored), 'utf8')).toBe('not really a font')
