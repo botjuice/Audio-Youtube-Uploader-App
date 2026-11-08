@@ -63,7 +63,7 @@ export async function openLibraryStore(library: string): Promise<LibraryStore> {
     reciters: new JsonFile(stateFile(library, 'reciters.json'), () => ({})),
     rules: new JsonFile(stateFile(library, 'rules.json'), () => ({ rules: [], keywords: [] })),
     thumbRules: new JsonFile(stateFile(library, 'thumbnail-rules.json'), () => ({ rules: [] })),
-    audioLook: new JsonFile(stateFile(library, 'audio-look.json'), () => ({ look: {}, sample: null })),
+    audioLook: new JsonFile(stateFile(library, 'audio-look.json'), () => ({ look: { chain: [] }, sample: null })),
     surahs: new JsonFile(stateFile(library, 'surahs.json'), () => ({})),
     quota: new JsonFile(stateFile(library, 'quota.json'), () => ({ day: '', uploads: 0, units: 0 })),
     playlists: new JsonFile(stateFile(library, 'playlists.json'), () => ({ items: [], fetchedAt: null })),

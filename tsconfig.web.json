@@ -17,6 +17,6 @@
       "@shared/*": ["./src/shared/*"]
     }
   },
-  "include": ["src/renderer/**/*", "src/preload/*.d.ts", "src/core/**/*", "src/shared/**/*", "src/plugins/thumbnail/style.ts", "src/plugins/thumbnail/fonts.ts", "src/plugins/audio/look.ts", "src/plugins/audio/types.ts"],
+  "include": ["src/renderer/**/*", "src/preload/*.d.ts", "src/core/**/*", "src/shared/**/*", "src/plugins/thumbnail/style.ts", "src/plugins/thumbnail/fonts.ts", "src/plugins/audio/look.ts", "src/plugins/audio/types.ts", "src/plugins/audio/catalog.ts", "src/plugins/audio/catalog.json", "src/plugins/audio/presets.ts", "src/plugins/audio/v1.ts"],
   "exclude": ["src/core/**/*.test.ts"]
 }

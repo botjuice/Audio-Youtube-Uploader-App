@@ -14,7 +14,7 @@ import { mergeSettings, openLibraryStore, secrets, settings, type LibraryStore }
 import { Watcher } from './watcher'
 import { updater } from './updater'
 import { DEFAULT_AUDIO_LOOK, analyseRecording, audioOverview, cancelAudioTiles, renderAudioTile, sweepAudioPreviews } from './audio'
-import { describeLook as describeAudioLook, validateLook } from '../plugins/audio/index'
+import { EMPTY_LOOK, describeLook as describeAudioLook, isV1Look, lookFromV1, validateLook } from '../plugins/audio/index'
 import { buildSampleJob, buildThumbnailJob, disposeThumbnails, packLook, pruneDefaultLook, unpackLook, fontPathsInRules, renderJob, resolveRulePhoto, ruleFontsDir, rulePhotoPath, rulePhotosDir, styleForRecord, styleProblems, styleSchema, surahOptions, toPreview } from './thumbnails'
 import { setThumbnail } from './google/youtube'
 import { THUMBNAIL_COST_UNITS, addQuota } from '@core/quota'
@@ -109,6 +109,8 @@ class YoosyApp {
         await this.migrateV22()
         // the thumbnail rules file always carries exactly one default rule; its patch never repeats the plugin's factory values
         await this.store.thumbRules.update((d) => { d.rules = pruneDefaultLook(normaliseThumbRules(d.rules ?? [])) })
+        // a look saved by audio plugin v1 (fixed knobs) becomes the same filters in the v2 rack, once
+        await this.store.audioLook.update((d) => { if (isV1Look(d.look)) { d.look = lookFromV1(d.look); activity.info('Audio look converted to the new editor format') } else if (!d.look || typeof d.look !== 'object' || !('chain' in d.look)) d.look = EMPTY_LOOK })
         await this.rescan()
         void sweepAudioPreviews(path).then((n) => { if (n) activity.info(`Removed ${n} old audio preview file${n === 1 ? '' : 's'}`) }).catch(() => {})
         activity.info(`Library opened: ${path}`)
@@ -411,10 +413,10 @@ class YoosyApp {
 
   async setAudioLook(state: AudioLookState): Promise<void> {
     const { store } = this.req()
-    const v = validateLook(state.look ?? {})
-    if (!v.ok) throw new Error(v.errors.map((e) => `${e.key}: ${e.message}`).join('\n'))
+    const v = validateLook(state.look ?? EMPTY_LOOK)
+    if (!v.ok) throw new Error(v.errors.map((e) => `${e.path}: ${e.message}`).join('\n'))
     const sample = state.sample && this.snapshot.records.some((r) => r.id === state.sample!.recordId) ? { recordId: state.sample.recordId, start: Math.max(0, Number(state.sample.start) || 0) } : null
-    await store.audioLook.replace({ look: state.look ?? {}, sample })
+    await store.audioLook.replace({ look: v.look, sample })
     activity.info(`Audio look saved: ${describeAudioLook(v.look)}`)
     this.broadcast('evt:library', this.getLibrary())
   }

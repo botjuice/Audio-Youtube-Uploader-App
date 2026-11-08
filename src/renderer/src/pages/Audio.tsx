@@ -1,9 +1,10 @@
 import { clsx } from 'clsx'
 import { AlertTriangle, AudioLines, Pause, Play, Repeat, RotateCcw, Save, Undo2, Waves } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AudioAnalysis, AudioLookPatch, AudioOverview } from '@shared/types'
-import { countKnobs, getKnob, mergePatches, prunePatch, setKnob } from '@core/thumb-rules'
-import { DEFAULT_LOOK, LOOK_FIELDS, LOOK_PRESETS, REVERB_PRESETS, controllingToggle, describeLook, validateLook, type LookFieldInfo, type NumberField } from '../../../plugins/audio/look'
+import type { AudioAnalysis, AudioLook, AudioOverview } from '@shared/types'
+import { EQ_BANDS, KNOBS, MODULE_ORDER, MODULE_TITLES, SIGNAL_FLOW, countOn, defaultModules, fromLook, toLook, type EqState, type Knob, type ModuleKey, type Modules, type StripKey } from '@core/audio-modules'
+import { eqResponseDb, logFrequencies } from '@core/eq-response'
+import { describeLook, validateLook } from '../../../plugins/audio/look'
 import { Badge, Button, Select, Slider, Spinner, Switch, Empty } from '@/components/ui'
 import { errText, useStore } from '@/store'
 
@@ -11,21 +12,17 @@ const audioUrl = (file: string) => `yj-audio://preview/?p=${encodeURIComponent(f
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-type Obj = Record<string, unknown>
-const GROUP_TITLES: Record<string, string> = { cleanup: 'Clean-up', tone: 'Tone (EQ)', dynamics: 'Compressor', reverb: 'Reverb', loudness: 'Loudness', limiter: 'Peak limiter', fades: 'Fades' }
-const prune = (patch: unknown): AudioLookPatch => prunePatch((patch ?? {}) as Obj, DEFAULT_LOOK as unknown as Obj) as AudioLookPatch
-const merge = (a: unknown, b: unknown): Obj => mergePatches(a as never, b as never) as unknown as Obj
 const fmtTime = (s: number) => { const m = Math.floor(s / 60), r = Math.floor(s - m * 60); return `${m}:${String(r).padStart(2, '0')}` }
-const fmtNum = (v: number, step: number) => v.toFixed((String(step).split('.')[1] ?? '').length)
+const fmtNum = (v: number, step: number) => v.toFixed(Math.min(4, (String(step).split('.')[1] ?? '').length))
 const db = (v: number, unit = 'dB') => `${v > 0 ? '+' : ''}${v.toFixed(1)} ${unit}`
 
-// Log sliders move in 1000 steps between min and max; linear ones use the field's own range.
+// Log sliders move in 1000 steps between min and max; linear ones use the knob's own range.
 const SLIDER_STEPS = 1000
-const toPos = (f: NumberField, v: number) => f.scale === 'log' ? Math.round(((Math.log(v) - Math.log(f.min)) / (Math.log(f.max) - Math.log(f.min))) * SLIDER_STEPS) : v
-const fromPos = (f: NumberField, p: number) => {
-  if (f.scale !== 'log') return p
-  const raw = Math.exp(Math.log(f.min) + (p / SLIDER_STEPS) * (Math.log(f.max) - Math.log(f.min)))
-  return Math.min(f.max, Math.max(f.min, Math.round(raw / f.step) * f.step))
+const toPos = (k: { min: number; max: number; log?: boolean }, v: number) => k.log ? Math.round(((Math.log(Math.max(k.min, v)) - Math.log(k.min)) / (Math.log(k.max) - Math.log(k.min))) * SLIDER_STEPS) : v
+const fromPos = (k: { min: number; max: number; step: number; log?: boolean }, p: number) => {
+  if (!k.log) return p
+  const raw = Math.exp(Math.log(k.min) + (p / SLIDER_STEPS) * (Math.log(k.max) - Math.log(k.min)))
+  return Math.min(k.max, Math.max(k.min, Math.round(raw / k.step) * k.step))
 }
 
 // ── page ──────────────────────────────────────────────────────────────────────
@@ -37,43 +34,36 @@ export default function AudioPage() {
   const saving = useStore((s) => !!s.busy['audioLook'])
   const saved = library.audioLook
   const records = library.records
-  const [look, setLook] = useState<AudioLookPatch>(() => prune(saved.look))
+  const loaded = useMemo(() => fromLook(saved.look), [saved.look])
+  const [modules, setModules] = useState<Modules>(() => loaded.modules)
   const [sample, setSample] = useState<{ recordId: string; start: number }>(() => saved.sample ?? { recordId: records[0]?.id ?? '', start: 60 })
   const [analysis, setAnalysis] = useState<AudioAnalysis | null>(null)
   const [analysing, setAnalysing] = useState(false)
   useEffect(() => { setAnalysis(null) }, [sample.recordId])
   useEffect(() => { if (!sample.recordId && records[0]) setSample((s) => ({ ...s, recordId: records[0]!.id })) }, [records, sample.recordId])
 
-  const resolved = useMemo(() => merge(DEFAULT_LOOK, look), [look])
+  const look: AudioLook = useMemo(() => toLook(modules), [modules])
   const validation = useMemo(() => validateLook(look), [look])
   const errors = validation.ok ? [] : validation.errors
-  const knobs = countKnobs(look)
-  const dirty = JSON.stringify(look) !== JSON.stringify(prune(saved.look)) || JSON.stringify(sample) !== JSON.stringify(saved.sample ?? sample)
-  const summary = validation.ok ? describeLook(validation.look) : 'fix the knobs marked below'
+  const savedLook = useMemo(() => toLook(loaded.modules), [loaded.modules])
+  const dirty = JSON.stringify(look) !== JSON.stringify(savedLook) || JSON.stringify(sample) !== JSON.stringify(saved.sample ?? sample)
+  const on = countOn(modules)
+  const summary = validation.ok ? describeLook(validation.look) : 'fix the values marked below'
   const record = records.find((r) => r.id === sample.recordId)
   const setStart = (start: number) => setSample((s) => (Math.abs(s.start - start) < 0.01 ? s : { ...s, start }))
 
-  const setKnobValue = (path: string, value: unknown) => {
-    const def = getKnob(DEFAULT_LOOK, path)
-    setLook((prev) => prune(setKnob(prev as Obj, path, value === def ? undefined : value)))
-  }
-  const resetGroup = (group: string) => setLook((prev) => { const next = { ...(prev as Obj) }; delete next[group]; return prune(next) })
+  const update = <K extends ModuleKey>(key: K, patch: Partial<Modules[K]>) => setModules((m) => ({ ...m, [key]: { ...m[key], ...patch } }))
+  const strip = (key: StripKey) => modules[key] as Record<string, unknown> & { on: boolean }
   const save = () => void call('audioLook', async () => {
     await window.api.setAudioLook({ look, sample })
     notify('success', 'Audio look saved. Uploads still use the original audio for now.')
   })
-  const discard = () => { setLook(prune(saved.look)); if (saved.sample) setSample(saved.sample) }
+  const discard = () => { setModules(loaded.modules); if (saved.sample) setSample(saved.sample) }
   const analyse = () => {
     if (!record) return
     setAnalysing(true)
     window.api.analyseAudio(record.id).then(setAnalysis).catch((e) => notify('error', errText(e))).finally(() => setAnalysing(false))
   }
-
-  const groups = useMemo(() => {
-    const m = new Map<string, LookFieldInfo[]>()
-    for (const f of LOOK_FIELDS) { const g = f.path.split('.')[0]!; (m.get(g) ?? m.set(g, []).get(g)!).push(f) }
-    return [...m.entries()]
-  }, [])
 
   if (!records.length) {
     return (
@@ -88,51 +78,36 @@ export default function AudioPage() {
     <div className="flex h-full flex-col">
       <div className="drag h-13 flex shrink-0 items-center gap-3 border-b border-border px-6">
         <h1 className="font-semibold">Audio</h1>
-        <span className="min-w-0 truncate text-xs text-muted" title={summary}>One Default look for every recording · {summary}</span>
+        <span className="min-w-0 truncate text-xs text-muted" title={summary}>{summary}</span>
         <div className="no-drag ml-auto flex shrink-0 items-center gap-2">
-          <Badge tone={knobs ? 'info' : 'muted'} className="whitespace-nowrap">{knobs ? `${knobs} knob${knobs === 1 ? '' : 's'} changed` : 'plugin defaults'}</Badge>
+          <Badge tone={on ? 'info' : 'muted'} className="whitespace-nowrap">{on ? `${on} module${on === 1 ? '' : 's'} on` : 'no processing'}</Badge>
+          <Button size="sm" variant="ghost" disabled={!on} onClick={() => setModules(defaultModules())} title="Switch every module off and return every knob to its default"><RotateCcw size={13} /> Reset all</Button>
           <Button size="sm" variant="ghost" disabled={!dirty || saving} onClick={discard}><Undo2 size={13} /> Discard</Button>
           <Button size="sm" disabled={!dirty || saving || errors.length > 0} onClick={save}><Save size={13} /> {saving ? 'Saving…' : 'Save look'}</Button>
         </div>
       </div>
       <div className="flex min-h-0 flex-1">
-        {/* left: knobs */}
-        <aside className="w-[400px] shrink-0 overflow-y-auto border-r border-border">
-          <div className="border-b border-border px-4 py-3">
-            <div className="text-[13px] font-medium">Starting points</div>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {Object.entries(LOOK_PRESETS).map(([k, p]) => <Button key={k} size="sm" variant="subtle" onClick={() => setLook(prune(p.patch))} title="Replaces every knob">{p.label}</Button>)}
-            </div>
-            <div className="mt-2 text-[11px] text-muted">Editor only for now: the look is saved with the library, and uploads keep using the original audio until processing is switched on in a later version.</div>
+        {/* left: the channel strip, simplest module first */}
+        <aside className="w-[420px] shrink-0 overflow-y-auto border-r border-border">
+          <div className="border-b border-border px-4 py-3 text-[11px] leading-snug text-muted">
+            <div><span className="font-medium text-text">Signal flow:</span> {SIGNAL_FLOW}.</div>
+            <div className="mt-1">Every knob is a raw ffmpeg setting shown in studio units; the EQ sits under the waveforms. Editor only for now: uploads keep the original audio.</div>
+            {loaded.unmapped.length > 0 && <div className="mt-1 text-warn">The saved look had steps this strip can’t show and they were dropped: {loaded.unmapped.join(', ')}.</div>}
           </div>
-          {groups.map(([group, fields]) => {
-            const toggle = fields.find((f) => f.path === `${group}.enabled`)
-            const on = toggle ? getKnob(resolved, toggle.path) !== false : true
-            const changed = countKnobs((look as Obj)[group])
-            return (
-              <section key={group} className={clsx('border-b border-border px-4 py-3', !on && 'opacity-70')}>
-                <div className="flex items-center gap-2">
-                  <div className="text-[13px] font-medium">{GROUP_TITLES[group] ?? group}</div>
-                  {changed > 0 && <Badge tone="info">{changed}</Badge>}
-                  <div className="ml-auto flex items-center gap-2">
-                    {changed > 0 && <button type="button" className="text-[11px] text-muted hover:text-text no-drag" onClick={() => resetGroup(group)} title="Back to the plugin's defaults for this section"><RotateCcw size={11} className="inline" /> reset</button>}
-                    {toggle && <Switch checked={on} onChange={(v) => setKnobValue(toggle.path, v)} label={toggle.field.label} />}
-                  </div>
-                </div>
-                {group === 'reverb' && on && (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {Object.entries(REVERB_PRESETS).map(([k, p]) => <Button key={k} size="sm" variant="subtle" onClick={() => setLook(prune(merge(look, p.patch)))} title="Sets decay, pre-delay, brightness, amount and width">{p.label}</Button>)}
-                  </div>
-                )}
-                <div className="mt-2 space-y-2.5">
-                  {fields.filter((f) => f !== toggle).map((f) => <Knob key={f.path} info={f} look={look} resolved={resolved} errors={errors} onChange={setKnobValue} />)}
-                </div>
-              </section>
-            )
-          })}
+          {MODULE_ORDER.map((key) => (
+            <ModuleCard key={key} title={MODULE_TITLES[key]} on={strip(key).on} onToggle={(v) => update(key, { on: v } as Partial<Modules[typeof key]>)}
+              onReset={() => setModules((m) => ({ ...m, [key]: { ...defaultModules()[key], on: (m[key] as { on: boolean }).on } }))}
+              changed={JSON.stringify({ ...modules[key], on: false }) !== JSON.stringify({ ...defaultModules()[key], on: false })}>
+              {KNOBS[key].map((k) => (
+                <KnobRow key={k.key} knob={k} value={strip(key)[k.key]} disabled={!strip(key).on}
+                  error={errors.find((e) => e.path.includes(`.${k.key}`) && e.path.includes(`[${look.chain.findIndex((st) => st.id === key)}]`))?.message}
+                  onChange={(v) => update(key, { [k.key]: v } as Partial<Modules[typeof key]>)} />
+              ))}
+            </ModuleCard>
+          ))}
         </aside>
 
-        {/* right: sample + A/B player */}
+        {/* right: sample + A/B player + EQ */}
         <main className="min-w-0 flex-1 overflow-y-auto p-5 space-y-4">
           <div className="flex flex-wrap items-end gap-3">
             <label className="min-w-0 flex-1 text-xs text-muted">
@@ -153,10 +128,11 @@ export default function AudioPage() {
             </div>
           )}
           {errors.length > 0 && (
-            <div className="rounded-xl border border-err/40 bg-err/6 px-4 py-3 text-xs"><b>Some knobs are out of range:</b> {errors.map((e) => `${e.key}: ${e.message}`).join(' · ')}</div>
+            <div className="rounded-xl border border-err/40 bg-err/6 px-4 py-3 text-xs"><b>The plugin rejects some values:</b> {errors.map((e) => `${e.path}: ${e.message}`).join(' · ')}</div>
           )}
           {!record ? <Empty icon={<AudioLines size={28} />} title="Choose a recording" />
             : <Workbench key={record.id} recordId={record.id} look={look} lookOk={validation.ok} winStart={sample.start} onWinStart={setStart} />}
+          <EqEditor eq={modules.eq} onChange={(eq) => setModules((m) => ({ ...m, eq }))} />
         </main>
       </div>
     </div>
@@ -173,42 +149,204 @@ function Stat({ label, value, hint, tone }: { label: string; value: string; hint
   )
 }
 
-// ── one knob ──────────────────────────────────────────────────────────────────
+// ── a module card: title, on/off, reset, knobs ────────────────────────────────
 
-function Knob({ info, look, resolved, errors, onChange }: { info: LookFieldInfo; look: AudioLookPatch; resolved: Obj; errors: { key: string; message: string }[]; onChange: (path: string, v: unknown) => void }) {
-  const { path, field } = info
-  const value = getKnob(resolved, path)
-  const own = getKnob(look, path)
-  const changed = own !== undefined
-  const ctrl = controllingToggle(path)
-  const disabled = !!ctrl && getKnob(resolved, ctrl) === false
-  const error = errors.find((e) => e.key === path)?.message
-  if (field.kind === 'toggle') {
+function ModuleCard({ title, on, changed, onToggle, onReset, children }: { title: string; on: boolean; changed: boolean; onToggle: (v: boolean) => void; onReset: () => void; children: React.ReactNode }) {
+  return (
+    <section className={clsx('border-b border-border px-4 py-3', !on && 'opacity-75')}>
+      <div className="flex items-center gap-2">
+        <div className="text-[13px] font-medium">{title}</div>
+        {changed && <Badge tone="info">edited</Badge>}
+        <div className="ml-auto flex items-center gap-3">
+          {changed && <button type="button" className="text-[11px] text-muted hover:text-text no-drag" onClick={onReset} title="Back to this module's defaults"><RotateCcw size={11} className="inline" /> reset</button>}
+          <Switch checked={on} onChange={onToggle} label={title} />
+        </div>
+      </div>
+      <div className="mt-3 space-y-3.5">{children}</div>
+    </section>
+  )
+}
+
+/** One knob: label, full description (never truncated), then the control. */
+function KnobRow({ knob, value, disabled, error, onChange }: { knob: Knob; value: unknown; disabled: boolean; error?: string; onChange: (v: unknown) => void }) {
+  if (knob.kind === 'toggle') {
     return (
-      <div className={clsx('flex items-center gap-2 text-[12px]', disabled && 'opacity-50')} title={field.desc}>
-        <span className={clsx('flex-1', changed && 'font-medium text-accent')}>{field.label}</span>
-        <Switch checked={value === true} onChange={(v) => onChange(path, v)} disabled={disabled} label={field.label} />
+      <div className={clsx(disabled && 'opacity-50')}>
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-[12px]">{knob.label}</div>
+            <div className="text-[11px] leading-snug text-muted">{knob.desc}</div>
+          </div>
+          <Switch checked={value === true} onChange={(v) => onChange(v)} disabled={disabled} label={knob.label} />
+        </div>
       </div>
     )
   }
-  const n = typeof value === 'number' ? value : field.default
+  if (knob.kind === 'choice') {
+    return (
+      <div className={clsx(disabled && 'opacity-50')}>
+        <div className="text-[12px]">{knob.label}</div>
+        <div className="text-[11px] leading-snug text-muted">{knob.desc}</div>
+        <Select value={String(value)} onChange={(e) => onChange(e.target.value)} disabled={disabled} className="mt-1.5 h-7.5 w-full text-xs">
+          {knob.choices!.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+        </Select>
+      </div>
+    )
+  }
+  const n = typeof value === 'number' ? value : Number(value) || 0
+  const k = { min: knob.min!, max: knob.max!, step: knob.step!, log: knob.log }
   return (
-    <div className={clsx('space-y-1', disabled && 'opacity-50')}>
-      <div className="flex items-center gap-1.5 text-[12px]" title={field.desc}>
-        <span className={clsx(changed && 'font-medium text-accent')}>{field.label}</span>
-        <span className="min-w-0 flex-1 truncate text-[10.5px] text-muted">{field.desc}</span>
-        {changed && <button type="button" className="text-muted hover:text-text no-drag" title={`Back to ${fmtNum(field.default, field.step)} ${field.unit}`} onClick={() => onChange(path, undefined)}><RotateCcw size={11} /></button>}
+    <div className={clsx(disabled && 'opacity-50')}>
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="text-[12px]">{knob.label}</div>
+        <div className="text-[11px] tabular-nums text-muted">{fmtNum(n, k.step)}{knob.unit ? ` ${knob.unit}` : ''}</div>
       </div>
-      <div className="flex items-center gap-2">
-        <Slider value={toPos(field, n)} min={field.scale === 'log' ? 0 : field.min} max={field.scale === 'log' ? SLIDER_STEPS : field.max} step={field.scale === 'log' ? 1 : field.step}
-          onChange={(p) => onChange(path, fromPos(field, p))} disabled={disabled} className="flex-1" />
-        <input type="number" value={fmtNum(n, field.step)} min={field.min} max={field.max} step={field.step} disabled={disabled}
-          onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) onChange(path, Math.min(field.max, Math.max(field.min, v))) }}
-          className={clsx('h-7 w-20 rounded-lg border bg-surface px-1.5 text-right text-[12px] tabular-nums no-drag', error ? 'border-err' : 'border-border')} />
-        <span className="w-9 text-[10.5px] text-muted">{field.unit}</span>
+      <div className="text-[11px] leading-snug text-muted">{knob.desc}</div>
+      <div className="mt-1.5 flex items-center gap-2">
+        <Slider value={toPos(k, n)} min={k.log ? 0 : k.min} max={k.log ? SLIDER_STEPS : k.max} step={k.log ? 1 : k.step} onChange={(p) => onChange(fromPos(k, p))} disabled={disabled} className="flex-1" />
+        <input type="number" value={fmtNum(n, k.step)} min={k.min} max={k.max} step={k.step} disabled={disabled}
+          onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) onChange(Math.min(k.max, Math.max(k.min, v))) }}
+          className={clsx('h-7 w-24 rounded-lg border bg-surface px-1.5 text-right text-[12px] tabular-nums no-drag', error ? 'border-err' : 'border-border')} />
+        <span className="w-10 text-[10.5px] text-muted">{knob.unit}</span>
       </div>
-      {error && <div className="text-[11px] text-err">{error}</div>}
+      {error && <div className="mt-0.5 text-[11px] text-err">{error}</div>}
     </div>
+  )
+}
+
+// ── EQ: interactive curve + per-band knobs ────────────────────────────────────
+
+type EqNode = 'hp' | 'ls' | 'b1' | 'b2' | 'b3' | 'b4' | 'hs' | 'lp'
+const EQ_NODES: { id: EqNode; label: string; colour: string }[] = [
+  { id: 'hp', label: 'High-pass', colour: '#f97316' }, { id: 'ls', label: 'Low shelf', colour: '#eab308' },
+  { id: 'b1', label: 'Band 1', colour: '#22c55e' }, { id: 'b2', label: 'Band 2', colour: '#06b6d4' }, { id: 'b3', label: 'Band 3', colour: '#3b82f6' }, { id: 'b4', label: 'Band 4', colour: '#a855f7' },
+  { id: 'hs', label: 'High shelf', colour: '#ec4899' }, { id: 'lp', label: 'Low-pass', colour: '#ef4444' },
+]
+const F_LO = 20, F_HI = 20000, DB_RANGE = 24
+const xOf = (f: number, w: number) => (Math.log(f / F_LO) / Math.log(F_HI / F_LO)) * w
+const fOf = (x: number, w: number) => F_LO * Math.pow(F_HI / F_LO, Math.min(1, Math.max(0, x / w)))
+const yOf = (dbv: number, h: number) => h / 2 - (dbv / DB_RANGE) * (h / 2)
+const dbOfY = (y: number, h: number) => Math.max(-DB_RANGE, Math.min(DB_RANGE, ((h / 2 - y) / (h / 2)) * DB_RANGE))
+
+function nodeState(eq: EqState, id: EqNode): { on: boolean; freq: number; gain: number | null; q: number } {
+  if (id === 'hp') return { ...eq.hp, gain: null }
+  if (id === 'lp') return { ...eq.lp, gain: null }
+  if (id === 'ls') return eq.ls
+  if (id === 'hs') return eq.hs
+  return eq.bands[Number(id[1]) - 1]!
+}
+function withNode(eq: EqState, id: EqNode, patch: Partial<{ on: boolean; freq: number; gain: number; q: number }>): EqState {
+  if (id === 'hp') return { ...eq, hp: { ...eq.hp, ...(patch.on !== undefined ? { on: patch.on } : {}), ...(patch.freq !== undefined ? { freq: patch.freq } : {}), ...(patch.q !== undefined ? { q: patch.q } : {}) } }
+  if (id === 'lp') return { ...eq, lp: { ...eq.lp, ...(patch.on !== undefined ? { on: patch.on } : {}), ...(patch.freq !== undefined ? { freq: patch.freq } : {}), ...(patch.q !== undefined ? { q: patch.q } : {}) } }
+  if (id === 'ls') return { ...eq, ls: { ...eq.ls, ...patch } }
+  if (id === 'hs') return { ...eq, hs: { ...eq.hs, ...patch } }
+  const i = Number(id[1]) - 1
+  return { ...eq, bands: eq.bands.map((b, j) => (j === i ? { ...b, ...patch } : b)) }
+}
+const FREQ_KNOB: Knob = { key: 'freq', label: 'Frequency', desc: '', kind: 'number', unit: 'Hz', min: 20, max: 20000, step: 1, log: true }
+const GAIN_KNOB: Knob = { key: 'gain', label: 'Gain', desc: '', kind: 'number', unit: 'dB', min: -24, max: 24, step: 0.1 }
+const Q_KNOB: Knob = { key: 'q', label: 'Q (width)', desc: '', kind: 'number', unit: '', min: 0.1, max: 10, step: 0.01, log: true }
+
+function EqEditor({ eq, onChange }: { eq: EqState; onChange: (eq: EqState) => void }) {
+  const ref = useRef<HTMLCanvasElement>(null)
+  const [selected, setSelected] = useState<EqNode>('b1')
+  const drag = useRef<EqNode | null>(null)
+  const freqs = useMemo(() => logFrequencies(300), [])
+
+  useEffect(() => {
+    const c = ref.current; if (!c) return
+    const dpr = window.devicePixelRatio || 1
+    const w = c.clientWidth, h = c.clientHeight
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr) }
+    const ctx = c.getContext('2d'); if (!ctx) return
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.clearRect(0, 0, w, h)
+    const cs = getComputedStyle(c)
+    const muted = cs.getPropertyValue('--muted').trim() || '#64748b', accent = cs.getPropertyValue('--accent').trim() || '#6366f1', text = cs.getPropertyValue('--text').trim() || '#fff'
+    // grid
+    ctx.strokeStyle = muted; ctx.globalAlpha = 0.18; ctx.lineWidth = 1
+    for (const f of [50, 100, 200, 500, 1000, 2000, 5000, 10000]) { const x = Math.round(xOf(f, w)) + 0.5; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke() }
+    for (const d of [-18, -12, -6, 0, 6, 12, 18]) { const y = Math.round(yOf(d, h)) + 0.5; ctx.globalAlpha = d === 0 ? 0.4 : 0.18; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke() }
+    ctx.globalAlpha = 0.7; ctx.fillStyle = muted; ctx.font = '10px ui-sans-serif, system-ui'
+    for (const f of [50, 100, 200, 500, 1000, 2000, 5000, 10000]) ctx.fillText(f >= 1000 ? `${f / 1000}k` : String(f), xOf(f, w) + 3, h - 4)
+    for (const d of [-12, 0, 12]) ctx.fillText(`${d > 0 ? '+' : ''}${d}`, 3, yOf(d, h) - 3)
+    // curve
+    ctx.globalAlpha = 1
+    const pts = freqs.map((f) => [xOf(f, w), yOf(eqResponseDb(eq, f), h)] as const)
+    ctx.beginPath(); ctx.moveTo(pts[0]![0], pts[0]![1]); for (const [x, y] of pts) ctx.lineTo(x, y)
+    ctx.strokeStyle = eq.on ? accent : muted; ctx.lineWidth = 2; ctx.stroke()
+    ctx.lineTo(w, yOf(0, h)); ctx.lineTo(0, yOf(0, h)); ctx.closePath(); ctx.fillStyle = accent; ctx.globalAlpha = eq.on ? 0.12 : 0.04; ctx.fill()
+    // nodes
+    ctx.globalAlpha = 1
+    for (const n of EQ_NODES) {
+      const st = nodeState(eq, n.id)
+      const x = xOf(st.freq, w), y = st.gain === null ? yOf(0, h) : yOf(st.gain, h)
+      ctx.beginPath(); ctx.arc(x, y, selected === n.id ? 7 : 5.5, 0, Math.PI * 2)
+      ctx.fillStyle = n.colour; ctx.globalAlpha = st.on && eq.on ? 1 : 0.3; ctx.fill()
+      if (selected === n.id) { ctx.strokeStyle = text; ctx.lineWidth = 1.5; ctx.globalAlpha = 1; ctx.stroke() }
+    }
+    ctx.globalAlpha = 1
+  }, [eq, selected, freqs])
+
+  const hit = (e: React.PointerEvent<HTMLCanvasElement>): EqNode | null => {
+    const r = e.currentTarget.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top
+    let best: EqNode | null = null, bd = 14
+    for (const n of EQ_NODES) { const st = nodeState(eq, n.id); const d = Math.hypot(xOf(st.freq, r.width) - x, (st.gain === null ? yOf(0, r.height) : yOf(st.gain, r.height)) - y); if (d < bd) { bd = d; best = n.id } }
+    return best
+  }
+  const onDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const n = hit(e); if (!n) return
+    setSelected(n); drag.current = n; e.currentTarget.setPointerCapture(e.pointerId)
+    if (!nodeState(eq, n).on || !eq.on) onChange(withNode({ ...eq, on: true }, n, { on: true }))
+  }
+  const onMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const n = drag.current; if (!n) return
+    const r = e.currentTarget.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top
+    const freq = Math.round(fOf(x, r.width))
+    const st = nodeState(eq, n)
+    if (st.gain === null) onChange(withNode(eq, n, { freq, q: Math.max(0.1, Math.min(10, Number((0.707 * Math.pow(10, (r.height / 2 - y) / r.height)).toFixed(2)))) }))   // pass filters: drag up/down for Q
+    else onChange(withNode(eq, n, { freq, gain: Number(dbOfY(y, r.height).toFixed(1)) }))
+  }
+  const onUp = () => { drag.current = null }
+  const onWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    const st = nodeState(eq, selected)
+    const q = Math.max(0.1, Math.min(10, Number((st.q * Math.pow(1.1, -Math.sign(e.deltaY))).toFixed(2))))
+    onChange(withNode(eq, selected, { q }))
+  }
+  const sel = nodeState(eq, selected)
+  const node = EQ_NODES.find((n) => n.id === selected)!
+  return (
+    <section className="rounded-xl border border-border bg-surface">
+      <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
+        <div className="text-[13px] font-medium">Equaliser</div>
+        <span className="text-[11px] text-muted">drag a point for frequency and gain (pass filters: up/down for Q) · scroll on the curve for the selected band’s Q · ffmpeg highpass, lowshelf, equalizer ×{EQ_BANDS}, highshelf, lowpass</span>
+        <div className="ml-auto flex items-center gap-2">
+          <Button size="sm" variant="ghost" onClick={() => onChange(defaultModules().eq)} title="All bands off and back to their defaults"><RotateCcw size={13} /> Reset EQ</Button>
+          <Switch checked={eq.on} onChange={(on) => onChange({ ...eq, on })} label="Equaliser" />
+        </div>
+      </div>
+      <canvas ref={ref} className={clsx('block h-56 w-full cursor-crosshair', !eq.on && 'opacity-70')} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onWheel={onWheel} />
+      <div className="flex flex-wrap gap-1.5 border-t border-border px-4 py-2">
+        {EQ_NODES.map((n) => { const st = nodeState(eq, n.id); return (
+          <button key={n.id} type="button" onClick={() => setSelected(n.id)}
+            className={clsx('inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs no-drag transition-colors', selected === n.id ? 'border-accent/60 bg-accent/10 text-text' : 'border-border text-muted hover:text-text')}>
+            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: n.colour, opacity: st.on ? 1 : 0.35 }} />{n.label}
+            <span className="tabular-nums text-muted">{st.freq >= 1000 ? `${(st.freq / 1000).toFixed(st.freq % 1000 ? 1 : 0)}k` : st.freq}{st.gain !== null && st.gain !== 0 ? ` ${st.gain > 0 ? '+' : ''}${st.gain.toFixed(1)}` : ''}</span>
+          </button>
+        ) })}
+      </div>
+      <div className={clsx('grid grid-cols-1 gap-x-6 gap-y-3 border-t border-border px-4 py-3 sm:grid-cols-3', !eq.on && 'opacity-60')}>
+        <div className="sm:col-span-3 flex items-center gap-3">
+          <span className="inline-block h-3 w-3 rounded-full" style={{ background: node.colour }} />
+          <span className="text-[13px] font-medium">{node.label}</span>
+          <span className="text-[11px] text-muted">{selected === 'hp' ? 'Removes everything below the frequency, 12 dB per octave. Q 0.707 is flat; higher adds a bump at the corner.' : selected === 'lp' ? 'Removes everything above the frequency, 12 dB per octave.' : selected === 'ls' ? 'Raises or lowers everything below the frequency.' : selected === 'hs' ? 'Raises or lowers everything above the frequency.' : 'Boosts or cuts a band around the frequency; Q sets how narrow the band is.'}</span>
+          <label className="ml-auto inline-flex items-center gap-2 text-xs text-muted"><Switch checked={sel.on} onChange={(v) => onChange(withNode(eq, selected, { on: v }))} label={`${node.label} on`} /> on</label>
+        </div>
+        <KnobRow knob={FREQ_KNOB} value={sel.freq} disabled={!eq.on || !sel.on} onChange={(v) => onChange(withNode(eq, selected, { freq: Number(v) }))} />
+        {sel.gain !== null && <KnobRow knob={GAIN_KNOB} value={sel.gain} disabled={!eq.on || !sel.on} onChange={(v) => onChange(withNode(eq, selected, { gain: Number(v) }))} />}
+        <KnobRow knob={Q_KNOB} value={sel.q} disabled={!eq.on || !sel.on} onChange={(v) => onChange(withNode(eq, selected, { q: Number(v) }))} />
+      </div>
+    </section>
   )
 }
 
@@ -230,7 +368,7 @@ const tileKey = (kind: Side, index: number) => `${kind}:${index}`
 
 interface Loaded {
   key: string; kind: Side; index: number; gen: number
-  buffer: AudioBuffer; offset: number; peaks: number[]; gainDb: number; lufs: number; truePeak: number; channels: number
+  buffer: AudioBuffer; offset: number; peaks: number[]; gainDb: number; lufs: number; truePeak: number; channels: number; warnings: string[]
 }
 interface Voice {
   src: AudioBufferSourceNode
@@ -460,7 +598,7 @@ function decode(ctx: AudioContext, file: string): Promise<AudioBuffer> {
   return p
 }
 
-function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId: string; look: AudioLookPatch; lookOk: boolean; winStart: number; onWinStart: (s: number) => void }) {
+function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId: string; look: AudioLook; lookOk: boolean; winStart: number; onWinStart: (s: number) => void }) {
   const notify = useStore((s) => s.notify)
   const tRef = useRef<TileTransport | null>(null)
   const transport = () => (tRef.current ??= new TileTransport())
@@ -505,8 +643,7 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
   useEffect(() => { transport().setTiles(tiles) }, [tiles])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const t = transport()
-    const resolved = merge(DEFAULT_LOOK, look) as { loudness?: { enabled?: boolean; target?: number } }
-    const target = resolved.loudness?.enabled === false ? null : resolved.loudness?.target ?? null
+    const target = look.level ? look.level.lufs : null
     t.setOriginalGain(matchLoudness && overview && target !== null && Number.isFinite(overview.lufs) ? Math.pow(10, (target - overview.lufs) / 20) : 1)
   }, [matchLoudness, overview, lookKey])  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -539,7 +676,7 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
           if (w.kind === 'processed' && gen !== genRef.current) return
           const buffer = await decode(transport().ctx, r.tile.file)
           if (w.kind === 'processed' && gen !== genRef.current) return
-          const loaded: Loaded = { key, kind: w.kind, index: w.index, gen, buffer, offset: r.tile.offset, peaks: r.tile.peaks, gainDb: r.tile.gainDb, lufs: r.tile.lufs, truePeak: r.tile.truePeak, channels: r.tile.channels }
+          const loaded: Loaded = { key, kind: w.kind, index: w.index, gen, buffer, offset: r.tile.offset, peaks: r.tile.peaks, gainDb: r.tile.gainDb, lufs: r.tile.lufs, truePeak: r.tile.truePeak, channels: r.tile.channels, warnings: r.tile.warnings }
           if (w.kind === 'processed' && refGainRef.current === null) { refGainRef.current = r.tile.gainDb; transport().setRefGain(r.tile.gainDb) }
           setTiles((prev) => { const next = new Map(prev); next.set(key, loaded); return next })
         })
@@ -611,8 +748,8 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
             ))}
           </div>
           <button type="button" onClick={toggleLoop} className={clsx('inline-flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs no-drag', loop ? 'border-accent/40 text-accent bg-accent/10' : 'border-border text-muted')} title="Loop the window"><Repeat size={13} /> Loop</button>
-          <label className="inline-flex h-8 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-muted" title="Off: the original plays exactly as recorded. On: the original gets one fixed gain so it sits at the look's target loudness — louder never sounds better, so you judge tone and noise alone. The final clip is not affected either way.">
-            <Switch checked={matchLoudness} onChange={setMatchLoudness} label="Match loudness" disabled={!overview} /> Match loudness
+          <label className="inline-flex h-8 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-muted" title="Off: the original plays exactly as recorded. On: the original gets one fixed gain so it sits at the levelling target — louder never sounds better, so you judge tone and noise alone. Needs Loudness levelling on. The final clip is not affected either way.">
+            <Switch checked={matchLoudness} onChange={setMatchLoudness} label="Match loudness" disabled={!overview || !look.level} /> Match loudness
           </label>
           <span className="ml-auto min-w-0 truncate text-xs tabular-nums text-muted">{fmtTime(time)} · window {fmtTime(winStart)}–{fmtTime(winStart + WINDOW)}{Number.isFinite(duration) ? ` of ${fmtTime(duration)}` : ''}</span>
         </div>
@@ -634,6 +771,7 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
         <Stat label="Original loudness" value={overview && Number.isFinite(overview.lufs) ? `${overview.lufs.toFixed(1)} LUFS` : '—'} hint={matchLoudness ? 'raised to the target while matching' : 'whole recording, as recorded'} />
         <Stat label="Gain applied" value={refGain === null ? '—' : db(refGain)} hint="by the loudness stage" />
         <Stat label="Channels" value={cur ? (cur.channels === 2 ? 'stereo' : 'mono') : '—'} hint={cur?.channels === 2 ? 'reverb makes it stereo' : undefined} />
+        {cur && cur.warnings.length > 0 && <div className="col-span-full flex items-center gap-1 text-[11px] text-warn"><AlertTriangle size={12} /> {cur.warnings.join(' · ')}</div>}
         {firstFailure && <div className="col-span-full flex items-center gap-1 text-[11px] text-warn"><AlertTriangle size={12} /> A chunk could not be rendered: {firstFailure[1]}</div>}
       </div>
     </div>

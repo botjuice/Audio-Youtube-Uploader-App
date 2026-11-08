@@ -9,13 +9,13 @@ import { createReadStream, promises as fs } from 'node:fs'
 import { Readable } from 'node:stream'
 import { join, resolve } from 'node:path'
 import type { AudioLookState, AudioOverview, AudioTile, AudioTileInput, AudioTileResult } from '@shared/types'
-import { analyse, processAudio, validateLook, type AudioAnalysis, type AudioHost } from '../plugins/audio/index'
+import { EMPTY_LOOK, analyse, processAudio, validateLook, type AudioAnalysis, type AudioHost } from '../plugins/audio/index'
 import { ffmpegPath } from './ffmpeg'
 import { activity } from './log'
 import { stateFile } from './paths'
 
 export const audioDir = (library: string) => stateFile(library, 'audio')
-export const DEFAULT_AUDIO_LOOK: AudioLookState = { look: {}, sample: null }
+export const DEFAULT_AUDIO_LOOK: AudioLookState = { look: EMPTY_LOOK, sample: null }
 export const PREVIEW_SECONDS = 45
 const PEAK_BUCKETS = 1200
 
@@ -70,7 +70,7 @@ export function peaksOf(file: string, buckets = PEAK_BUCKETS, signal?: AbortSign
 }
 
 /** Filters start cold at a chunk's first sample; render this much before the chunk and skip it on playback. */
-export const TILE_PREROLL_S = 4
+export const TILE_PREROLL_S = 5
 /** The original needs no warm-up, only enough before the chunk for the player's 10 ms crossfade and to skip the decoder's first frames. */
 export const ORIGINAL_PREROLL_S = 1
 /** Audio after the nominal chunk end so neighbouring chunks can overlap and crossfade (ffmpeg cuts land a few samples off). */
@@ -138,16 +138,16 @@ export async function renderAudioTile(library: string, audioPath: string, input:
       const pre = Math.min(ORIGINAL_PREROLL_S, start)
       const file = await cutOriginal(library, audioPath, start - pre, seconds + pre + TILE_POSTROLL_S, ac.signal)
       const peaks = await peaksOf(file, TILE_PEAK_BUCKETS, ac.signal, pre, seconds)
-      const tile: AudioTile = { kind: 'original', start, seconds, file, offset: pre, peaks, gainDb: 0, lufs: NaN, truePeak: NaN, channels: 1 }
+      const tile: AudioTile = { kind: 'original', start, seconds, file, offset: pre, peaks, gainDb: 0, lufs: NaN, truePeak: NaN, channels: 1, sampleRate: 48000, warnings: [] }
       return { ok: true, tile }
     }
-    const v = validateLook(input.look ?? {})
-    if (!v.ok) return { ok: false, reason: 'INVALID_LOOK', message: v.errors.map((e) => `${e.key}: ${e.message}`).join('\n') }
+    const v = validateLook(input.look ?? EMPTY_LOOK)
+    if (!v.ok) return { ok: false, reason: 'INVALID_LOOK', message: v.errors.map((e) => `${e.path}: ${e.message}`).join('\n'), errors: v.errors }
     const pre = Math.min(TILE_PREROLL_S, start)
     const r = await processAudio({ audioPath, look: input.look, preview: { start: start - pre, seconds: seconds + pre + TILE_POSTROLL_S } }, h)
-    if (!r.ok) return r.reason === 'CANCELLED' ? { ok: false, reason: 'CANCELLED', message: 'superseded' } : r
+    if (!r.ok) return r.reason === 'CANCELLED' ? { ok: false, reason: 'CANCELLED', message: 'superseded' } : { ok: false, reason: r.reason, message: r.message, ...(r.errors ? { errors: r.errors } : {}) }
     const peaks = await peaksOf(r.file, TILE_PEAK_BUCKETS, ac.signal, pre, seconds)
-    const tile: AudioTile = { kind: 'processed', start, seconds, file: r.file, offset: pre, peaks, gainDb: r.gainDb, lufs: r.after.lufs, truePeak: r.after.truePeak, channels: r.after.channels }
+    const tile: AudioTile = { kind: 'processed', start, seconds, file: r.file, offset: pre, peaks, gainDb: r.gainDb, lufs: r.after.lufs, truePeak: r.after.truePeak, channels: r.after.channels, sampleRate: r.after.sampleRate, warnings: r.warnings }
     return { ok: true, tile }
   } catch (e) {
     return { ok: false, reason: ac.signal.aborted ? 'CANCELLED' : 'PROCESS_FAILED', message: e instanceof Error ? e.message : String(e) }

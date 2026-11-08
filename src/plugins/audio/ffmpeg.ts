@@ -2,22 +2,25 @@
  * Running ffmpeg safely: progress, cancel, a stall watchdog, crash detection, and parsers for
  * what ffmpeg prints (duration/stream info, the ebur128 summary, astats).
  *
- * Why a watchdog: `loudnorm` after the reverb mix hangs forever in the ffmpeg 6.0 we ship
- * (reproduced). We no longer use loudnorm, but any future filter combination that stalls must
- * end as a clear TIMEOUT, never as a pipeline that waits forever.
+ * Why a watchdog: `loudnorm` after an afir/amix mix hangs forever in the ffmpeg 6.0 we ship
+ * (reproduced). Looks can now hold any filter combination, so anything that stalls must end as
+ * a clear TIMEOUT, never as a pipeline that waits forever.
  */
 import { spawn } from 'node:child_process'
 import { promises as fs } from 'node:fs'
-import { REQUIRED_FILTERS } from './chain'
+import { CATALOG } from './catalog'
 
 export class FfmpegError extends Error {
-  constructor(public reason: 'PROCESS_FAILED' | 'TIMEOUT' | 'CANCELLED' | 'FFMPEG_UNUSABLE', message: string) { super(message) }
+  /** what ffmpeg printed (banner + tail), for mapping "[Parsed_<filter>_<n>]" lines back to look steps */
+  constructor(public reason: 'PROCESS_FAILED' | 'TIMEOUT' | 'CANCELLED' | 'FFMPEG_UNUSABLE', message: string, public stderr = '') { super(message) }
 }
 
 export interface RunOptions {
   signal?: AbortSignal
   /** Kill when the output position has not moved for this long. */
   stallMs?: number
+  /** Kill after this long no matter what (checks of tiny excerpts). */
+  maxMs?: number
   /** Called with the output position in seconds (from -progress). */
   onTime?: (seconds: number) => void
   /** Collect stdout (e.g. ametadata=print:file=-); otherwise stdout carries -progress. */
@@ -38,15 +41,18 @@ export function runFfmpeg(bin: string, args: string[], o: RunOptions = {}): Prom
     let lastPos = -1, lastMove = Date.now(), stalled = false, cancelled = false
     const onAbort = () => { cancelled = true; child.kill() }
     o.signal?.addEventListener('abort', onAbort, { once: true })
+    const started = Date.now()
     const watchdog = setInterval(() => {
-      if (Date.now() - lastMove > stallMs) { stalled = true; child.kill('SIGKILL') }
-    }, 1000)
+      if (Date.now() - lastMove > stallMs || (o.maxMs && Date.now() - started > o.maxMs)) { stalled = true; child.kill('SIGKILL') }
+    }, 250)
     child.stderr.on('data', (b: Buffer) => {
       const s = b.toString()
       if (head.length < 8000) head += s                    // stream info lives at the top
       stderr += s
       if (stderr.length > TAIL * 2) stderr = stderr.slice(-TAIL) // the ebur128 summary lives at the bottom
-      lastMove = Date.now()                                 // any output counts as life while not progressing yet
+      // before the first progress report, messages count as life (slow starts); after it only progress does —
+      // a filter that warns forever without moving (arealtime at a near-zero speed) must still time out
+      if (lastPos < 0 && Date.now() - started < stallMs * 4) lastMove = Date.now()
     })
     child.stdout.on('data', (b: Buffer) => {
       const s = b.toString()
@@ -62,11 +68,11 @@ export function runFfmpeg(bin: string, args: string[], o: RunOptions = {}): Prom
       o.signal?.removeEventListener('abort', onAbort)
       const all = head.length < 8000 ? head : head + '\n…\n' + stderr
       if (cancelled) return reject(new FfmpegError('CANCELLED', 'Cancelled'))
-      if (stalled) return reject(new FfmpegError('TIMEOUT', `ffmpeg made no progress for ${Math.round(stallMs / 1000)} s and was stopped (at ${lastPos < 0 ? 'the start' : `${lastPos.toFixed(1)} s`}).`))
+      if (stalled) return reject(new FfmpegError('TIMEOUT', o.maxMs && Date.now() - started > o.maxMs ? `ffmpeg took longer than ${Math.round(o.maxMs / 1000)} s and was stopped.` : `ffmpeg made no progress for ${Math.round(stallMs / 1000)} s and was stopped (at ${lastPos < 0 ? 'the start' : `${lastPos.toFixed(1)} s`}).`, all))
       if (code !== 0) {
         const tail = stderr.trim().split('\n').filter((l) => l.trim()).slice(-4).join(' · ')
         const how = sig ? `crashed (${sig})` : `exited with code ${code}`
-        return reject(new FfmpegError('PROCESS_FAILED', `ffmpeg ${how}${tail ? `: ${tail}` : ''}`))
+        return reject(new FfmpegError('PROCESS_FAILED', `ffmpeg ${how}${tail ? `: ${tail}` : ''}`, all))
       }
       resolve({ stderr: all, stdout })
     })
@@ -94,7 +100,8 @@ export function probe(bin: string, file: string): Promise<Probe> {
 
 export function parseProbe(text: string): Probe | null {
   const d = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(text)
-  const a = /Stream #\d+:\d+(?:\[[^\]]*\])?(?:\([^)]*\))?: Audio: ([^,\s]+)[^,]*, (\d+) Hz, ([^,]+),/.exec(text)
+  // the layout ends at a comma — or at the line's end, as ffmpeg cuts very long layouts (64 channels) short
+  const a = /Stream #\d+:\d+(?:\[[^\]]*\])?(?:\([^)]*\))?: Audio: ([^,\s]+)[^,\n]*, (\d+) Hz, ([^,\n]+)/.exec(text)
   if (!d || !a) return null
   const layout = a[3]!.trim()
   const channels = layout === 'mono' ? 1 : layout === 'stereo' ? 2 : Number(/(\d+) channels/.exec(layout)?.[1] ?? (/(\d+)\.(\d+)/.test(layout) ? layout.split('.').reduce((s, x) => s + Number(x), 0) : 2))
@@ -108,17 +115,31 @@ export function parseProbe(text: string): Probe | null {
 
 // ── ebur128 / astats parsers ─────────────────────────────────────────────────
 
-export interface Ebur { lufs: number; lra: number; truePeak: number }
+export interface Ebur { lufs: number; lra: number; truePeak: number; samplePeak: number }
 
-/** The *last* ebur128 Summary in the text (one instance per run in our graphs). */
+/** The *last* ebur128 Summary in the text (one instance per run in our graphs). With peak=sample+true it
+ *  has a "Sample peak:" and a "True peak:" section, each with its own "Peak:" line. */
 export function parseEbur(text: string): Ebur | null {
   const at = text.lastIndexOf('Summary:')
   if (at < 0) return null
   const s = text.slice(at)
-  const num = (re: RegExp) => { const m = re.exec(s); return m ? Number(m[1]) : NaN }
-  const lufs = num(/\bI:\s*(-?[\d.]+|-inf) LUFS/), lra = num(/LRA:\s*(-?[\d.]+) LU/), peak = num(/Peak:\s*(-?[\d.]+|-inf) dBFS/)
+  const num = (src: string, re: RegExp) => { const m = re.exec(src); return m ? Number(m[1]) : NaN }
+  const peakIn = (section: string) => { const i = s.indexOf(section); return i < 0 ? NaN : num(s.slice(i), /Peak:\s*(-?[\d.]+|-inf) dBFS/) }
+  const lufs = num(s, /\bI:\s*(-?[\d.]+|-inf) LUFS/), lra = num(s, /LRA:\s*(-?[\d.]+) LU/)
   if (Number.isNaN(lufs) && !/I:\s*-inf/.test(s)) return null
-  return { lufs: Number.isNaN(lufs) ? -Infinity : lufs, lra: Number.isNaN(lra) ? 0 : lra, truePeak: Number.isNaN(peak) ? -Infinity : peak }
+  const anyPeak = num(s, /Peak:\s*(-?[\d.]+|-inf) dBFS/)
+  const tp = s.includes('True peak:') ? peakIn('True peak:') : anyPeak
+  const sp = s.includes('Sample peak:') ? peakIn('Sample peak:') : NaN
+  const fix = (x: number) => (Number.isNaN(x) ? -Infinity : x)
+  return { lufs: fix(lufs), lra: Number.isNaN(lra) ? 0 : lra, truePeak: fix(tp), samplePeak: fix(sp) }
+}
+
+/** Rate and channels of the first output stream (what the rack produced), from ffmpeg's banner. */
+export function parseOutputStream(text: string): { sampleRate: number; channels: number } | null {
+  const at = text.indexOf('Output #0')
+  if (at < 0) return null
+  const p = parseProbe(`Duration: 00:00:00.00\n${text.slice(at)}`)
+  return p ? { sampleRate: p.sampleRate, channels: p.channels } : null
 }
 
 /** Values printed by `ametadata=print:key=…:file=-`, in order (−inf dropped). */
@@ -138,22 +159,24 @@ export function percentile(values: number[], q: number): number {
 
 const checked = new Map<string, Promise<void>>()
 
-/** Binary exists and has every filter the chain needs. Cached per binary path. */
+/**
+ * Binary exists and is the ffmpeg the catalog was generated from. A different build can have other
+ * options, and this ffmpeg crashes on an option it doesn't know — so a mismatch is refused until the
+ * catalog is regenerated (`npm run audio -- catalog`). Cached per binary path.
+ */
 export function checkFfmpeg(bin: string): Promise<void> {
   let p = checked.get(bin)
   if (!p) {
     p = (async () => {
       try { await fs.access(bin) } catch { throw new FfmpegError('FFMPEG_UNUSABLE', `ffmpeg binary not found: ${bin}`) }
-      const listed = await new Promise<string>((resolve, reject) => {
-        const child = spawn(bin, ['-hide_banner', '-filters'], { windowsHide: true })
+      const version = await new Promise<string>((resolve, reject) => {
+        const child = spawn(bin, ['-hide_banner', '-version'], { windowsHide: true })
         let out = ''
         child.stdout.on('data', (b: Buffer) => { out += b.toString() })
         child.on('error', (e) => reject(new FfmpegError('FFMPEG_UNUSABLE', `Could not start ffmpeg (${bin}): ${e.message}`)))
-        child.on('close', () => resolve(out))
+        child.on('close', () => resolve(out.split('\n')[0]!.trim()))
       })
-      const have = new Set([...listed.matchAll(/^\s*\S+\s+(\S+)\s/gm)].map((m) => m[1]))
-      const missing = REQUIRED_FILTERS.filter((f) => !have.has(f))
-      if (missing.length) throw new FfmpegError('FFMPEG_UNUSABLE', `This ffmpeg lacks filters the audio chain needs: ${missing.join(', ')}`)
+      if (version !== CATALOG.ffmpeg) throw new FfmpegError('FFMPEG_UNUSABLE', `The audio filter catalog was made for "${CATALOG.ffmpeg}" but this ffmpeg is "${version}". Regenerate it: npm run audio -- catalog`)
     })()
     p.catch(() => checked.delete(bin))
     checked.set(bin, p)

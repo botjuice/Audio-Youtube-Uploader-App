@@ -26,7 +26,7 @@ interface State {
   saveSettings(patch: Partial<Settings>): Promise<void>
 }
 
-const EMPTY: LibrarySnapshot = { reciters: [], records: [], rules: [], keywords: [], thumbnailRules: [], playlists: [], audioLook: { look: {}, sample: null } }
+const EMPTY: LibrarySnapshot = { reciters: [], records: [], rules: [], keywords: [], thumbnailRules: [], playlists: [], audioLook: { look: { chain: [] }, sample: null } }
 let seq = 0
 
 export const errText = (e: unknown): string =>

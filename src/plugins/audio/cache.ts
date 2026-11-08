@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 export interface FileStat { size: number; mtimeMs: number }
 
-/** Stable key: the recording's identity, everything that shapes the output, and the chain version. */
+/** Stable key: the recording's identity, everything that shapes the output (graph text, extra files), and the plugin's render version. */
 export function cacheKey(audioPath: string, stat: FileStat, chainVersion: number, shape: Record<string, unknown>): string {
   return createHash('sha1')
     .update(JSON.stringify({ v: chainVersion, audio: [audioPath, stat.size, Math.round(stat.mtimeMs)], ...shape }))
@@ -13,7 +13,6 @@ export function cacheKey(audioPath: string, stat: FileStat, chainVersion: number
 
 export const audioFile = (dir: string, key: string) => join(dir, `${key}.flac`)
 export const metaFile = (dir: string, key: string) => join(dir, `${key}.json`)
-export const irDir = (dir: string) => join(dir, 'ir')
 
 export async function nonEmpty(p: string): Promise<boolean> {
   return fs.stat(p).then((s) => s.isFile() && s.size > 0, () => false)

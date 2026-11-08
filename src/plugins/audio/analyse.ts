@@ -41,7 +41,7 @@ export async function analyseFile(bin: string, file: string, signal?: AbortSigna
   const hints: string[] = []
   if (!Number.isFinite(lufs) || lufs < -60) hints.push('Silent or nearly silent recording.')
   else {
-    if (clipped) hints.push('Clipped in places (the waveform is flattened at the top) — turn on "Repair clipping".')
+    if (clipped) hints.push('Clipped in places (the waveform is flattened at the top) — add an adeclip step.')
     if (lufs < -20) hints.push(`Quiet recording (${lufs.toFixed(1)} LUFS): levelling raises it by about ${(-14 - lufs).toFixed(0)} dB, which raises its background noise too.`)
     if (lufs > -10) hints.push(`Very loud recording (${lufs.toFixed(1)} LUFS): it will be turned down.`)
   }

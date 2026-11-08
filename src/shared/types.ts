@@ -176,17 +176,17 @@ export interface RulePhoto { file: string; dataUrl: string }
 
 /** A font file the user supplied, copied into <library>/.yoosyjoosy/fonts/. `path` is what goes into the style patch. */
 // ── Audio editor ──────────────────────────────────────────────────────────────
-export type { LookPatch as AudioLookPatch, LookFieldInfo as AudioFieldInfo } from '../plugins/audio/look'
+export type { Look as AudioLook, Step as AudioStep, LookError as AudioLookError } from '../plugins/audio/look'
 export type { AudioAnalysis } from '../plugins/audio/types'
 /** The one audio look (a patch over the plugin's factory defaults) plus the editor's last sample. Editor only for now: uploads still use the original audio. */
-export interface AudioLookState { look: import('../plugins/audio/look').LookPatch; sample: { recordId: string; start: number } | null }
+export interface AudioLookState { look: import('../plugins/audio/look').Look; sample: { recordId: string; start: number } | null }
 /** One 5 s chunk of the A/B stream. `processed` chunks are rendered by the plugin with a pre-roll (so filters are warm) that playback skips via `offset`. */
 export interface AudioTileInput {
   recordId: string
   kind: 'processed' | 'original'
   start: number            // recording seconds, on the tile grid
   seconds: number          // tile length
-  look?: import('../plugins/audio/look').LookPatch
+  look?: import('../plugins/audio/look').Look
   /** processed only: bumped by the editor on every look change; older generations are cancelled */
   generation?: number
 }
@@ -197,9 +197,11 @@ export interface AudioTile {
   offset: number           // seconds into the file where the tile really begins (pre-roll before it; ≥0.5 s of post-roll follows the tile)
   peaks: number[]          // [min, max] pairs over the tile only
   gainDb: number           // gain the loudness stage applied to this chunk (0 for original)
-  lufs: number; truePeak: number; channels: number
+  lufs: number; truePeak: number; channels: number; sampleRate: number
+  /** plugin warnings for this chunk, e.g. a step changed the length so the lanes no longer line up */
+  warnings: string[]
 }
-export type AudioTileResult = { ok: true; tile: AudioTile } | { ok: false; reason: string; message: string }
+export type AudioTileResult = { ok: true; tile: AudioTile } | { ok: false; reason: string; message: string; errors?: { path: string; message: string }[] }
 /** Peak envelope of a whole recording, for the overview strip. */
 export interface AudioOverview { durationSec: number; lufs: number; peaks: number[] }
 
