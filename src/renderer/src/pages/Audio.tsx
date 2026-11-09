@@ -376,6 +376,8 @@ const tileKey = (kind: Side, index: number) => `${kind}:${index}`
 interface Loaded {
   key: string; kind: Side; index: number; gen: number
   buffer: AudioBuffer; offset: number; peaks: number[]; gainDb: number; lufs: number; truePeak: number; channels: number; warnings: string[]
+  /** K-weighted mean square of the chunk's own 5 s (no pre/post-roll), per channel: what loudness matching compares */
+  power: number
 }
 interface Voice {
   src: AudioBufferSourceNode
@@ -624,6 +626,30 @@ class TileTransport {
 }
 
 const decoded = new Map<string, Promise<AudioBuffer>>()
+/**
+ * Mean square of `seconds` from `offset`, K-weighted as LUFS is (ITU-R BS.1770, 48 kHz coefficients), averaged over
+ * channels so a mono original and a stereo (reverb) processed side compare as heard on two speakers. The pre-roll
+ * before `offset` warms the filters up.
+ */
+function kPower(buf: AudioBuffer, offset: number, seconds: number): number {
+  const from = Math.max(0, Math.round(offset * buf.sampleRate)), to = Math.min(buf.length, from + Math.round(seconds * buf.sampleRate))
+  if (to <= from) return 0
+  let sum = 0
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    const x = buf.getChannelData(c)
+    let a1 = 0, a2 = 0, b1 = 0, b2 = 0, c1 = 0, c2 = 0, d1 = 0, d2 = 0
+    for (let i = 0; i < to; i++) {
+      const v = x[i]!
+      const y = 1.53512485958697 * v - 2.69169618940638 * a1 + 1.19839281085285 * a2 + 1.69065929318241 * b1 - 0.73248077421585 * b2
+      a2 = a1; a1 = v; b2 = b1; b1 = y
+      const z = y - 2 * c1 + c2 + 1.99004745483398 * d1 - 0.99007225036621 * d2
+      c2 = c1; c1 = y; d2 = d1; d1 = z
+      if (i >= from) sum += z * z
+    }
+  }
+  return sum / ((to - from) * buf.numberOfChannels)
+}
+
 function decode(ctx: AudioContext, file: string): Promise<AudioBuffer> {
   let p = decoded.get(file)
   if (!p) {
@@ -713,11 +739,26 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
     setTime(t.time)
   }, [winStart, mode, duration])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { transport().setTiles(tiles) }, [tiles])  // eslint-disable-line react-hooks/exhaustive-deps
+  // Match loudness: one gain for the original = how much louder the processed side is, as heard, over the chunks
+  // loaded around the view (both sides measured the same way; the processed side with its levelling compensation).
+  const matchDb = useMemo(() => {
+    const gen = genRef.current, ref = refGainRef.current
+    let p = 0, o = 0
+    for (const tp of tiles.values()) {
+      if (tp.kind !== 'processed' || tp.gen !== gen) continue
+      const to = tiles.get(tileKey('original', tp.index))
+      if (!to || tp.power < 1e-7 || to.power < 1e-7) continue   // skip silence (below -70 dB)
+      p += tp.power * Math.pow(10, ((ref === null ? 0 : ref - tp.gainDb)) / 10); o += to.power
+    }
+    return o > 0 && p > 0 ? Math.max(-24, Math.min(24, 10 * Math.log10(p / o))) : null
+  }, [tiles, lookKey])  // eslint-disable-line react-hooks/exhaustive-deps
+  const appliedMatch = useRef(0)
   useEffect(() => {
-    const t = transport()
-    const target = look.level ? look.level.lufs : null
-    t.setOriginalGain(matchLoudness && overview && target !== null && Number.isFinite(overview.lufs) ? Math.pow(10, (target - overview.lufs) / 20) : 1)
-  }, [matchLoudness, overview, lookKey])  // eslint-disable-line react-hooks/exhaustive-deps
+    const want = matchLoudness && matchDb !== null ? matchDb : 0
+    if (Math.abs(want - appliedMatch.current) < 0.1 && (want === 0) === (appliedMatch.current === 0)) return   // ignore drift as chunks come and go
+    appliedMatch.current = want
+    transport().setOriginalGain(Math.pow(10, want / 20))
+  }, [matchLoudness, matchDb])
 
   // The lanes show [viewStart, viewStart + 45 s]: the fixed window in loop mode, centred on the playhead in continuous mode
   // (held at the start/end of the recording when the playhead is within half a window of it).
@@ -753,7 +794,7 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
           if (w.kind === 'processed' && gen !== genRef.current) return
           const buffer = await decode(transport().ctx, r.tile.file)
           if (w.kind === 'processed' && gen !== genRef.current) return
-          const loaded: Loaded = { key, kind: w.kind, index: w.index, gen, buffer, offset: r.tile.offset, peaks: r.tile.peaks, gainDb: r.tile.gainDb, lufs: r.tile.lufs, truePeak: r.tile.truePeak, channels: r.tile.channels, warnings: r.tile.warnings }
+          const loaded: Loaded = { key, kind: w.kind, index: w.index, gen, buffer, offset: r.tile.offset, peaks: r.tile.peaks, gainDb: r.tile.gainDb, lufs: r.tile.lufs, truePeak: r.tile.truePeak, channels: r.tile.channels, warnings: r.tile.warnings, power: kPower(buffer, r.tile.offset, TILE) }
           if (w.kind === 'processed' && refGainRef.current === null) { refGainRef.current = r.tile.gainDb; transport().setRefGain(r.tile.gainDb) }
           setTiles((prev) => { const next = new Map(prev); next.set(key, loaded); return next })
         })
@@ -869,8 +910,9 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
             { value: 'loop', label: <><Repeat size={13} /> Loop</>, title: 'Loop: play the 45 s window over and over; the needle moves across a fixed waveform' },
             { value: 'continuous', label: <><ChevronsRight size={13} /> Continuous</>, title: 'Continuous: play on through the recording; the needle stays in the middle and the waveform scrolls under it (near the start and end the needle moves instead)' },
           ]} />
-          <label className={clsx('inline-flex h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-border px-2.5 text-xs', look.level ? 'text-muted' : 'text-muted/60')} title="Off: the original plays exactly as recorded. On: the original gets one fixed gain so it sits at the levelling target — louder never sounds better, so you judge tone and noise alone. Needs Loudness levelling on. The final clip is not affected either way.">
-            <Switch checked={matchLoudness} onChange={setMatchLoudness} label="Match loudness" disabled={!overview || !look.level} /> Match loudness
+          <label className="inline-flex h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-border px-2.5 text-xs text-muted" title="Off: the original plays exactly as recorded. On: the original is turned up or down by one fixed amount so it is as loud as the processed side — louder always sounds better, so this lets you judge tone and noise alone. Measured on the chunks around the view. Only affects what you hear here; the final clip is not changed.">
+            <Switch checked={matchLoudness} onChange={setMatchLoudness} label="Match loudness" /> Match loudness
+            {matchLoudness && <span className="tabular-nums text-text">{matchDb === null ? '…' : db(matchDb)}</span>}
           </label>
           <span className="ml-auto inline-flex h-8 shrink-0 items-center text-muted" title={mode === 'loop' ? 'Space play / pause · S switch side · click a lane to jump · ← → move the window 5 s (shift: 30 s) · scroll over the lanes to move the window · drag the window on the overview' : 'Space play / pause · S switch side · click a lane to jump · ← → jump 5 s (shift: 30 s) · scroll over the lanes to scrub · click or drag on the overview to jump'}><Keyboard size={15} /></span>
         </div>
@@ -889,7 +931,7 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
       </div>
       <div className="@container border-t border-border px-4 py-3 text-xs"><div className="grid grid-cols-2 gap-x-6 gap-y-3 @lg:grid-cols-4">
         <Stat label="Processed" value={procLufs !== null && Number.isFinite(procLufs) ? `${procLufs.toFixed(1)} LUFS` : '—'} hint="at the playhead" />
-        <Stat label="Original" value={overview && Number.isFinite(overview.lufs) ? `${overview.lufs.toFixed(1)} LUFS` : '—'} hint={matchLoudness ? 'raised to the target' : 'whole recording'} />
+        <Stat label="Original" value={overview && Number.isFinite(overview.lufs) ? `${overview.lufs.toFixed(1)} LUFS` : '—'} hint={matchLoudness && matchDb !== null ? `whole recording · heard ${db(matchDb)}` : 'whole recording'} />
         <Stat label="Levelling gain" value={refGain === null ? '—' : db(refGain)} hint="loudness levelling" />
         <Stat label="Output" value={cur ? (cur.channels === 2 ? 'stereo' : 'mono') : '—'} hint={cur?.channels === 2 ? 'reverb makes it stereo' : 'processed side'} />
         </div>
