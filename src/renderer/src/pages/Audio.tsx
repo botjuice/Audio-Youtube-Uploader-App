@@ -652,6 +652,12 @@ let lastMode: Mode = 'loop'
 /** a lane/axis/overview places itself each animation frame: `viewStart` = recording second at the lanes' left edge */
 type Placer = (viewStart: number, time: number) => void
 
+/** Continuous mode's view: the playhead in the middle, but never past either end of the recording (there the needle moves instead). */
+function followStart(time: number, duration: number): number {
+  const max = Number.isFinite(duration) ? Math.max(0, duration - WINDOW) : Infinity
+  return Math.min(max, Math.max(0, time - WINDOW / 2))
+}
+
 function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId: string; look: AudioLook; lookOk: boolean; winStart: number; onWinStart: (s: number) => void }) {
   const notify = useStore((s) => s.notify)
   const tRef = useRef<TileTransport | null>(null)
@@ -713,8 +719,9 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
     t.setOriginalGain(matchLoudness && overview && target !== null && Number.isFinite(overview.lufs) ? Math.pow(10, (target - overview.lufs) / 20) : 1)
   }, [matchLoudness, overview, lookKey])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The lanes show [viewStart, viewStart + 45 s]: the fixed window in loop mode, centred on the playhead in continuous mode.
-  const viewStart = mode === 'loop' ? winStart : time - WINDOW / 2
+  // The lanes show [viewStart, viewStart + 45 s]: the fixed window in loop mode, centred on the playhead in continuous mode
+  // (held at the start/end of the recording when the playhead is within half a window of it).
+  const viewStart = mode === 'loop' ? winStart : followStart(time, duration)
   const lastTile = Number.isFinite(duration) ? Math.max(0, Math.ceil(duration / TILE) - 1) : Infinity
   const first = Math.max(0, Math.floor(viewStart / TILE)), last = Math.min(lastTile, Math.floor((viewStart + WINDOW - 0.001) / TILE))
   const playIndex = Math.floor(time / TILE)
@@ -767,7 +774,7 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
     const step = (now: number) => {
       const t = transport(); t.tick()
       const tm = t.time
-      const target = modeRef.current === 'loop' ? winRef.current : tm - WINDOW / 2
+      const target = modeRef.current === 'loop' ? winRef.current : followStart(tm, durRef.current)
       const diff = target - dispRef.current, dt = now - lastFrame
       lastFrame = now
       dispRef.current = Math.abs(diff) > 0.25 ? dispRef.current + diff * (1 - Math.exp(-dt / 35)) : target
@@ -860,7 +867,7 @@ function Workbench({ recordId, look, lookOk, winStart, onWinStart }: { recordId:
           <Segmented label="Which side you hear" value={which} onChange={pick} options={[{ value: 'original', label: 'Original' }, { value: 'processed', label: 'Processed' }]} />
           <Segmented label="Playback mode" value={mode} onChange={setMode} options={[
             { value: 'loop', label: <><Repeat size={13} /> Loop</>, title: 'Loop: play the 45 s window over and over; the needle moves across a fixed waveform' },
-            { value: 'continuous', label: <><ChevronsRight size={13} /> Continuous</>, title: 'Continuous: play on through the recording; the needle stays in the middle and the waveform scrolls under it' },
+            { value: 'continuous', label: <><ChevronsRight size={13} /> Continuous</>, title: 'Continuous: play on through the recording; the needle stays in the middle and the waveform scrolls under it (near the start and end the needle moves instead)' },
           ]} />
           <label className={clsx('inline-flex h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-border px-2.5 text-xs', look.level ? 'text-muted' : 'text-muted/60')} title="Off: the original plays exactly as recorded. On: the original gets one fixed gain so it sits at the levelling target — louder never sounds better, so you judge tone and noise alone. Needs Loudness levelling on. The final clip is not affected either way.">
             <Switch checked={matchLoudness} onChange={setMatchLoudness} label="Match loudness" disabled={!overview || !look.level} /> Match loudness
@@ -910,7 +917,7 @@ function useWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] 
 /**
  * One waveform lane. The canvas holds a strip three windows wide starting at `anchor` and is drawn only when
  * chunks or the anchor change; every animation frame it is slid so `viewStart` sits at the left edge, and the
- * needle is placed at the playhead (in continuous mode that is always the middle).
+ * needle is placed at the playhead (in continuous mode the middle, except near the start and end of the recording).
  */
 const Lane = memo(function Lane({ label, kind, tiles, gen, active, anchor, duration, register, onSeekFrac, onPick }: {
   label: string; kind: Side; tiles: Map<string, Loaded>; gen: number; active: boolean; anchor: number; duration: number
