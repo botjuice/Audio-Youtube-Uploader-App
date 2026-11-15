@@ -75,7 +75,7 @@ export class Pipeline extends EventEmitter {
           }
         }
 
-        // 0b — audio (the reciter's audio rule; off unless switched on in the Audio tab). A failure or a really bad
+        // 0b — audio (the reciter's audio rule; off unless switched on in Audio rules). A failure or a really bad
         // result holds the upload, unless the user allowed the original audio on this recording.
         let audioIn = audio, audioKey = 'original'
         let audioCleanup: () => Promise<void> = async () => {}
@@ -91,7 +91,7 @@ export class Pipeline extends EventEmitter {
           else {
             await ctx.store.records.update((d) => { d[rec.id] = { ...d[rec.id], audio: { ok: false, reason: a.reason, message: a.message, at: new Date().toISOString() } } })
             if (!rec.allowOriginalAudio) {
-              await this.fail(ctx, rec, 'audio', new Error(`${a.message} Upload held until you fix this in the Audio tab or allow the original audio on the recording.`))
+              await this.fail(ctx, rec, 'audio', new Error(`${a.message} Upload held until you fix this in Audio rules or allow the original audio on the recording.`))
               continue
             }
             activity.warn(`Audio not processed for ${rec.fileName} (${a.reason}): ${a.message} You allowed the original audio, uploading with it.`, rec.id)

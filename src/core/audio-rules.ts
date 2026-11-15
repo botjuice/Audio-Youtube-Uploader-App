@@ -4,7 +4,7 @@
  * A rule holds up to five reference recordings and the settings the user dialled in on them. What the rule really
  * stores is the SOUND that results: each reference is processed with its settings and measured, and the mean of those
  * measurements is the rule's target. At upload, every recording is measured and steered to that target (see
- * audio-suggest `steer`), so a dull recording gets more lift than the references did and a clean one less.
+ * audio-steer `steer`), so a dull recording gets more lift than the references did and a clean one less.
  *
  * Only the first reference must have settings. The others follow it until the user edits one of them, which then keeps
  * its own. Following means being auto-set to SOUND like the first reference after its settings (tone, evenness, static,
@@ -62,8 +62,10 @@ export function targetUsable(t: unknown): t is RuleTarget {
     && Array.isArray(t['quiet']) && t['quiet'].length === MEASURE_BANDS.length && num(t['over']) && num(t['ring']) && num(t['lufs']) && num(t['hp']) && isObj(t['base'])
 }
 
-/** Tidy a stored state: one rule per reciter (the first wins), at most one default, references capped, bad targets dropped. */
-export function normaliseAudioRules(raw: unknown): AudioRulesState {
+/** Tidy a stored state: one rule per reciter (the first wins), at most one default, references capped, bad targets dropped.
+ *  A rule left with neither references nor a target is nothing (an imported rule whose target can no longer be used) and
+ *  is dropped too, unless `keepEmpty` (a draft on its way to being saved). */
+export function normaliseAudioRules(raw: unknown, opts: { keepEmpty?: boolean } = {}): AudioRulesState {
   if (!isObj(raw) || !Array.isArray(raw['rules'])) return { ...EMPTY_AUDIO_RULES }
   const seen = new Set<string>()
   const rules: AudioRule[] = []
@@ -75,7 +77,9 @@ export function normaliseAudioRules(raw: unknown): AudioRulesState {
     seen.add(k)
     const refs = (Array.isArray(r['refs']) ? r['refs'] : []).filter((x): x is Record<string, unknown> => isObj(x) && typeof x['recordId'] === 'string')
       .slice(0, MAX_REFERENCES).map((x) => ({ recordId: x['recordId'] as string, modules: isObj(x['modules']) ? withDefaults(x['modules']) : null }))
-    rules.push({ id: r['id'], reciterKey, ...(typeof r['label'] === 'string' && r['label'].trim() ? { label: r['label'].trim() } : {}), refs, target: targetUsable(r['target']) ? { ...r['target'], base: withDefaults(r['target'].base) } : null })
+    const target = targetUsable(r['target']) ? { ...r['target'], base: withDefaults(r['target'].base) } : null
+    if (!refs.length && !target && !opts.keepEmpty) { seen.delete(k); continue }
+    rules.push({ id: r['id'], reciterKey, ...(typeof r['label'] === 'string' && r['label'].trim() ? { label: r['label'].trim() } : {}), refs, target })
   }
   return { v: 1, applyToUploads: raw['applyToUploads'] === true, rules }
 }

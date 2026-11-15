@@ -200,7 +200,7 @@ export function steer(current: Modules, m: Measure, target: AudioTarget, ring?: 
   return { modules: out, notes, held }
 }
 
-/** Sets the loudness target once the rack's own loudness and true peak are known: the rule’s recordings' loudness, or as
+/** Sets the loudness target once the rack's own loudness and peak (highest sample) are known: the rule’s recordings' loudness, or as
  *  close under it as this recording's peaks allow without the limiter working. Returns the note. */
 export function setLoudness(modules: Modules, target: AudioTarget, own: number | undefined, rack?: { lufs: number; peak: number }): string {
   const ceiling = target.base.level.on ? target.base.level.ceiling : -1

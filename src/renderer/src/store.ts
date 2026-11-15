@@ -18,6 +18,9 @@ interface State {
   toasts: Toast[]
   busy: Record<string, boolean>
   setPage(p: Page): void
+  /** A page with unsaved work sets this: it is handed the navigation and decides whether (and when) it goes ahead. */
+  leaveGuard: ((go: () => void) => void) | null
+  setLeaveGuard(guard: ((go: () => void) => void) | null): void
   select(id: string | null): void
   notify(kind: Toast['kind'], text: string): void
   dismiss(id: number): void
@@ -36,7 +39,12 @@ export const useStore = create<State>((set, get) => ({
   booted: false, page: 'library', settings: null, library: EMPTY, health: null, progress: null,
   activity: [], update: null, selectedId: null, toasts: [], busy: {},
 
-  setPage: (page) => set({ page }),
+  leaveGuard: null,
+  setLeaveGuard: (leaveGuard) => set({ leaveGuard }),
+  setPage: (page) => {
+    const guard = get().leaveGuard
+    if (guard && page !== get().page) guard(() => set({ page, leaveGuard: null })); else set({ page })
+  },
   select: (selectedId) => set({ selectedId }),
   notify: (kind, text) => {
     const id = ++seq

@@ -160,6 +160,7 @@ export async function renderAudioTile(library: string, audioPath: string, input:
   } finally {
     inflight.delete(ac)
     release()
+    sweepAudioPreviewsSoon(library)
   }
 }
 
@@ -195,7 +196,7 @@ export async function analyseRecording(audioPath: string): Promise<AudioAnalysis
 
 const rackLevels = new Map<string, Promise<{ lufs: number; peak: number; rate?: number }>>()
 const rackRuns = new Map<string, { key: string; ac: AbortController }>()
-/** The rack's own loudness and true peak over the whole recording, before any levelling gain. Keyed by the chain alone, so
+/** The rack's own loudness and peak (highest sample) over the whole recording, before any levelling gain. Keyed by the chain alone, so
  *  the preview and Auto-set share one pass whatever the loudness target is. A request for a newer chain stops the older run. */
 export async function rackLevel(audioPath: string, look: { chain: unknown }): Promise<{ lufs: number; peak: number; rate?: number }> {
   const bin = ffmpegPath()
@@ -278,17 +279,48 @@ export function installAudioProtocol(getLibrary: () => string | null | undefined
   })
 }
 
-/** Previews pile up as knobs move; drop ones not touched for a week (the plugin re-renders on demand). */
-export async function sweepAudioPreviews(library: string, maxAgeMs = 7 * 24 * 60 * 60_000): Promise<number> {
+/** The preview folder is a cache (the plugin renders again on demand), so it is kept under this size. */
+export const PREVIEW_CACHE_MAX_BYTES = 2 * 1024 ** 3
+/** A render this fresh is never removed for size: it may be playing, or on its way into a video. */
+const PREVIEW_FRESH_MS = 30 * 60_000
+
+/** Previews pile up as knobs move: drop the ones not touched for a week, then the oldest renders until the folder is
+ *  under its size limit. A render's `.json` goes with its `.flac`. */
+export async function sweepAudioPreviews(library: string, maxAgeMs = 7 * 24 * 60 * 60_000, maxBytes = PREVIEW_CACHE_MAX_BYTES): Promise<{ removed: number; bytes: number }> {
   const dir = audioDir(library)
-  let removed = 0
   let names: string[]
-  try { names = await fs.readdir(dir) } catch { return 0 }
-  const cutoff = Date.now() - maxAgeMs
+  try { names = await fs.readdir(dir) } catch { return { removed: 0, bytes: 0 } }
+  const now = Date.now()
+  let removed = 0, bytes = 0
+  const drop = async (name: string, size: number) => { try { await fs.unlink(join(dir, name)); removed++; bytes += size } catch { /* raced */ } }
+  const kept: { name: string; size: number; mtimeMs: number }[] = []
   for (const name of names) {
     if (!/\.(flac|json|part)$/i.test(name)) continue
-    const p = join(dir, name)
-    try { const st = await fs.stat(p); if (st.isFile() && st.mtimeMs < cutoff) { await fs.unlink(p); removed++ } } catch { /* raced */ }
+    try {
+      const st = await fs.stat(join(dir, name))
+      if (!st.isFile()) continue
+      if (st.mtimeMs < now - maxAgeMs) await drop(name, st.size)
+      else kept.push({ name, size: st.size, mtimeMs: st.mtimeMs })
+    } catch { /* raced */ }
   }
-  return removed
+  let total = kept.reduce((a, f) => a + f.size, 0)
+  if (total > maxBytes) {
+    const sizes = new Map(kept.map((f) => [f.name, f.size]))
+    for (const f of kept.filter((x) => /\.flac$/i.test(x.name)).sort((a, b) => a.mtimeMs - b.mtimeMs)) {
+      if (total <= maxBytes || f.mtimeMs > now - PREVIEW_FRESH_MS) break
+      await drop(f.name, f.size)
+      total -= f.size
+      const side = f.name.replace(/\.flac$/i, '.json')
+      if (sizes.has(side)) { await drop(side, sizes.get(side)!); total -= sizes.get(side)! }
+    }
+  }
+  return { removed, bytes }
+}
+
+let lastSweep = 0
+/** Called as previews are rendered: keeps the folder under its limit while the editor is in use, at most every ten minutes. */
+export function sweepAudioPreviewsSoon(library: string): void {
+  if (Date.now() - lastSweep < 10 * 60_000) return
+  lastSweep = Date.now()
+  void sweepAudioPreviews(library).then((r) => { if (r.removed) activity.info(`Removed ${r.removed} audio preview file${r.removed === 1 ? '' : 's'} (${Math.round(r.bytes / 1024 ** 2)} MB) to keep the preview folder under ${Math.round(PREVIEW_CACHE_MAX_BYTES / 1024 ** 3)} GB`) }).catch(() => {})
 }

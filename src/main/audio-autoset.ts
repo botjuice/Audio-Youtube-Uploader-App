@@ -51,7 +51,7 @@ function badness(s: Steered, after: Measure, ringAfter: RingMeasure | null, targ
 }
 
 export interface AutoSetDeps {
-  /** The rack's own loudness and true peak over the whole recording (the host can share this pass with its preview). */
+  /** The rack's own loudness and peak (highest sample) over the whole recording (the host can share this pass with its preview). */
   rackLevel?: (look: ReturnType<typeof toLook>) => Promise<{ lufs: number; peak: number } | null>
 }
 
@@ -83,7 +83,7 @@ export async function autoSet(bin: string, audioPath: string, current: Modules, 
   const modules = final.modules
   const notes = [...final.notes]
 
-  // loudness last: the rack is settled, so its own loudness and true peak say whether the target needs the limiter
+  // loudness last: the rack is settled, so its own loudness and peak say whether the target needs the limiter
   onStage?.('Setting the loudness…')
   const rackLevel = deps.rackLevel ?? (async (look) => { const g = await levellingGain(audioPath, look, host); return g.ok && g.rackLufs !== undefined && g.rackPeak !== undefined ? { lufs: g.rackLufs, peak: g.rackPeak } : null })
   const rack = await rackLevel(toLook(modules)).catch(() => null)

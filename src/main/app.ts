@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, nativeTheme, shell } from 'electron'
 import { promises as fs } from 'node:fs'
 import { basename, extname, join } from 'node:path'
-import type { AudioAnalysis, AudioLook, AudioOverview, AudioAutoSet, AudioTileInput, AudioTileResult, CustomFont, Health, ImportedLook, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, RulePhoto, Settings, StylePatch, StyleRenderInput, StyleSchemaInfo, ThumbnailRule, TokenValidation } from '@shared/types'
+import type { AudioAnalysis, AudioLook, AudioOverview, AudioAutoSet, AudioRuleImport, AudioTileInput, AudioWork, AudioTileResult, CustomFont, Health, ImportedLook, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, RulePhoto, Settings, StylePatch, StyleRenderInput, StyleSchemaInfo, ThumbnailRule, TokenValidation } from '@shared/types'
 import type { LibrarySnapshot, SurahEntry, SyncResult } from '@shared/api'
 import { DEFAULT_SURAHS, conditionKey, describeRule, describeThumbRule, nextQuotaReset, normaliseQuota, normaliseThumbRules, reciterKey, remainingUploads, surahKey, validateRule, validateThumbRule, validateToken } from '@core/index'
 import { ffmpegAvailable, ffmpegPath } from './ffmpeg'
@@ -13,10 +13,11 @@ import { Pipeline } from './pipeline'
 import { mergeSettings, openLibraryStore, secrets, settings, type LibraryStore } from './store'
 import { Watcher } from './watcher'
 import { updater } from './updater'
-import { recordingFacts } from './audio-facts'
+import { moveFacts, pruneFacts, recordingFacts, untilAborted } from './audio-facts'
 import { autoSet } from './audio-autoset'
 import { captureRule, defaultTarget, followerSettings, targetFor } from './audio-rules'
 import { EMPTY_AUDIO_RULES, buildRuleFile, builtInDefaultTarget, normaliseAudioRules, parseRuleFile, withDefaults, type AudioRule } from '@core/audio-rules'
+import { stateFile } from './paths'
 import type { Modules } from '@core/audio-modules'
 import { analyseRecording, audioLevelGain, audioOverview, rackLevel, cancelAudioTiles, renderAudioTile, sweepAudioPreviews } from './audio'
 import { buildSampleJob, buildThumbnailJob, disposeThumbnails, packLook, pruneDefaultLook, unpackLook, fontPathsInRules, renderJob, resolveRulePhoto, ruleFontsDir, rulePhotoPath, rulePhotosDir, styleForRecord, styleProblems, styleSchema, surahOptions, toPreview } from './thumbnails'
@@ -113,10 +114,17 @@ class YoosyApp {
         await this.migrateV22()
         // the thumbnail rules file always carries exactly one default rule; its patch never repeats the plugin's factory values
         await this.store.thumbRules.update((d) => { d.rules = pruneDefaultLook(normaliseThumbRules(d.rules ?? [])) })
-        // a look saved by audio plugin v1 (fixed knobs) becomes the same filters in the v2 rack, once
+        // audio rules: one per reciter, and a target made with other measurements than this version's is dropped
+        const hadTarget = new Set((this.store.audioRules.get().rules ?? []).filter((r) => r?.target).map((r) => r.id))
         await this.store.audioRules.replace(normaliseAudioRules(this.store.audioRules.get()))
+        for (const r of this.store.audioRules.get().rules) {
+          if (hadTarget.has(r.id) && !r.target) activity.warn(`The audio rule for ${r.reciterKey ?? 'every reciter (the default rule)'} was made with an older version of the app’s measurements and has no target now: open it in Audio rules and press Save rule. Until then the default rule applies.`)
+        }
         await this.rescan()
-        void sweepAudioPreviews(path).then((n) => { if (n) activity.info(`Removed ${n} old audio preview file${n === 1 ? '' : 's'}`) }).catch(() => {})
+        // measurements of recordings that are gone, and the file the earlier Auto-set kept its own in
+        void pruneFacts(path, new Set(this.snapshot.records.map((r) => `${r.reciterFolder}/${r.fileName}`))).catch(() => {})
+        void fs.rm(stateFile(path, 'audio-measures.json'), { force: true }).catch(() => {})
+        void sweepAudioPreviews(path).then((r) => { if (r.removed) activity.info(`Removed ${r.removed} audio preview file${r.removed === 1 ? '' : 's'} (${Math.round(r.bytes / 1024 ** 2)} MB): older than a week, or over the preview folder’s size limit`) }).catch(() => {})
         activity.info(`Library opened: ${path}`)
       } catch (e) {
         activity.error(`Could not open library ${path}: ${e instanceof Error ? e.message : e}`)
@@ -197,6 +205,7 @@ class YoosyApp {
     if (this.store && this.settings.libraryPath) {
       this.snapshot = await scanLibrary(this.settings.libraryPath, this.store, { allowMoves: !this.pipeline.busy })
       for (const m of this.snapshot.moves) activity.info(`Moved ${m.id || m.from} → ${m.newId.split('/')[0]}/`, m.newId)
+      await this.retargetAudioRefs(this.snapshot.moves.filter((m) => m.id).map((m) => [m.id, m.newId]))
     }
     const snap = this.getLibrary()
     this.broadcast('evt:library', snap)
@@ -243,6 +252,8 @@ class YoosyApp {
     await renameRecordFiles(this.abs(id), newFileName)
     const newId = `${rec.reciterFolder}/${newFileName}`
     await store.records.update((d) => { if (d[id]) { d[newId] = d[id]!; delete d[id] } })
+    await this.retargetAudioRefs([[id, newId]])
+    await moveFacts(this.req().library, `${rec.reciterFolder}/${rec.fileName}`, `${rec.reciterFolder}/${newFileName}`).catch(() => {})
     activity.info(`Renamed ${rec.fileName} → ${newFileName}`, newId)
     await this.rescan()
     return newId
@@ -433,25 +444,58 @@ class YoosyApp {
     const rec = this.snapshot.records.find((r) => r.id === recordId)
     return rec ? { rel: `${rec.reciterFolder}/${rec.fileName}`, path: join(library, rec.reciterFolder, rec.fileName) } : null
   }
+  /** A rule's reciter as the user knows them: the folder name. */
+  private ruleName(reciterKey: string | null): string {
+    return reciterKey === null ? 'the default rule' : this.snapshot.reciters.find((r) => r.key === reciterKey)?.folder ?? reciterKey
+  }
+  /** Recordings that are a rule's references were renamed or moved: the rules follow them. */
+  private async retargetAudioRefs(pairs: [string, string][]): Promise<void> {
+    if (!this.store || !pairs.length) return
+    const to = new Map(pairs)
+    if (!this.store.audioRules.get().rules.some((r) => r.refs.some((x) => to.has(x.recordId)))) return
+    await this.store.audioRules.update((d) => { for (const r of d.rules) for (const x of r.refs) x.recordId = to.get(x.recordId) ?? x.recordId })
+  }
+
+  // Auto-set and saving a rule take 10 to 30 seconds and can be cancelled; starting one again replaces the run before it.
+  private audioWork = new Map<AudioWork, { ac: AbortController; ruleId?: string }>()
+  private async audioRun<T>(op: AudioWork, fn: (signal: AbortSignal, stage: (text: string) => void) => Promise<T>, ruleId?: string): Promise<T> {
+    this.audioWork.get(op)?.ac.abort()
+    const run = { ac: new AbortController(), ...(ruleId ? { ruleId } : {}) }
+    this.audioWork.set(op, run)
+    try {
+      const r = await fn(run.ac.signal, (text) => this.broadcast('evt:audioMeasure', { op, stage: text }))
+      if (run.ac.signal.aborted) throw new Error('Cancelled')
+      return r
+    } catch (e) {
+      throw run.ac.signal.aborted ? new Error('Cancelled') : e
+    } finally {
+      if (this.audioWork.get(op) === run) this.audioWork.delete(op)
+    }
+  }
+  async cancelAudioWork(op: AudioWork): Promise<void> { this.audioWork.get(op)?.ac.abort() }
 
   /** Store a rule and capture its target from its references. A rule without references keeps the target it has (an imported one). */
   async saveAudioRule(input: AudioRule): Promise<void> {
     const { library, store } = this.req()
-    const rule = normaliseAudioRules({ rules: [input] }).rules[0]
+    const rule = normaliseAudioRules({ rules: [{ ...input, target: input.target ?? null }] }, { keepEmpty: true }).rules[0]
     if (!rule) throw new Error('That is not a rule.')
-    const stage = (text: string) => this.broadcast('evt:audioMeasure', { done: 0, total: 0, stage: text })
-    if (rule.refs.length) rule.target = await captureRule(library, rule, (id) => this.audioFileOf(id), stage)
-    else if (!rule.target) throw new Error('Add at least one reference recording to the rule.')
-    await store.audioRules.update((d) => {
-      const at = d.rules.findIndex((r) => r.id === rule.id || r.reciterKey === rule.reciterKey)
-      if (at >= 0) d.rules[at] = rule; else d.rules.push(rule)
-    })
-    activity.info(`Audio rule saved: ${rule.reciterKey ?? 'default'} (${rule.refs.length} reference recording${rule.refs.length === 1 ? '' : 's'})`)
+    if (!rule.refs.length && !rule.target) throw new Error('Add at least one reference recording to the rule.')
+    await this.audioRun('save', async (signal, stage) => {
+      if (rule.refs.length) rule.target = await captureRule(library, rule, (id) => this.audioFileOf(id), stage, signal)
+      if (signal.aborted) return
+      await store.audioRules.update((d) => {
+        const at = d.rules.findIndex((r) => r.id === rule.id || r.reciterKey === rule.reciterKey)
+        if (at >= 0) d.rules[at] = rule; else d.rules.push(rule)
+      })
+    }, rule.id)
+    activity.info(`Audio rule saved: ${this.ruleName(rule.reciterKey)} (${rule.refs.length} reference recording${rule.refs.length === 1 ? '' : 's'})`)
     this.broadcast('evt:library', this.getLibrary())
   }
 
   async deleteAudioRule(id: string): Promise<void> {
     const { store } = this.req()
+    // a save of this rule that is still measuring would put it back when it finishes
+    if (this.audioWork.get('save')?.ruleId === id) void this.cancelAudioWork('save')
     await store.audioRules.update((d) => { d.rules = d.rules.filter((r) => r.id !== id) })
     this.broadcast('evt:library', this.getLibrary())
   }
@@ -459,16 +503,22 @@ class YoosyApp {
   async setAudioApplyToUploads(on: boolean): Promise<void> {
     const { store } = this.req()
     await store.audioRules.update((d) => { d.applyToUploads = !!on })
+    // off: nothing is held for its audio any more, so what the audio stage last said about a recording no longer applies
+    if (!on) await store.records.update((d) => {
+      for (const [id, r] of Object.entries(d)) {
+        if (r.audio?.ok === false || r.lastError?.stage === 'audio') d[id] = { ...r, ...(r.audio?.ok === false ? { audio: null } : {}), ...(r.lastError?.stage === 'audio' ? { lastError: null } : {}) }
+      }
+    })
     activity.info(on ? 'Audio rules switched on for uploads' : 'Audio rules switched off for uploads: recordings upload with their original audio')
-    this.broadcast('evt:library', this.getLibrary())
+    await this.rescan()
   }
 
   async followAudioSettings(base: Modules, baseRecordId: string, recordId: string): Promise<AudioAutoSet> {
     const { library } = this.req()
     const a = this.audioFileOf(baseRecordId), b = this.audioFileOf(recordId)
     if (!a || !b) throw new Error('Unknown recording')
-    const r = await followerSettings(library, withDefaults(base), a, b, (text) => this.broadcast('evt:audioMeasure', { done: 0, total: 0, stage: text }))
-    return { how: 'auto-set to sound like reference 1 does after its settings', modules: r.modules, notes: r.notes, report: r.report, findings: r.findings, failed: [] }
+    const r = await followerSettings(library, withDefaults(base), a, b, (text) => this.broadcast('evt:audioMeasure', { op: 'follow', stage: text }))
+    return { how: 'auto-set to sound like reference 1 does after its settings', modules: r.modules, notes: r.notes, report: r.report, findings: r.findings }
   }
 
   async exportAudioRule(win: BrowserWindow | null, id: string): Promise<{ path: string } | null> {
@@ -476,7 +526,7 @@ class YoosyApp {
     const rule = store.audioRules.get().rules.find((r) => r.id === id)
     if (!rule) throw new Error('Save the rule before exporting it.')
     const file = buildRuleFile(rule, (rid) => this.snapshot.records.find((r) => r.id === rid)?.fileName ?? rid, { appVersion: app.getVersion() })
-    const slug = (rule.label || rule.reciterKey || 'default').replace(/[^\w\u0600-\u06FF.-]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'rule'
+    const slug = (rule.label || rule.reciterKey || 'default').replace(/[^\w؀-ۿ.-]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'rule'
     const r = await dialog.showSaveDialog(win ?? undefined as never, { title: 'Export this audio rule', defaultPath: join(app.getPath('downloads'), `audio-rule-${slug}.json`), filters: [{ name: 'Audio rule', extensions: ['json'] }] })
     if (r.canceled || !r.filePath) return null
     await fs.writeFile(r.filePath, JSON.stringify(file, null, 2), 'utf8')
@@ -484,22 +534,42 @@ class YoosyApp {
     return { path: r.filePath }
   }
 
-  /** Pick a rule file; it becomes the rule for its reciter (or the default rule), replacing the one there. Usable at once: the target travels in the file. */
-  async importAudioRule(win: BrowserWindow | null): Promise<{ reciterKey: string | null; label?: string } | null> {
+  /** A rule file that was picked and would replace a rule already here: kept until the user confirms (or picks another). */
+  private pendingAudioImport: { rule: AudioRule; file: string } | null = null
+
+  /**
+   * Pick a rule file; it becomes the rule for its reciter (or the default rule). Usable at once: the target travels in
+   * the file. When a rule is already there, nothing is changed: the answer says so (`replaces`) and a second call with
+   * `confirm` puts the picked file in its place.
+   */
+  async importAudioRule(win: BrowserWindow | null, confirm = false): Promise<AudioRuleImport | null> {
     const { store } = this.req()
-    const r = await dialog.showOpenDialog(win ?? undefined as never, { title: 'Import an audio rule', filters: [{ name: 'Audio rule', extensions: ['json'] }], properties: ['openFile'] })
-    const src = r.filePaths[0]
-    if (!src) return null
-    if ((await fs.stat(src)).size > 8 * 1024 * 1024) throw new Error('That file is larger than 8 MB: not an audio rule.')
-    const f = parseRuleFile(await fs.readFile(src, 'utf8'))
-    // references that exist here (same file name, same reciter when the rule has one) are linked again; the rest are dropped
-    const refs = f.references.map((ref) => ({ ref, rec: this.snapshot.records.find((x) => x.fileName === ref.name && (f.reciterKey === null || x.reciterKey === f.reciterKey)) })).filter((x) => x.rec)
-    const linked = refs.length === f.references.length && refs.length > 0 && refs[0]!.ref.modules
-    const rule: AudioRule = { id: `rule-${Date.now().toString(36)}`, reciterKey: f.reciterKey, ...(f.label ? { label: f.label } : {}), refs: linked ? refs.map((x) => ({ recordId: x.rec!.id, modules: x.ref.modules })) : [], target: f.target }
+    let pick = confirm ? this.pendingAudioImport : null
+    this.pendingAudioImport = null
+    if (confirm && !pick) throw new Error('There is no rule file waiting to be imported. Choose the file again.')
+    if (!pick) {
+      const r = await dialog.showOpenDialog(win ?? undefined as never, { title: 'Import an audio rule', filters: [{ name: 'Audio rule', extensions: ['json'] }], properties: ['openFile'] })
+      const src = r.filePaths[0]
+      if (!src) return null
+      if ((await fs.stat(src)).size > 8 * 1024 * 1024) throw new Error('That file is larger than 8 MB: not an audio rule.')
+      const f = parseRuleFile(await fs.readFile(src, 'utf8'))
+      // references that exist here (same file name, same reciter when the rule has one) are linked again; the rest are dropped
+      const refs = f.references.map((ref) => ({ ref, rec: this.snapshot.records.find((x) => x.fileName === ref.name && (f.reciterKey === null || x.reciterKey === f.reciterKey)) })).filter((x) => x.rec)
+      const linked = refs.length === f.references.length && refs.length > 0 && refs[0]!.ref.modules
+      pick = { file: basename(src), rule: { id: `rule-${Date.now().toString(36)}`, reciterKey: f.reciterKey, ...(f.label ? { label: f.label } : {}), refs: linked ? refs.map((x) => ({ recordId: x.rec!.id, modules: x.ref.modules })) : [], target: f.target } }
+    }
+    const { rule, file } = pick
+    const name = this.ruleName(rule.reciterKey)
+    const answer = { reciterKey: rule.reciterKey, name, file, ...(rule.label ? { label: rule.label } : {}) }
+    if (!confirm && store.audioRules.get().rules.some((x) => x.reciterKey === rule.reciterKey)) {
+      this.pendingAudioImport = pick
+      return { ...answer, replaces: true, imported: false }
+    }
+    if (this.audioWork.get('save')) void this.cancelAudioWork('save')   // a save still measuring would overwrite the import
     await store.audioRules.update((d) => { d.rules = [...d.rules.filter((x) => x.reciterKey !== rule.reciterKey), rule] })
-    activity.info(`Audio rule imported: ${basename(src)} → ${rule.reciterKey ?? 'default rule'}`)
+    activity.info(`Audio rule imported: ${file} → ${name}`)
     this.broadcast('evt:library', this.getLibrary())
-    return { reciterKey: rule.reciterKey, ...(rule.label ? { label: rule.label } : {}) }
+    return { ...answer, replaces: confirm, imported: true }
   }
 
   getAudioLevelGain(recordId: string, look: AudioLook): Promise<number | null> { return audioLevelGain(this.recordAudioPath(recordId), look) }
@@ -513,16 +583,17 @@ class YoosyApp {
     if (!rec || !file) throw new Error('Unknown recording')
     const bin = ffmpegPath()
     if (!bin) throw new Error('ffmpeg is not available on this computer')
-    const stage = (text: string) => this.broadcast('evt:audioMeasure', { done: 0, total: 0, stage: text })
     const rules = store.audioRules.get()
     const pick = aim === 'default' ? defaultTarget(rules) : targetFor(rules, rec.reciterKey ?? reciterKey(rec.reciterFolder))
     if (!pick) throw new Error('There is no audio rule to apply, and the one that comes with the app cannot be used with this version’s measurements.')
-    stage('Measuring…')
-    const facts = await recordingFacts(library, file)
-    const r = await autoSet(bin, file.path, current, { ...facts, target: pick.target }, stage, undefined, { rackLevel: (look) => rackLevel(file.path, look) })
+    const r = await this.audioRun('autoset', async (signal, stage) => {
+      stage('Measuring…')
+      const facts = await recordingFacts(library, file, signal)
+      return autoSet(bin, file.path, withDefaults(current), { ...facts, target: pick.target }, stage, signal, { rackLevel: (look) => untilAborted(rackLevel(file.path, look), signal) })
+    })
     activity.info(`Auto-set: ${rec.fileName} → ${r.report.map((x) => `${x.what.split(':')[0]} ${x.before} → ${x.after}`).join(', ')} (${r.checks} check${r.checks === 1 ? '' : 's'})`)
     const which = pick.via === 'reciter' ? `the rule for ${rec.reciterFolder}` : pick.via === 'default' ? 'your default rule' : 'the default rule that comes with the app'
-    return { how: `steered to ${which} (how its ${pick.target.count} reference recording${pick.target.count === 1 ? '' : 's'} measure after their settings), then processed and re-measured ${r.checks === 1 ? 'once' : `${r.checks} times`} to check`, modules: r.modules, notes: r.notes, report: r.report, findings: r.findings, failed: [] }
+    return { how: `steered to ${which} (how its ${pick.target.count} reference recording${pick.target.count === 1 ? '' : 's'} measure after their settings), then processed and re-measured ${r.checks === 1 ? 'once' : `${r.checks} times`} to check`, modules: r.modules, notes: r.notes, report: r.report, findings: r.findings }
   }
 
   /** Save a rule's look as a JSON file the user can keep or send to another machine. */

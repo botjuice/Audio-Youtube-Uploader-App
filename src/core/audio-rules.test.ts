@@ -44,6 +44,11 @@ describe('audio rules: which rule applies', () => {
     expect(s.applyToUploads).toBe(true)
     expect(normaliseAudioRules(null)).toEqual({ v: 1, applyToUploads: false, rules: [] })
   })
+  it('drops a rule left with neither references nor a usable target, unless it is a draft being saved', () => {
+    const lost = { ...rule('y'), refs: [], target: { ...target, measureVersion: 999 } }
+    expect(normaliseAudioRules({ rules: [lost, rule('x')] }).rules.map((r) => r.reciterKey)).toEqual(['x'])
+    expect(normaliseAudioRules({ rules: [lost] }, { keepEmpty: true }).rules).toHaveLength(1)
+  })
 })
 
 describe('audio rules: the target', () => {

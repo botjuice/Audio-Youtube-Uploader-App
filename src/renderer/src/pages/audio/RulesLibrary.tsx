@@ -1,10 +1,12 @@
 /** The Audio rules library: one card per rule, the default rule last. */
 import { AudioLines, Download, Trash2, Upload } from 'lucide-react'
+import { useState } from 'react'
+import type { AudioRuleImport } from '@shared/types'
 import { type AudioRule } from '@core/audio-rules'
 import { MEASURE_BANDS } from '../../../../plugins/audio/types'
-import { Badge, Button, IconButton, Select, Switch, Empty } from '@/components/ui'
+import { Badge, Button, IconButton, Modal, Switch, Empty } from '@/components/ui'
 import { useStore } from '@/store'
-import { DEFAULT_RULE, shortName } from './shared'
+import { DEFAULT_RULE, PickMenu, shortName } from './shared'
 
 /** A target's tone as a small curve (level per band, low to high), so rules can be told apart at a glance. */
 function ToneCurve({ tone }: { tone: number[] }) {
@@ -35,6 +37,15 @@ export function RulesLibrary({ onOpen }: { onOpen: (ruleKey: string) => void }) 
   const without = reciters.filter((r) => !own.some((x) => x.reciterKey === r.key))
   const folder = (key: string) => reciters.find((r) => r.key === key)?.folder ?? key
   const name = (id: string) => { const r = library.records.find((x) => x.id === id); return r ? shortName(r.fileName, r.reciterFolder) : `${id} (missing)` }
+  const [removing, setRemoving] = useState<AudioRule | null>(null)
+  /** A picked rule file that would replace a rule already here: waits for the user's answer. */
+  const [replacing, setReplacing] = useState<AudioRuleImport | null>(null)
+  const imported = (r: AudioRuleImport) => notify('success', `Rule imported from ${r.file}: it is now ${r.reciterKey === null ? 'the default rule' : `the rule for ${r.name}`}.`)
+  const importRule = () => void call('audioImport', async () => {
+    const r = await window.api.importAudioRule()
+    if (!r) return
+    if (r.imported) imported(r); else setReplacing(r)
+  })
 
   const card = (key: string | null, rule: AudioRule | null) => {
     const target = rule?.target ?? null
@@ -63,14 +74,14 @@ export function RulesLibrary({ onOpen }: { onOpen: (ruleKey: string) => void }) 
           </div>
           <div className="text-[11.5px] leading-snug text-muted">
             {target ? <>Mean of {target.count} reference recording{target.count === 1 ? '' : 's'}{rule && rule.refs.length ? `: ${rule.refs.map((r) => name(r.recordId)).join(', ')}` : ' (imported; the recordings are not in this library)'}. Loudness {target.lufs.toFixed(1)} LUFS{target.hp > 0 ? `, high-pass ${target.hp} Hz` : ''}. Captured {new Date(target.capturedAt).toLocaleDateString()}.</>
-              : builtIn ? <>Comes with the app: the mean of {builtIn.count} recordings after the approved settings. Loudness {builtIn.lufs.toFixed(1)} LUFS, high-pass {builtIn.hp} Hz. Open it to make your own.</>
+              : builtIn ? <>Comes with the app: the mean of {builtIn.count} recordings after their settings. Loudness {builtIn.lufs.toFixed(1)} LUFS, high-pass {builtIn.hp} Hz. Open it to make your own.</>
                 : <>Has reference recordings but no target: open it and press Save rule.</>}
           </div>
           <div className="flex items-center gap-2 text-xs text-muted">
             <span className="tabular-nums">{applies} recording{applies === 1 ? '' : 's'} now</span>
             <span className="ml-auto inline-flex items-center gap-0.5">
               {rule?.target && <IconButton label="Export this rule" className="h-7 w-7" onClick={() => void call('audioExport', async () => { const r = await window.api.exportAudioRule(rule.id); if (r) notify('success', `Rule exported to ${r.path}`) })}><Download size={13} /></IconButton>}
-              {rule && <IconButton label={key === null ? 'Remove your default rule (the built-in one applies again)' : 'Delete rule (the default rule applies to this reciter again)'} className="h-7 w-7" onClick={() => { if (window.confirm(key === null ? 'Remove your default rule? Its settings and target are discarded and the rule that comes with the app applies again.' : `Delete the rule for ${folder(key)}? Its settings and target are discarded and the default rule applies to this reciter again. Export it first if you may want it back.`)) void call('audioDelete', () => window.api.deleteAudioRule(rule.id)) }}><Trash2 size={13} /></IconButton>}
+              {rule && <IconButton label={key === null ? 'Remove your default rule (the built-in one applies again)' : 'Delete rule (the default rule applies to this reciter again)'} className="h-7 w-7" onClick={() => setRemoving(rule)}><Trash2 size={13} /></IconButton>}
             </span>
           </div>
         </div>
@@ -88,11 +99,9 @@ export function RulesLibrary({ onOpen }: { onOpen: (ruleKey: string) => void }) 
           <label className="flex items-center gap-1.5 text-xs text-muted" title="When on, every upload first has its audio processed by its reciter’s rule (or the default rule). When off, recordings upload with their original audio.">
             <Switch checked={state.applyToUploads} onChange={(v) => void call('audioApply', () => window.api.setAudioApplyToUploads(v))} label="Use for uploads" /> Use for uploads
           </label>
-          <Button size="sm" variant="ghost" onClick={() => void call('audioImport', async () => { const r = await window.api.importAudioRule(); if (r) notify('success', `Rule imported${r.reciterKey ? ` for ${r.reciterKey}` : ' as the default rule'}.`) })} title="Import a rule file. It becomes the rule for its reciter, replacing the one there."><Upload size={13} /> Import</Button>
-          <Select value="" onChange={(e) => { if (e.target.value) onOpen(e.target.value) }} disabled={!without.length} className="h-8 max-w-[220px] text-[13px]" title={without.length ? 'Make a rule for a reciter' : 'Every reciter already has a rule'}>
-            <option value="">+ New rule for…</option>
-            {without.map((r) => <option key={r.key} value={r.key}>{r.folder}</option>)}
-          </Select>
+          <Button size="sm" variant="ghost" onClick={importRule} title="Import a rule file. It becomes the rule for its reciter (or the default rule); you are asked before it replaces one that is already there."><Upload size={13} /> Import…</Button>
+          <PickMenu label="New rule" variant="primary" align="right" onPick={onOpen} disabled={!without.length} title={without.length ? 'Make a rule for a reciter' : 'Every reciter already has a rule'}
+            options={without.map((r) => ({ value: r.key, label: r.folder }))} />
         </div>
       </div>
       {!library.records.length ? (
@@ -103,6 +112,14 @@ export function RulesLibrary({ onOpen }: { onOpen: (ruleKey: string) => void }) 
           {card(null, def)}
         </div>
       )}
+      <Modal open={!!removing} onClose={() => setRemoving(null)} title={removing?.reciterKey == null ? 'Remove your default rule?' : `Delete the rule for ${folder(removing.reciterKey)}?`}
+        footer={<><Button onClick={() => setRemoving(null)}>Keep it</Button><Button variant="danger" onClick={() => { const id = removing!.id; setRemoving(null); void call('audioDelete', () => window.api.deleteAudioRule(id)) }}>Delete</Button></>}>
+        <p className="text-sm text-muted">Its settings and target are discarded, and {removing?.reciterKey == null ? 'the rule that comes with the app applies again' : 'the default rule applies to this reciter again'}. Export it first if you may want it back.</p>
+      </Modal>
+      <Modal open={!!replacing} onClose={() => setReplacing(null)} title={replacing?.reciterKey == null ? 'Replace your default rule?' : `Replace the rule for ${replacing.name}?`}
+        footer={<><Button onClick={() => setReplacing(null)}>Keep the rule I have</Button><Button variant="danger" onClick={() => { setReplacing(null); void call('audioImport', async () => { const r = await window.api.importAudioRule(true); if (r?.imported) imported(r) }) }}>Replace it</Button></>}>
+        <p className="text-sm text-muted">{replacing?.file} is {replacing?.reciterKey == null ? 'a default rule' : `a rule for ${replacing.name}`}, and there is one here already. Importing puts the file’s rule in its place: the settings and target of the rule you have are discarded. Export it first if you may want it back.</p>
+      </Modal>
     </div>
   )
 }

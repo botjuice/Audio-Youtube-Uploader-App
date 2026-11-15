@@ -9,7 +9,7 @@ import { ringLeftover } from '../core/audio-steer'
 import { measure, ring, type Measure, type RingMeasure } from '../plugins/audio/index'
 import { rackLevel } from './audio'
 import { autoSet, type AutoSetResult } from './audio-autoset'
-import { recordingFacts, type AudioFile } from './audio-facts'
+import { recordingFacts, untilAborted, type AudioFile } from './audio-facts'
 import { ffmpegPath } from './ffmpeg'
 
 export type RuleFileRef = AudioFile
@@ -73,8 +73,9 @@ export function followerSettings(library: string, base: Modules, baseFile: RuleF
 /**
  * Capture a rule's target: every reference is run through its settings (its own, or what following the first one
  * gives it) and measured; the target is the mean. `fileOf` gives a reference's file, or null when the recording is gone.
+ * `signal` cancels: this capture's own ffmpeg runs stop, and it stops waiting for work it shares with others.
  */
-export async function captureRule(library: string, rule: AudioRule, fileOf: (recordId: string) => RuleFileRef | null, onStage?: (text: string) => void): Promise<RuleTarget> {
+export async function captureRule(library: string, rule: AudioRule, fileOf: (recordId: string) => RuleFileRef | null, onStage?: (text: string) => void, signal?: AbortSignal): Promise<RuleTarget> {
   const bin = ffmpegPath()
   if (!bin) throw new Error('ffmpeg is not available on this computer')
   const first = rule.refs[0]
@@ -82,18 +83,18 @@ export async function captureRule(library: string, rule: AudioRule, fileOf: (rec
   if (!first.modules) throw new Error('The first reference recording has no settings yet.')
   const firstFile = fileOf(first.recordId)
   if (!firstFile) throw new Error('The first reference recording is no longer in the library.')
-  const baseM = (await recordingFacts(library, firstFile)).measure
-  const host = { ffmpegPath: bin }
+  const baseM = (await recordingFacts(library, firstFile, signal)).measure
+  const host = { ffmpegPath: bin, ...(signal ? { signal } : {}) }
   const parts: CapturedRef[] = []
   for (const [i, ref] of rule.refs.entries()) {
     const file = fileOf(ref.recordId)
     if (!file) throw new Error(`Reference ${i + 1} (${ref.recordId}) is no longer in the library. Remove it from the rule or put the file back.`)
     onStage?.(`Measuring reference ${i + 1} of ${rule.refs.length}…`)
-    const x = await recordingFacts(library, file)
-    const modules = ref.modules ?? (await followerSettings(library, first.modules, firstFile, file, (t) => onStage?.(`Reference ${i + 1} of ${rule.refs.length}: ${t.charAt(0).toLowerCase()}${t.slice(1)}`))).modules
+    const x = await recordingFacts(library, file, signal)
+    const modules = ref.modules ?? (await untilAborted(followerSettings(library, first.modules, firstFile, file, (t) => onStage?.(`Reference ${i + 1} of ${rule.refs.length}: ${t.charAt(0).toLowerCase()}${t.slice(1)}`)), signal)).modules
     const look = toLook(modules)
     const split = x.ring?.splitHz ?? 4500
-    const [after, ringAfter, rack] = await Promise.all([measure(file.path, host, look), ring(file.path, host, split, look), rackLevel(file.path, look)])
+    const [after, ringAfter, rack] = await Promise.all([measure(file.path, host, look), ring(file.path, host, split, look), untilAborted(rackLevel(file.path, look), signal)])
     if (!after) throw new Error(`Reference ${i + 1} is silent after its settings: they remove the signal.`)
     parts.push({ after, ringLeft: ringLeftover(ringAfter), lufs: modules.level.on ? modules.level.lufs : rack.lufs })
   }

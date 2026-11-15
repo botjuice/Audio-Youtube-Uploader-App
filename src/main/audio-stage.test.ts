@@ -107,6 +107,15 @@ describe('audio rules on real audio', () => {
     expect(existsSync(r.audio)).toBe(false)
   }, 180_000)
 
+  it('a cancelled run stops at once, saves nothing, and a cancelled rule capture rejects', async () => {
+    const t = await captureRule(library, rule(), (id) => files.get(id) ?? null)
+    const ac = new AbortController()
+    ac.abort()
+    const r = await prepareUploadAudio({ library, state: { v: 1, applyToUploads: true, rules: [{ ...rule(), target: t }] }, recordId: dull.rel, reciterKey: 'reciter', rel: dull.rel, audioPath: dull.path, signal: ac.signal })
+    expect(r).toMatchObject({ ok: false, reason: 'CANCELLED' })
+    await expect(captureRule(library, rule(), (id) => files.get(id) ?? null, undefined, ac.signal)).rejects.toThrow(/Cancelled/)
+  }, 180_000)
+
   it('holds a really bad result instead of passing it off: the rule cannot bring this recording near its target', async () => {
     const t = await captureRule(library, rule(), (id) => files.get(id) ?? null)
     // a target no EQ within its limits can reach from this recording: 40 dB more above 1 kHz

@@ -1,7 +1,11 @@
 /** Helpers and small pieces the Audio rules screens share. */
 import { clsx } from 'clsx'
+import { Plus } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { MODULE_TITLES } from '@core/audio-modules'
 import type { ReportRow, SuggestNote } from '@core/audio-steer'
+import { Button } from '@/components/ui'
+import { errText } from '@/store'
 
 export const audioUrl = (file: string) => `yj-audio://preview/?p=${encodeURIComponent(file)}`
 
@@ -35,6 +39,8 @@ export function groupNotes(notes: SuggestNote[]): { modules: string; text: strin
   }
   return out.map((g) => ({ modules: g.keys.join(', '), text: g.text }))
 }
+/** Work the user stopped themselves is not an error to report. */
+export const isCancelled = (e: unknown) => /^cancelled$/i.test(errText(e).trim())
 export const newRuleId = () => `rule-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
 
 export function Stat({ label, value, hint, tone, title }: { label: string; value: string; hint?: string; tone?: 'err'; title?: string }) {
@@ -83,5 +89,34 @@ export function Reasons({ notes }: { notes: SuggestNote[] }) {
         {groupNotes(notes).map((n, i) => <li key={i}><span className="font-medium">{n.modules}.</span> <span className="text-muted">{n.text}</span></li>)}
       </ul>
     </details>
+  )
+}
+
+/** A button that opens a list to pick one thing from. For actions ("add this", "make a rule for that"): nothing stays selected. */
+export function PickMenu({ label, options, onPick, disabled, title, variant = 'subtle', align = 'left' }: {
+  label: string; options: { value: string; label: string }[]; onPick: (value: string) => void; disabled?: boolean; title?: string; variant?: 'subtle' | 'primary'; align?: 'left' | 'right'
+}) {
+  const [open, setOpen] = useState(false)
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const away = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false) }
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    window.addEventListener('mousedown', away)
+    window.addEventListener('keydown', key)
+    return () => { window.removeEventListener('mousedown', away); window.removeEventListener('keydown', key) }
+  }, [open])
+  return (
+    <div ref={box} className="relative inline-block no-drag" title={title}>
+      <Button size="sm" variant={variant} disabled={disabled} onClick={() => setOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={open}><Plus size={13} /> {label}</Button>
+      {open && (
+        <div role="listbox" aria-label={label} className={clsx('absolute z-30 mt-1 max-h-72 w-max min-w-full max-w-[min(440px,80vw)] overflow-y-auto rounded-lg border border-border bg-surface py-1 shadow-xl', align === 'right' ? 'right-0' : 'left-0')}>
+          {options.map((o) => (
+            <button key={o.value} type="button" role="option" aria-selected={false} title={o.label} className="block w-full truncate px-3 py-1.5 text-left text-xs hover:bg-surface-2"
+              onClick={() => { setOpen(false); onPick(o.value) }}>{o.label}</button>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }

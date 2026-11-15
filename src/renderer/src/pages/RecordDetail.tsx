@@ -131,6 +131,7 @@ export function RecordDetail({ record: r, onClose }: { record: LibraryRecord; on
         )}
         {/* thumbnail */}
         <ThumbnailSection record={r} />
+        <AudioSection record={r} />
 
         {/* playlists */}
         <Section label="Playlists" hint={r.status === 'uploaded' ? 'Already uploaded — changes here affect future uploads only' : 'Click a playlist to include or exclude it for this recording'}>
@@ -279,21 +280,6 @@ function ThumbnailSection({ record: r }: { record: LibraryRecord }) {
           <span><b>Upload with the plain photo anyway</b><span className="text-muted"> — the video frame becomes the reciter photo and no custom thumbnail is set. If the thumbnail renders fine at upload time it is used regardless.</span></span>
         </label>
       )}
-      {r.status !== 'uploaded' && (r.audio?.ok === false || r.allowOriginalAudio || r.lastError?.stage === 'audio') && (
-        <div className="mt-2">
-          {r.audio?.ok === false && (
-            <div className={clsx('rounded-lg border p-2 text-xs', r.allowOriginalAudio ? 'border-warn/30 bg-warn/6' : 'border-err/40 bg-err/6')}>
-              <div className="font-medium">Audio could not be processed ({r.audio.reason})</div>
-              <div className="mt-0.5">{r.audio.message}</div>
-              <div className="text-muted mt-1">{r.allowOriginalAudio ? 'You allowed the original audio, so this recording uploads unprocessed.' : 'This recording is held back from uploading until the cause is fixed (in the Audio tab) or you allow the original audio below.'}</div>
-            </div>
-          )}
-          <label className="mt-2 flex items-start gap-2 rounded-lg border border-border bg-surface-2/40 p-2 text-xs cursor-pointer">
-            <Checkbox checked={r.allowOriginalAudio} onChange={(v) => void call('origAudio', () => window.api.patchRecord(r.id, { allowOriginalAudio: v }))} />
-            <span><b>Upload with the original audio anyway</b><span className="text-muted"> — used only if the audio rule fails on this recording again. If the processing works at upload time it is used regardless.</span></span>
-          </label>
-        </div>
-      )}
       {t?.setError && (
         <div className="mt-2 flex items-start gap-2 rounded-lg border border-warn/30 bg-warn/6 p-2 text-xs">
           <div className="flex-1"><b>Thumbnail not set:</b> {t.setError}</div>
@@ -305,6 +291,29 @@ function ThumbnailSection({ record: r }: { record: LibraryRecord }) {
           <img src={preview.dataUrl} alt="thumbnail" className="max-h-full max-w-full rounded-lg shadow-2xl" />
         </div>
       )}
+    </Section>
+  )
+}
+
+/** How the audio rule went for this recording. Only there when it needs the user: the upload is held for its audio, or
+ *  they allowed the original audio on it. Nothing to show while audio rules are off for uploads. */
+function AudioSection({ record: r }: { record: LibraryRecord }) {
+  const on = useStore((s) => s.library.audioRules.applyToUploads)
+  const call = useStore((s) => s.call)
+  if (!on || r.status === 'uploaded' || !(r.audio?.ok === false || r.allowOriginalAudio || r.lastError?.stage === 'audio')) return null
+  return (
+    <Section label="Audio" hint="Processed by its reciter’s audio rule on upload">
+      {r.audio?.ok === false && (
+        <div className={clsx('rounded-lg border p-2 text-xs', r.allowOriginalAudio ? 'border-warn/30 bg-warn/6' : 'border-err/40 bg-err/6')}>
+          <div className="font-medium">Audio could not be processed ({r.audio.reason})</div>
+          <div className="mt-0.5">{r.audio.message}</div>
+          <div className="text-muted mt-1">{r.allowOriginalAudio ? 'You allowed the original audio, so this recording uploads unprocessed.' : 'This recording is held back from uploading until the cause is fixed (in Audio rules) or you allow the original audio below.'}</div>
+        </div>
+      )}
+      <label className="mt-2 flex items-start gap-2 rounded-lg border border-border bg-surface-2/40 p-2 text-xs cursor-pointer">
+        <Checkbox checked={r.allowOriginalAudio} onChange={(v) => void call('origAudio', () => window.api.patchRecord(r.id, { allowOriginalAudio: v }))} />
+        <span><b>Upload with the original audio anyway</b><span className="text-muted"> — used only if the audio rule fails on this recording again. If the processing works at upload time it is used regardless.</span></span>
+      </label>
     </Section>
   )
 }

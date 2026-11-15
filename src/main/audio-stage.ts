@@ -5,13 +5,12 @@
  * It never passes off a bad result as a good one: if the settings cannot bring the recording near the target, or
  * anything fails, the caller gets the reason and holds the upload (the user can allow the original audio instead).
  */
-import { toLook } from '../core/audio-modules'
+import { defaultModules, toLook } from '../core/audio-modules'
 import { TERRIBLE_TONE_DB, type AudioRulesState } from '../core/audio-rules'
-import { defaultModules } from '../core/audio-modules'
 import { discard, processAudio, type AudioHost } from '../plugins/audio/index'
 import { audioDir, rackLevel } from './audio'
 import { autoSet } from './audio-autoset'
-import { recordingFacts } from './audio-facts'
+import { recordingFacts, untilAborted } from './audio-facts'
 import { targetFor } from './audio-rules'
 import { ffmpegPath } from './ffmpeg'
 import { activity } from './log'
@@ -32,12 +31,12 @@ export async function prepareUploadAudio(o: {
   if (!aim) return { ok: false, reason: 'AUDIO_FAILED', message: 'There is no audio rule to apply and the built-in one cannot be used with this version’s measurements.' }
   try {
     o.onProgress?.(0, 'Measuring')
-    const facts = await recordingFacts(o.library, { rel: o.rel, path: o.audioPath })
-    if (o.signal?.aborted) return { ok: false, reason: 'CANCELLED', message: 'Cancelled' }
+    const facts = await recordingFacts(o.library, { rel: o.rel, path: o.audioPath }, o.signal)
     o.onProgress?.(15, 'Choosing settings')
     let step = 0
     const r = await autoSet(bin, o.audioPath, defaultModules(), { ...facts, target: aim.target },
-      (text) => o.onProgress?.(Math.min(60, 20 + 10 * step++), text.replace(/…$/, '')), o.signal, { rackLevel: (look) => rackLevel(o.audioPath, look) })
+      (text) => o.onProgress?.(Math.min(60, 20 + 10 * step++), text.replace(/…$/, '')), o.signal, { rackLevel: (look) => untilAborted(rackLevel(o.audioPath, look), o.signal) })
+    if (o.signal?.aborted) return { ok: false, reason: 'CANCELLED', message: 'Cancelled' }
     const summary = r.report.map((x) => `${x.what.split(':')[0]} ${x.before} → ${x.after}`).join(', ')
     if (r.toneAfter > TERRIBLE_TONE_DB) {
       return { ok: false, reason: 'AUDIO_POOR', message: `The audio rule could not bring this recording near its target: the tone is still ${r.toneAfter.toFixed(1)} dB away (under 1 dB is normal, over ${TERRIBLE_TONE_DB} dB is held). ${summary}.` }
@@ -46,7 +45,7 @@ export async function prepareUploadAudio(o: {
     const host: AudioHost = { outputDir: audioDir(o.library), ffmpegPath: bin, ...(o.signal ? { signal: o.signal } : {}), log: (level, message) => { if (level === 'error') activity.error(message, o.recordId); else if (level === 'warn') activity.warn(message, o.recordId) }, onProgress: (p) => o.onProgress?.(65 + Math.round(p * 0.35), 'Rendering') }
     // the loop has just measured the whole recording through these settings: hand the render its gain so it does not measure again
     const look = toLook(r.modules)
-    const rack = look.level ? await rackLevel(o.audioPath, look).catch(() => null) : null
+    const rack = look.level ? await untilAborted(rackLevel(o.audioPath, look), o.signal).catch(() => null) : null
     const known = rack && look.level && rack.rate ? { gainDb: look.level.lufs - rack.lufs, rate: rack.rate } : {}
     const out = await processAudio({ audioPath: o.audioPath, look, ...known }, host)
     if (!out.ok) return out.reason === 'CANCELLED' ? { ok: false, reason: 'CANCELLED', message: 'Cancelled' } : { ok: false, reason: 'AUDIO_FAILED', message: `${out.reason}: ${out.message}` }

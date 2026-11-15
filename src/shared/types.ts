@@ -184,6 +184,8 @@ export interface RulePhoto { file: string; dataUrl: string }
 // ── Audio editor ──────────────────────────────────────────────────────────────
 export type { Look as AudioLook, Step as AudioStep, LookError as AudioLookError } from '../plugins/audio/look'
 export type { AudioAnalysis } from '../plugins/audio/types'
+import type { Modules } from '../core/audio-modules'
+import type { ReportRow, SuggestNote } from '../core/audio-steer'
 /** One 5 s chunk of the A/B stream. `processed` chunks are rendered by the plugin with a pre-roll (so filters are warm) that playback skips via `offset`. */
 export interface AudioTileInput {
   recordId: string
@@ -206,21 +208,25 @@ export interface AudioTile {
   warnings: string[]
 }
 export type AudioTileResult = { ok: true; tile: AudioTile } | { ok: false; reason: string; message: string; errors?: { path: string; message: string }[] }
-/** Peak envelope of a whole recording, for the overview strip. */
-/** What Auto-set hands back: the settings, why, and (for a reciter with a target sound) how the processed result measures. */
+/** What Auto-set hands back: the settings, why, and how the processed result measures against the rule's target. */
 export interface AudioAutoSet {
   /** One line on what it was aimed at. */
   how: string
-  modules: import('../core/audio-modules').Modules
-  notes: import('../core/audio-steer').SuggestNote[]
-  /** The result against the target, measured on the processed recording. null when there is no target to measure against. */
-  report: import('../core/audio-steer').ReportRow[] | null
+  modules: Modules
+  notes: SuggestNote[]
+  /** The result against the target, measured on the processed recording. */
+  report: ReportRow[]
   /** Things found that no module deals with. */
   findings: string[]
-  /** Recordings that could not be read. */
-  failed: { file: string; message: string }[]
 }
+/** The long-running audio work the editor shows progress for: saving a rule, Auto-set, and a reference following the first. */
+export type AudioWork = 'save' | 'autoset'
+export interface AudioWorkProgress { op: AudioWork | 'follow'; stage: string }
+/** What importing a rule file did. `replaces` with `imported: false`: a rule is already there and nothing was changed;
+ *  import again with `confirm` to put the picked file in its place. */
+export interface AudioRuleImport { reciterKey: string | null; /** the reciter's folder name, or "the default rule" */ name: string; file: string; label?: string; replaces: boolean; imported: boolean }
 
+/** Peak envelope of a whole recording, for the overview strip. */
 export interface AudioOverview { durationSec: number; lufs: number; peaks: number[] }
 
 /** Result of importing a thumbnail look file: the file (font paths already pointing at restored local copies) and what was adjusted. */

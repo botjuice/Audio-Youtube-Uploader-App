@@ -1,5 +1,7 @@
+import type { Modules } from '@core/audio-modules'
+import type { AudioRule, AudioRulesState } from '@core/audio-rules'
 import type {
-  ActivityEntry, AudioAnalysis, AudioAutoSet, AudioOverview, AudioTileInput, AudioTileResult, Health, KeywordDef, LibraryRecord, NewReciter, Playlist, PlaylistRule, Privacy, Progress,
+  ActivityEntry, AudioAnalysis, AudioAutoSet, AudioLook, AudioOverview, AudioRuleImport, AudioTileInput, AudioTileResult, AudioWork, AudioWorkProgress, Health, KeywordDef, LibraryRecord, NewReciter, Playlist, PlaylistRule, Privacy, Progress,
   CustomFont, ImportedLook, ReciterInfo, ReciterPatch, RecordPatch, RulePhoto, Settings, StylePatch, StyleRenderInput, StyleSchemaInfo, SurahOption, ThumbnailPreview, ThumbnailRule, TokenValidation, UpdateState,
 } from './types'
 
@@ -10,7 +12,7 @@ export interface LibrarySnapshot {
   keywords: KeywordDef[]
   thumbnailRules: ThumbnailRule[]   // list order = priority; the last one is the default look
   playlists: Playlist[]          // cached channel playlists (may be stale until refreshed)
-  audioRules: import('@core/audio-rules').AudioRulesState   // per-reciter audio rules + whether uploads use them
+  audioRules: AudioRulesState   // per-reciter audio rules + whether uploads use them
   audioBuiltIn: { count: number; tone: number[]; lufs: number; hp: number } | null   // the default rule that ships with the app (used until the user makes their own)
 }
 
@@ -58,14 +60,15 @@ export interface Api {
   getAudioOverview(recordId: string): Promise<AudioOverview>          // whole-recording waveform for the window strip (cached)
   analyseAudio(recordId: string): Promise<AudioAnalysis>
   // audio rules
-  saveAudioRule(rule: import('@core/audio-rules').AudioRule): Promise<void>          // stores the rule and captures its target from its references ('audioMeasure' events report progress)
+  saveAudioRule(rule: AudioRule): Promise<void>          // stores the rule and captures its target from its references ('audioMeasure' events report progress; cancelAudioWork('save') stops it)
   deleteAudioRule(id: string): Promise<void>
   setAudioApplyToUploads(on: boolean): Promise<void>
-  followAudioSettings(base: import('@core/audio-modules').Modules, baseRecordId: string, recordId: string): Promise<AudioAutoSet>   // another recording auto-set to sound like the first reference after its settings
+  followAudioSettings(base: Modules, baseRecordId: string, recordId: string): Promise<AudioAutoSet>   // another recording auto-set to sound like the first reference after its settings
   exportAudioRule(id: string): Promise<{ path: string } | null>
-  importAudioRule(): Promise<{ reciterKey: string | null; label?: string } | null>
-  getAudioLevelGain(recordId: string, look: import('./types').AudioLook): Promise<number | null>   // the one levelling gain the whole recording gets with this look (null: no levelling)
-  suggestAudio(recordId: string, current: import('@core/audio-modules').Modules, aim: 'default' | 'upload'): Promise<AudioAutoSet>   // Auto-set: measures, chooses settings, processes and re-measures to check them; 'audioMeasure' events report progress
+  importAudioRule(confirm?: boolean): Promise<AudioRuleImport | null>   // pick a rule file; when it would replace a rule nothing is changed until called again with confirm
+  getAudioLevelGain(recordId: string, look: AudioLook): Promise<number | null>   // the one levelling gain the whole recording gets with this look (null: no levelling)
+  suggestAudio(recordId: string, current: Modules, aim: 'default' | 'upload'): Promise<AudioAutoSet>   // Auto-set: measures, chooses settings, processes and re-measures to check them ('audioMeasure' events report progress; cancelAudioWork('autoset') stops it)
+  cancelAudioWork(op: AudioWork): Promise<void>
   // thumbnails
   previewThumbnail(recordId: string): Promise<ThumbnailPreview>
   retryThumbnail(recordId: string): Promise<void>
@@ -97,5 +100,5 @@ export interface Api {
   on(event: 'health', cb: (h: Health) => void): () => void
   on(event: 'settings', cb: (s: Settings) => void): () => void
   on(event: 'update', cb: (u: UpdateState) => void): () => void
-  on(event: 'audioMeasure', cb: (p: { done: number; total: number; stage?: string }) => void): () => void
+  on(event: 'audioMeasure', cb: (p: AudioWorkProgress) => void): () => void
 }

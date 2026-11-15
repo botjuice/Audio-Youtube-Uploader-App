@@ -19,7 +19,8 @@ const SPLIT_SEARCH_S = 240
 
 interface Entry extends Facts { size: number; mtimeMs: number }
 interface Stored { v: string; files: Record<string, Entry> }
-const version = `${FACTS_VERSION}.${MEASURE_VERSION}`
+export const FACTS_STORE_VERSION = `${FACTS_VERSION}.${MEASURE_VERSION}`
+const version = FACTS_STORE_VERSION
 const storeFile = (library: string) => stateFile(library, 'audio-facts.json')
 
 const running = new Map<string, Promise<Facts>>()
@@ -41,8 +42,25 @@ async function gather(bin: string, f: AudioFile): Promise<Facts> {
   return { measure: m, analysis, ring: r ? { ...r, bands: split.bands } : r }
 }
 
-/** Everything known about one recording. From the library's store when the file has not changed since it was measured. */
-export async function recordingFacts(library: string, f: AudioFile): Promise<Facts> {
+/** Wait for work that others may be waiting for too, but stop waiting the moment this caller cancels. The work itself
+ *  carries on and its result is kept, so the next request for it is answered at once. */
+export function untilAborted<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return work
+  if (signal.aborted) { work.catch(() => {}); return Promise.reject(new Error('Cancelled')) }
+  return new Promise<T>((resolve, reject) => {
+    const stop = () => reject(new Error('Cancelled'))
+    signal.addEventListener('abort', stop, { once: true })
+    work.then(resolve, reject).finally(() => signal.removeEventListener('abort', stop))
+  })
+}
+
+/** Everything known about one recording. From the library's store when the file has not changed since it was measured.
+ *  `signal` only ends this caller's wait (see untilAborted). */
+export function recordingFacts(library: string, f: AudioFile, signal?: AbortSignal): Promise<Facts> {
+  return untilAborted(sharedFacts(library, f), signal)
+}
+
+async function sharedFacts(library: string, f: AudioFile): Promise<Facts> {
   const bin = ffmpegPath()
   if (!bin) throw new Error('ffmpeg is not available on this computer')
   const st = await fs.stat(f.path)
@@ -60,4 +78,27 @@ export async function recordingFacts(library: string, f: AudioFile): Promise<Fac
     p.catch(() => running.delete(key))
   }
   return p
+}
+
+/** A recording was renamed: its stored facts move with it (the file itself is unchanged, so they still hold). */
+export function moveFacts(library: string, from: string, to: string): Promise<void> {
+  return onDisk(async () => {
+    const s = await load(library)
+    const hit = s.files[from]
+    if (!hit) return
+    delete s.files[from]
+    s.files[to] = hit
+    await writeJson(storeFile(library), s)
+  })
+}
+
+/** Drop the facts of recordings that are no longer in the library. */
+export function pruneFacts(library: string, keep: Set<string>): Promise<void> {
+  return onDisk(async () => {
+    const s = await load(library)
+    const gone = Object.keys(s.files).filter((rel) => !keep.has(rel))
+    if (!gone.length) return
+    for (const rel of gone) delete s.files[rel]
+    await writeJson(storeFile(library), s)
+  })
 }

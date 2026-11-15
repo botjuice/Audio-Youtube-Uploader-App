@@ -1,5 +1,5 @@
 /**
- * The Audio tab's fixed channel strip, expressed as the plugin's generic look.
+ * The Audio rules editor's fixed channel strip, expressed as the plugin's generic look.
  *
  * Each module is one plain ffmpeg filter (or, for the reverb, the plugin's parallel convolution shape) with
  * its raw options. The editor shows studio units — dB, Hz, ms, ratio, % — and converts to ffmpeg's own
