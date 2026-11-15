@@ -166,7 +166,7 @@ describe('graph', () => {
     expect(buildGraph(look, { mode: 'chain' }).graph).toBe('[0:a]highpass=frequency=80[a1];[a1]afftdn[a2];[a2]anull[out]')
     expect(buildGraph(look, { mode: 'render', gainDb: 3.25, ceiling: -1.5, rate: 48000 }).graph)
       .toBe('[0:a]highpass=frequency=80[a1];[a1]afftdn[a2];[a2]volume=3.25dB,aresample=192000,alimiter=limit=0.841395:level=false:attack=5:release=50:latency=true,aresample=48000[out]')
-    expect(buildGraph(EMPTY_LOOK, { mode: 'measure' }).graph).toBe('[0:a]ebur128=peak=sample+true:framelog=verbose[out]')
+    expect(buildGraph(EMPTY_LOOK, { mode: 'measure' }).graph).toBe('[0:a]ebur128=peak=sample:framelog=verbose[out]')
   })
 
   it('splits, sidechains, files and generated inputs, with step paths for every filter', () => {

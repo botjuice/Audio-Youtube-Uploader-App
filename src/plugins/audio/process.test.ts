@@ -104,6 +104,11 @@ describe('processAudio', () => {
     expect(part.gainDb).toBeCloseTo(g.gainDb!, 2)
     expect(part.cacheKey).not.toBe(own.cacheKey)
     expect(part.warnings).toEqual([])
+    // with the rate as well, the render skips its own measuring pass and comes out the same
+    expect(g.rate).toBe(48000)
+    const known = await processAudio({ audioPath: voice, look, gainDb: g.gainDb!, rate: g.rate! }, host())
+    expect(known.ok).toBe(true)
+    if (known.ok) { expect(known.after.lufs).toBeCloseTo(whole.after.lufs, 1); expect(known.gainDb).toBeCloseTo(whole.gainDb, 1) }
   }, 60_000)
 
   it('measure with a look: what the look makes of the recording, whole or over a stretch', async () => {

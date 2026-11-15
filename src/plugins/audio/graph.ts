@@ -124,7 +124,9 @@ export function buildGraph(look: Look, o: BuildOptions): BuiltGraph {
   const end = chain(look.chain, input, 'chain')
   const tail: [string, string][] = []
   if (o.offset) tail.push(['asetpts=PTS-STARTPTS', ''])
-  if (o.mode === 'measure') tail.push(['ebur128=peak=sample+true:framelog=verbose', ''])
+  // sample peak only: true peak (4× oversampling) triples the cost of this pass, and what it is used for (one gain, and a
+  // caller's estimate of headroom) does not need it. The rendered file is verified with true peak afterwards.
+  if (o.mode === 'measure') tail.push(['ebur128=peak=sample:framelog=verbose', ''])
   if (o.mode === 'render') {
     if (o.gainDb !== undefined && o.gainDb !== 0) tail.push([`volume=${n(o.gainDb)}dB`, ''])
     if (o.ceiling !== undefined && o.rate) {

@@ -31,7 +31,7 @@ const COMP_MIN_RATIO = 1.15
 /** A recording whose quietest moments are within this of the target's has as much room as the target, dB. */
 export const ROOM_CLOSE = 1.5
 /** Levelling may bring peaks this close to the ceiling before the target loudness is lowered so the limiter stays idle, dB. */
-const PEAK_MARGIN = 0.3
+const PEAK_MARGIN = 0.8   // the peak it is given is the highest sample; between samples the signal can go a little higher
 
 /** How this recording's tone differs from the target's, smoothed over about an octave (dB per band; + = the recording has
  *  less there). A broad difference is the recording (microphone, distance, mixer); a narrow one is the recitation itself. */

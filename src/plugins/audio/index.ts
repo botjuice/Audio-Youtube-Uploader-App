@@ -141,7 +141,10 @@ export async function processAudio(job: AudioJob, host: AudioHost): Promise<Audi
     // ── 4. measure (levelling pass 1): the rack's loudness and output format ──
     let gainDb = 0, rate: number | undefined
     const renderFrom = level ? 40 : 0
-    if (level) {
+    if (level && job.gainDb !== undefined && job.rate && Number.isFinite(job.rate)) {
+      // the caller already measured the whole recording: nothing to find out here
+      gainDb = Math.max(MIN_GAIN_DB, Math.min(MAX_GAIN_DB, job.gainDb)); rate = job.rate
+    } else if (level) {
       current = buildGraph(look, { mode: 'measure', offset: start })
       const r = await runFfmpeg(bin, [...inputArgs, '-filter_complex', current.graph, '-map', '[out]', '-t', n(cap), '-f', 'null', '-'], { ...run, onTime: progress(0, 40, inputSec) })
       const m = parseEbur(r.stderr)
@@ -251,7 +254,7 @@ export async function analyse(audioPath: string, host: Pick<AudioHost, 'ffmpegPa
  * An editor that plays excerpts needs it, because an excerpt levelled on its own gets a different gain than the
  * recording will. `gainDb` is null when the look has no levelling.
  */
-export async function levellingGain(audioPath: string, lookInput: unknown, host: Pick<AudioHost, 'ffmpegPath' | 'signal' | 'stallMs'>): Promise<{ ok: true; gainDb: number | null; rackLufs?: number; rackPeak?: number } | { ok: false; reason: AudioReason; message: string }> {
+export async function levellingGain(audioPath: string, lookInput: unknown, host: Pick<AudioHost, 'ffmpegPath' | 'signal' | 'stallMs'>): Promise<{ ok: true; gainDb: number | null; rackLufs?: number; rackPeak?: number; rate?: number } | { ok: false; reason: AudioReason; message: string }> {
   const v = validateLook(lookInput ?? EMPTY_LOOK)
   if (!v.ok) return { ok: false, reason: 'INVALID_LOOK', message: v.errors.map((e) => `${e.path}: ${e.message}`).join('\n') }
   const level = v.look.level
@@ -262,8 +265,9 @@ export async function levellingGain(audioPath: string, lookInput: unknown, host:
     const r = await runFfmpeg(host.ffmpegPath, ['-hide_banner', '-i', audioPath, ...g.files.flatMap((f) => ['-i', f]), '-filter_complex', g.graph, '-map', '[out]', '-f', 'null', '-'], { signal: host.signal, ...(host.stallMs ? { stallMs: host.stallMs } : {}) })
     const m = parseEbur(r.stderr)
     if (!m || !(m.lufs > SILENT_LUFS)) return { ok: false, reason: 'SILENT_INPUT', message: 'Nothing to level: the recording is silent after the rack.' }
-    // rackPeak: the rack's true peak before any gain, so a caller can tell whether a target needs the limiter
-    return { ok: true, gainDb: Math.max(MIN_GAIN_DB, Math.min(MAX_GAIN_DB, level.lufs - m.lufs)), rackLufs: m.lufs, rackPeak: m.truePeak }
+    // rackPeak: the rack's highest sample before any gain (the true peak can be a little higher), so a caller can tell
+    // whether a target needs the limiter. rate: what a render needs to skip its own measuring pass.
+    return { ok: true, gainDb: Math.max(MIN_GAIN_DB, Math.min(MAX_GAIN_DB, level.lufs - m.lufs)), rackLufs: m.lufs, rackPeak: Number.isFinite(m.samplePeak) ? m.samplePeak : m.truePeak, ...((r2) => (r2 ? { rate: r2.sampleRate } : {}))(parseOutputStream(r.stderr)) }
   } catch (e) {
     if (e instanceof FfmpegError) return { ok: false, reason: e.reason, message: e.message }
     return { ok: false, reason: 'PROCESS_FAILED', message: e instanceof Error ? e.message : String(e) }

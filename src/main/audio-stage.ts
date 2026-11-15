@@ -44,7 +44,11 @@ export async function prepareUploadAudio(o: {
     }
     o.onProgress?.(65, 'Rendering')
     const host: AudioHost = { outputDir: audioDir(o.library), ffmpegPath: bin, ...(o.signal ? { signal: o.signal } : {}), log: (level, message) => { if (level === 'error') activity.error(message, o.recordId); else if (level === 'warn') activity.warn(message, o.recordId) }, onProgress: (p) => o.onProgress?.(65 + Math.round(p * 0.35), 'Rendering') }
-    const out = await processAudio({ audioPath: o.audioPath, look: toLook(r.modules) }, host)
+    // the loop has just measured the whole recording through these settings: hand the render its gain so it does not measure again
+    const look = toLook(r.modules)
+    const rack = look.level ? await rackLevel(o.audioPath, look).catch(() => null) : null
+    const known = rack && look.level && rack.rate ? { gainDb: look.level.lufs - rack.lufs, rate: rack.rate } : {}
+    const out = await processAudio({ audioPath: o.audioPath, look, ...known }, host)
     if (!out.ok) return out.reason === 'CANCELLED' ? { ok: false, reason: 'CANCELLED', message: 'Cancelled' } : { ok: false, reason: 'AUDIO_FAILED', message: `${out.reason}: ${out.message}` }
     activity.info(`Audio processed (${aim.via === 'reciter' ? 'this reciter’s rule' : aim.via === 'default' ? 'the default rule' : 'the built-in rule'}): ${summary}`, o.recordId)
     return { ok: true, audio: out.file, key: out.cacheKey, via: aim.via, toneAfter: r.toneAfter, cleanup: () => discard(out.file) }

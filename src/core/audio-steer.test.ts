@@ -115,9 +115,9 @@ describe('steering to the target sound', () => {
     const m = defaultModules()
     expect(setLoudness(m, target, -20.4, { lufs: -19, peak: -6 })).toMatch(/loudness of the rule’s recordings/)
     expect(m.level).toEqual({ on: true, lufs: -16.3, ceiling: -1 })
-    // a peaky recording: +2.7 dB would put its −2 dBTP peak over the ceiling, so it stops where the peak reaches −1.3
+    // a peaky recording: +2.7 dB would put its −2 dB peak over the ceiling, so it stops where the peak reaches −1.8
     expect(setLoudness(m, target, -20.4, { lufs: -19, peak: -2 })).toMatch(/as close/)
-    expect(m.level.lufs).toBe(-18.3)
+    expect(m.level.lufs).toBe(-18.8)
   })
   it('checking a result: what is still off is fed back, and nothing when it is on target', () => {
     const muffled = baseTone.map((t, b) => t - (MEASURE_BANDS[b]! >= 2000 ? 6 : 0))

@@ -24,6 +24,9 @@ export interface AudioJob {
   /** Levelling gain to apply instead of measuring this span: the whole recording's (`levellingGain`). An excerpt levelled
    *  on its own gets a different gain than the recording will, and a quiet one is pushed into the limiter. dB. */
   gainDb?: number
+  /** With `gainDb`: the rack's output sample rate, also from `levellingGain`. Given both, the render skips its own
+   *  measuring pass (it has nothing left to find out). */
+  rate?: number
 }
 
 export interface AudioHost {

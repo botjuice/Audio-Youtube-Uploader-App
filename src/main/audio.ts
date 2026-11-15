@@ -145,12 +145,12 @@ export async function renderAudioTile(library: string, audioPath: string, input:
     const pre = Math.min(TILE_PREROLL_S, start)
     // levelling: every chunk gets the gain the whole recording gets, so the preview is what a full render sounds like
     // (a chunk levelled on its own is pushed into the limiter whenever it is quieter than the rest)
-    let gainDb: number | null = null
+    let gainDb: number | null = null, rate: number | undefined
     if (v.look.level) {
-      try { gainDb = await audioLevelGain(audioPath, v.look) }
+      try { const rack = await rackLevel(audioPath, v.look); rate = rack.rate; gainDb = Math.max(MIN_GAIN_DB, Math.min(MAX_GAIN_DB, v.look.level.lufs - rack.lufs)) }
       catch (e) { return ac.signal.aborted || /Cancelled/i.test(String(e)) ? { ok: false, reason: 'CANCELLED', message: 'superseded' } : { ok: false, reason: 'PROCESS_FAILED', message: e instanceof Error ? e.message : String(e) } }
     }
-    const r = await processAudio({ audioPath, look: v.look, preview: { start: start - pre, seconds: seconds + pre + TILE_POSTROLL_S }, ...(gainDb !== null ? { gainDb } : {}) }, h)
+    const r = await processAudio({ audioPath, look: v.look, preview: { start: start - pre, seconds: seconds + pre + TILE_POSTROLL_S }, ...(gainDb !== null ? { gainDb, ...(rate ? { rate } : {}) } : {}) }, h)
     if (!r.ok) return r.reason === 'CANCELLED' ? { ok: false, reason: 'CANCELLED', message: 'superseded' } : { ok: false, reason: r.reason, message: r.message, ...(r.errors ? { errors: r.errors } : {}) }
     const peaks = await peaksOf(r.file, TILE_PEAK_BUCKETS, ac.signal, pre, seconds)
     const tile: AudioTile = { kind: 'processed', start, seconds, file: r.file, offset: pre, peaks, gainDb: r.gainDb, lufs: r.after.lufs, truePeak: r.after.truePeak, channels: r.after.channels, sampleRate: r.after.sampleRate, warnings: r.warnings }
@@ -193,11 +193,11 @@ export async function analyseRecording(audioPath: string): Promise<AudioAnalysis
   return p
 }
 
-const rackLevels = new Map<string, Promise<{ lufs: number; peak: number }>>()
+const rackLevels = new Map<string, Promise<{ lufs: number; peak: number; rate?: number }>>()
 const rackRuns = new Map<string, { key: string; ac: AbortController }>()
 /** The rack's own loudness and true peak over the whole recording, before any levelling gain. Keyed by the chain alone, so
  *  the preview and Auto-set share one pass whatever the loudness target is. A request for a newer chain stops the older run. */
-export async function rackLevel(audioPath: string, look: { chain: unknown }): Promise<{ lufs: number; peak: number }> {
+export async function rackLevel(audioPath: string, look: { chain: unknown }): Promise<{ lufs: number; peak: number; rate?: number }> {
   const bin = ffmpegPath()
   if (!bin) throw new Error('ffmpeg is not available on this computer')
   const st = await fs.stat(audioPath)
@@ -211,7 +211,7 @@ export async function rackLevel(audioPath: string, look: { chain: unknown }): Pr
     if (rackLevels.size > 200) rackLevels.clear()
     p = levellingGain(audioPath, { chain: look.chain, level: { lufs: -16, ceiling: -1 } }, { ffmpegPath: bin, signal: ac.signal }).then((r) => {
       if (!r.ok) throw new Error(r.message)
-      return { lufs: r.rackLufs!, peak: r.rackPeak! }
+      return { lufs: r.rackLufs!, peak: r.rackPeak!, ...(r.rate ? { rate: r.rate } : {}) }
     })
     rackLevels.set(key, p)
     p.catch(() => rackLevels.delete(key)).finally(() => { if (rackRuns.get(audioPath)?.ac === ac) rackRuns.delete(audioPath) })
