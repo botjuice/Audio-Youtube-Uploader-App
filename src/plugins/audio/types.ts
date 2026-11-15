@@ -22,10 +22,13 @@ export interface AudioJob {
   /** Override the look's levelling for this job: a Level to level to, or null for none. */
   level?: Level | null
   /** Levelling gain to apply instead of measuring this span: the whole recording's (`levellingGain`). An excerpt levelled
-   *  on its own gets a different gain than the recording will, and a quiet one is pushed into the limiter. dB. */
+   *  on its own gets a different gain than the recording will, and a quiet one is pushed into the limiter. dB, applied
+   *  to 0.01 dB; outside MIN_GAIN_DB…MAX_GAIN_DB it is capped with a warning. An excerpt lands wherever that gain puts
+   *  it (only the ceiling is checked); a whole recording is still checked against the loudness target. */
   gainDb?: number
-  /** With `gainDb`: the rack's output sample rate, also from `levellingGain`. Given both, the render skips its own
-   *  measuring pass (it has nothing left to find out). */
+  /** With `gainDb`: the rack's output sample rate in Hz (8000…384000), also from `levellingGain`. Given both, the
+   *  render skips its own measuring pass (it has nothing left to find out). It must be the rate the rack really
+   *  produces: the limiter runs at four times it, and the file comes out at it. */
   rate?: number
 }
 
@@ -92,6 +95,9 @@ export interface Measure {
   sibilance: number
 }
 
+/** Bump when `ring()` / `ringSplit()` change what their numbers mean (`RingMeasure.v`). */
+export const RING_VERSION = 1
+
 /** What `ring()` finds: whether the band above `splitHz` keeps ringing after loud bursts in it ("s" sounds). Levels in dBFS / dB. */
 export interface RingMeasure {
   v: number
@@ -116,13 +122,15 @@ export interface RingMeasure {
   /** Louder bursts ring more: ring ≈ slope × (burst level − zeroDb). slope 0 = no such relation found. */
   slope: number
   zeroDb: number
-  /** When the split was searched for (`ringSplit`): the ring found in each band it looked at. */
+  /** Never set by the plugin. A host that searched for the split first (`ringSplit`) can keep what that found in each
+   *  band here, next to the measurement made at the split it chose. */
   bands?: RingBand[]
 }
 
 /** One band of a ring search: how far it stays above its level from before, 100–250 ms after an "s" ends, dB. */
 export interface RingBand { fromHz: number; toHz: number | null; excessDb: number }
-/** What `ringSplit()` finds: the frequency above which the ring after "s" sounds lives in this recording. */
+/** What `ringSplit()` finds: the frequency above which the ring after "s" sounds lives in this recording. With fewer
+ *  than 6 usable bursts (`bursts`) there is nothing to go on and `splitHz` is the default, 4500. */
 export interface RingSplit { splitHz: number; bands: RingBand[]; bursts: number }
 
 /** Measured on the processed file. */
@@ -147,6 +155,15 @@ export type AudioReason =
   | 'CANCELLED'
   | 'SILENT_OUTPUT'        // the rack removed the signal
   | 'LOUDNESS_OFF_TARGET'  // levelling landed more than 3 LU from the target
+
+/**
+ * What the calls that hand back numbers (`analyse`, `measure`, `ring`, `ringSplit`) throw instead: the same reasons
+ * `processAudio` returns, and for a look ffmpeg refused the steps at fault. A cancelled call has reason `CANCELLED`
+ * and the message "Cancelled".
+ */
+export class AudioError extends Error {
+  constructor(public reason: AudioReason, message: string, public errors?: LookError[]) { super(message); this.name = 'AudioError' }
+}
 
 export type AudioResult =
   | {

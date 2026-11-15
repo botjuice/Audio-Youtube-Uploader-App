@@ -7,7 +7,8 @@
  * 2048-sample frames (64 ms). All levels are relative to the recording's own voice level, so a
  * quiet and a loud copy of the same recording measure the same.
  */
-import { spawn } from 'node:child_process'
+import { runFfmpeg, type RunOptions } from './ffmpeg'
+import { n } from './graph'
 import { MEASURE_BANDS as BANDS, MEASURE_VERSION, type Measure } from './types'
 
 const RATE = 32000
@@ -133,34 +134,31 @@ export class Measurer {
   }
 }
 
-/** Measure one file, or (with `rack`: a graph ending in [out], plus its extra input files) what a look makes of it.
- *  Rejects when ffmpeg cannot read it; resolves null for a silent or very short recording. */
-export function measureFile(bin: string, file: string, signal?: AbortSignal, rack?: { graph: string; files: string[] }, span?: { start: number; seconds: number }): Promise<Measure | null> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) return reject(new Error('Cancelled'))
-    const cut = span ? ['-ss', String(span.start), '-t', String(span.seconds)] : []
-    const io = rack ? [...cut, '-i', file, ...rack.files.flatMap((f) => ['-i', f]), '-filter_complex', rack.graph, '-map', '[out]'] : [...cut, '-i', file, '-vn']
-    const child = spawn(bin, ['-hide_banner', '-loglevel', 'error', ...io, '-ac', '1', '-ar', String(RATE), '-f', 'f32le', 'pipe:1'], { windowsHide: true })
-    const m = new Measurer()
-    let err = '', carry: Buffer = Buffer.alloc(0)
-    const onAbort = () => child.kill()
-    signal?.addEventListener('abort', onAbort, { once: true })
-    child.stdout.on('data', (b: Buffer) => {
-      const buf = carry.length ? Buffer.concat([carry, b]) : b
-      const whole = buf.length - (buf.length % 4)
-      // copy: the pool-backed buffer is not 4-byte aligned in general
-      const f = new Float32Array(whole / 4)
-      for (let i = 0; i < f.length; i++) f[i] = buf.readFloatLE(i * 4)
-      m.push(f)
-      carry = whole < buf.length ? Buffer.from(buf.subarray(whole)) : Buffer.alloc(0)
-    })
-    child.stderr.on('data', (b: Buffer) => { if (err.length < 4000) err += b.toString() })
-    child.on('error', (e) => reject(new Error(`Could not start ffmpeg (${bin}): ${e.message}`)))
-    child.on('close', (code) => {
-      signal?.removeEventListener('abort', onAbort)
-      if (signal?.aborted) return reject(new Error('Cancelled'))
-      if (code !== 0) return reject(new Error(err.trim().split('\n').slice(-2).join(' · ') || `ffmpeg exited with code ${code}`))
-      resolve(m.finish())
-    })
-  })
+/** Raw little-endian float samples as they arrive from ffmpeg, in whole samples (a chunk can end mid-sample). */
+export function floatReader(each: (samples: Float32Array) => void): (chunk: Buffer) => void {
+  let carry: Buffer = Buffer.alloc(0)
+  return (b) => {
+    const buf = carry.length ? Buffer.concat([carry, b]) : b
+    const whole = buf.length - (buf.length % 4)
+    // copy: the pool-backed buffer is not 4-byte aligned in general
+    const f = new Float32Array(whole / 4)
+    for (let i = 0; i < f.length; i++) f[i] = buf.readFloatLE(i * 4)
+    each(f)
+    carry = whole < buf.length ? Buffer.from(buf.subarray(whole)) : Buffer.alloc(0)
+  }
+}
+
+/** What the measuring decodes share: an optional stretch of the file, an optional rack to go through (a graph ending in
+ *  [out] plus its extra input files), and for a rack the length its output is cut at (an endless source must end). */
+export interface MeasureInput { rack?: { graph: string; files: string[] }; span?: { start: number; seconds: number }; capSec?: number }
+export const inputArgs = (file: string, i: MeasureInput) => [...(i.span ? ['-ss', n(i.span.start), '-t', n(i.span.seconds)] : []), '-i', file, ...(i.rack?.files ?? []).flatMap((f) => ['-i', f])]
+export const capArgs = (i: MeasureInput) => (i.rack && i.capSec ? ['-t', n(i.capSec)] : [])
+
+/** Measure one file, or (with a rack) what a look makes of it. Throws FfmpegError when ffmpeg fails, stalls or is
+ *  cancelled; resolves null for a silent or very short recording. */
+export async function measureFile(bin: string, file: string, run: RunOptions = {}, input: MeasureInput = {}): Promise<Measure | null> {
+  const io = input.rack ? [...inputArgs(file, input), '-filter_complex', input.rack.graph, '-map', '[out]', ...capArgs(input)] : [...inputArgs(file, input), '-vn']
+  const m = new Measurer()
+  await runFfmpeg(bin, ['-hide_banner', '-loglevel', 'error', ...io, '-ac', '1', '-ar', String(RATE), '-f', 'f32le', 'pipe:1'], { ...run, onData: floatReader((f) => m.push(f)) })
+  return m.finish()
 }

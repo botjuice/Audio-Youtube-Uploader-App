@@ -6,8 +6,9 @@
  * The numbers are what a ducker needs: when the bursts end (its delay), how much the ring stands out (its depth), how
  * that grows with the burst's level (its threshold and ratio) and how fast the ring dies away (its release).
  */
-import { spawn } from 'node:child_process'
-import type { RingBand, RingMeasure, RingSplit } from './types'
+import { runFfmpeg, type RunOptions } from './ffmpeg'
+import { capArgs, floatReader, inputArgs, type MeasureInput } from './measure'
+import { RING_VERSION, type RingBand, type RingMeasure, type RingSplit } from './types'
 
 const RATE = 48000, HOP = 480            // 10 ms
 /** A burst: the band at least this far above its own typical level … */
@@ -53,7 +54,7 @@ export function analyseRing(env: Float32Array | number[], splitHz: number): Ring
   if (n < 3000) return null   // under 30 s
   const { ambientDb, bursts, clean: use } = findBursts(env)
   const minutes = n / 6000
-  const base: RingMeasure = { v: 1, splitHz, ambientDb: r1(ambientDb), bursts: bursts.length, perMin: r1(bursts.length / minutes), burstMs: 0, burstLongMs: 0, burstDb: 0, offsets: RING_OFFSETS, excessDb: RING_OFFSETS.map(() => 0), ringDb: 0, halfMs: 0, slope: 0, zeroDb: 0 }
+  const base: RingMeasure = { v: RING_VERSION, splitHz, ambientDb: r1(ambientDb), bursts: bursts.length, perMin: r1(bursts.length / minutes), burstMs: 0, burstLongMs: 0, burstDb: 0, offsets: RING_OFFSETS, excessDb: RING_OFFSETS.map(() => 0), ringDb: 0, halfMs: 0, slope: 0, zeroDb: 0 }
   if (bursts.length < 8) return base
   const meanPow = (a: number, b: number) => { let p = 0, c = 0; for (let k = Math.max(0, a); k < Math.min(n, b); k++) { p += Math.pow(10, env[k]! / 10); c++ } return c ? db(p / c) : NaN }
   if (use.length < 6) return base
@@ -80,37 +81,20 @@ export function analyseRing(env: Float32Array | number[], splitHz: number): Ring
   }
 }
 
-/** The 10 ms level (dBFS) of the band above `splitHz`, after an optional filter chain (to check a setting's effect). */
-export function bandLevels(bin: string, file: string, splitHz: number, signal?: AbortSignal, pre = '', rack?: { graph: string; files: string[] }, span?: { start: number; seconds: number }): Promise<Float32Array> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) return reject(new Error('Cancelled'))
-    // the same split a tamer uses, so what is measured is what it will act on
-    const split = `aresample=${RATE},acrossover=split=${Math.round(splitHz)}:order=8th[lo][hi];[lo]anullsink`
-    const graph = rack ? `${rack.graph};[out]${split}` : `[0:a]${pre ? `${pre},` : ''}${split}`
-    const child = spawn(bin, ['-hide_banner', '-loglevel', 'error', ...(span ? ['-ss', String(span.start), '-t', String(span.seconds)] : []), '-i', file, ...(rack?.files ?? []).flatMap((f) => ['-i', f]), '-filter_complex', graph, '-map', '[hi]', '-ac', '1', '-f', 'f32le', 'pipe:1'], { windowsHide: true })
-    const out: number[] = []
-    let carry: Buffer = Buffer.alloc(0), acc = 0, cnt = 0, err = ''
-    const onAbort = () => child.kill()
-    signal?.addEventListener('abort', onAbort, { once: true })
-    child.stdout.on('data', (b: Buffer) => {
-      const buf = carry.length ? Buffer.concat([carry, b]) : b
-      const whole = buf.length - (buf.length % 4)
-      for (let o = 0; o < whole; o += 4) { const x = buf.readFloatLE(o); acc += x * x; if (++cnt === HOP) { out.push(db(acc / HOP)); acc = 0; cnt = 0 } }
-      carry = whole < buf.length ? Buffer.from(buf.subarray(whole)) : Buffer.alloc(0)
-    })
-    child.stderr.on('data', (b: Buffer) => { if (err.length < 4000) err += b.toString() })
-    child.on('error', (e) => reject(new Error(`Could not start ffmpeg (${bin}): ${e.message}`)))
-    child.on('close', (code) => {
-      signal?.removeEventListener('abort', onAbort)
-      if (signal?.aborted) return reject(new Error('Cancelled'))
-      if (code !== 0) return reject(new Error(err.trim().split('\n').slice(-2).join(' · ') || `ffmpeg exited with code ${code}`))
-      resolve(Float32Array.from(out))
-    })
-  })
+/** The 10 ms level (dBFS) of the band above `splitHz`: of the file, or (with a rack) of what a look makes of it. */
+export async function bandLevels(bin: string, file: string, splitHz: number, run: RunOptions = {}, input: MeasureInput = {}): Promise<Float32Array> {
+  // the same split a tamer uses, so what is measured is what it will act on
+  const split = `aresample=${RATE},acrossover=split=${Math.round(splitHz)}:order=8th[lo][hi];[lo]anullsink`
+  const graph = input.rack ? `${input.rack.graph};[out]${split}` : `[0:a]${split}`
+  const out: number[] = []
+  let acc = 0, cnt = 0
+  await runFfmpeg(bin, ['-hide_banner', '-loglevel', 'error', ...inputArgs(file, input), '-filter_complex', graph, '-map', '[hi]', ...capArgs(input), '-ac', '1', '-f', 'f32le', 'pipe:1'],
+    { ...run, onData: floatReader((f) => { for (let i = 0; i < f.length; i++) { acc += f[i]! * f[i]!; if (++cnt === HOP) { out.push(db(acc / HOP)); acc = 0; cnt = 0 } } }) })
+  return Float32Array.from(out)
 }
 
-export async function measureRingFile(bin: string, file: string, splitHz = 4500, signal?: AbortSignal, rack?: { graph: string; files: string[] }, span?: { start: number; seconds: number }): Promise<RingMeasure | null> {
-  return analyseRing(await bandLevels(bin, file, splitHz, signal, '', rack, span), splitHz)
+export async function measureRingFile(bin: string, file: string, splitHz = DEFAULT_SPLIT, run: RunOptions = {}, input: MeasureInput = {}): Promise<RingMeasure | null> {
+  return analyseRing(await bandLevels(bin, file, splitHz, run, input), splitHz)
 }
 
 // ── where does the ring start? ────────────────────────────────────────────────
@@ -151,46 +135,33 @@ export function chooseSplit(bands: Float32Array[], edges = SPLIT_EDGES): RingSpl
   return { splitHz: out[low]!.fromHz, bands: out, bursts: clean.length }
 }
 
-/** The 10 ms levels (dBFS) of each band between `edges` (the last open-ended), from one decode. */
-export function multiBandLevels(bin: string, file: string, edges = SPLIT_EDGES, signal?: AbortSignal, span?: { start: number; seconds: number }): Promise<Float32Array[]> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) return reject(new Error('Cancelled'))
-    const nb = edges.length
-    const labels = Array.from({ length: nb + 1 }, (_, i) => `[b${i}]`)
-    // one crossover into all bands; the part under the first edge is dropped, the rest travel as channels of one stream
-    // (join, not amerge: this ffmpeg refuses to amerge several mono inputs). The map is spelled out: left to itself join
-    // puts a mono input on the centre channel first and shuffles the bands.
-    const layouts: Record<number, [string, string[]]> = { 1: ['mono', ['FC']], 2: ['stereo', ['FL', 'FR']], 3: ['3.0', ['FL', 'FR', 'FC']], 4: ['4.0', ['FL', 'FR', 'FC', 'BC']], 5: ['5.0', ['FL', 'FR', 'FC', 'BL', 'BR']], 6: ['6.0', ['FL', 'FR', 'FC', 'BC', 'SL', 'SR']], 7: ['7.0', ['FL', 'FR', 'FC', 'BL', 'BR', 'SL', 'SR']] }
-    const layout = layouts[nb]
-    if (!layout) return reject(new Error('between 1 and 7 band edges'))
-    const graph = `[0:a]aresample=${RATE},acrossover=split=${edges.map((e) => Math.round(e)).join(' ')}:order=8th${labels.join('')};[b0]anullsink;${labels.slice(1).join('')}join=inputs=${nb}:channel_layout=${layout[0]}:map=${layout[1].map((c, i) => `${i}.0-${c}`).join('|')}[m]`
-    const child = spawn(bin, ['-hide_banner', '-loglevel', 'error', ...(span ? ['-ss', String(span.start), '-t', String(span.seconds)] : []), '-i', file, '-filter_complex', graph, '-map', '[m]', '-f', 'f32le', 'pipe:1'], { windowsHide: true })
-    const out: number[][] = Array.from({ length: nb }, () => [])
-    const acc = new Float64Array(nb)
-    let carry: Buffer = Buffer.alloc(0), cnt = 0, ch = 0, err = ''
-    const onAbort = () => child.kill()
-    signal?.addEventListener('abort', onAbort, { once: true })
-    child.stdout.on('data', (b: Buffer) => {
-      const buf = carry.length ? Buffer.concat([carry, b]) : b
-      const whole = buf.length - (buf.length % 4)
-      for (let o = 0; o < whole; o += 4) {
-        const x = buf.readFloatLE(o)
-        acc[ch] = acc[ch]! + x * x
+/** The 10 ms levels (dBFS) of each band between `edges` (the last open-ended), from one decode of the mono downmix
+ *  (the same downmix `bandLevels` and `measure` read, so a ring on either channel of a stereo file is found). */
+export async function multiBandLevels(bin: string, file: string, edges = SPLIT_EDGES, run: RunOptions = {}, span?: { start: number; seconds: number }): Promise<Float32Array[]> {
+  const nb = edges.length
+  const labels = Array.from({ length: nb + 1 }, (_, i) => `[b${i}]`)
+  // one crossover into all bands; the part under the first edge is dropped, the rest travel as channels of one stream
+  // (join, not amerge: this ffmpeg refuses to amerge several mono inputs). The map is spelled out: left to itself join
+  // puts a mono input on the centre channel first and shuffles the bands.
+  const layouts: Record<number, [string, string[]]> = { 1: ['mono', ['FC']], 2: ['stereo', ['FL', 'FR']], 3: ['3.0', ['FL', 'FR', 'FC']], 4: ['4.0', ['FL', 'FR', 'FC', 'BC']], 5: ['5.0', ['FL', 'FR', 'FC', 'BL', 'BR']], 6: ['6.0', ['FL', 'FR', 'FC', 'BC', 'SL', 'SR']], 7: ['7.0', ['FL', 'FR', 'FC', 'BL', 'BR', 'SL', 'SR']] }
+  const layout = layouts[nb]
+  if (!layout) throw new Error('between 1 and 7 band edges')
+  const graph = `[0:a]aresample=${RATE},aformat=channel_layouts=mono,acrossover=split=${edges.map((e) => Math.round(e)).join(' ')}:order=8th${labels.join('')};[b0]anullsink;${labels.slice(1).join('')}join=inputs=${nb}:channel_layout=${layout[0]}:map=${layout[1].map((c, i) => `${i}.0-${c}`).join('|')}[m]`
+  const out: number[][] = Array.from({ length: nb }, () => [])
+  const acc = new Float64Array(nb)
+  let cnt = 0, ch = 0
+  await runFfmpeg(bin, ['-hide_banner', '-loglevel', 'error', ...inputArgs(file, span ? { span } : {}), '-filter_complex', graph, '-map', '[m]', '-f', 'f32le', 'pipe:1'], {
+    ...run,
+    onData: floatReader((f) => {
+      for (let i = 0; i < f.length; i++) {
+        acc[ch] = acc[ch]! + f[i]! * f[i]!
         if (++ch === nb) { ch = 0; if (++cnt === HOP) { for (let k = 0; k < nb; k++) { out[k]!.push(db(acc[k]! / HOP)); acc[k] = 0 } cnt = 0 } }
       }
-      carry = whole < buf.length ? Buffer.from(buf.subarray(whole)) : Buffer.alloc(0)
-    })
-    child.stderr.on('data', (b: Buffer) => { if (err.length < 4000) err += b.toString() })
-    child.on('error', (e) => reject(new Error(`Could not start ffmpeg (${bin}): ${e.message}`)))
-    child.on('close', (code) => {
-      signal?.removeEventListener('abort', onAbort)
-      if (signal?.aborted) return reject(new Error('Cancelled'))
-      if (code !== 0) return reject(new Error(err.trim().split('\n').slice(-2).join(' · ') || `ffmpeg exited with code ${code}`))
-      resolve(out.map((a) => Float32Array.from(a)))
-    })
+    }),
   })
+  return out.map((a) => Float32Array.from(a))
 }
 
-export async function findSplitFile(bin: string, file: string, signal?: AbortSignal, span?: { start: number; seconds: number }): Promise<RingSplit> {
-  return chooseSplit(await multiBandLevels(bin, file, SPLIT_EDGES, signal, span))
+export async function findSplitFile(bin: string, file: string, run: RunOptions = {}, span?: { start: number; seconds: number }): Promise<RingSplit> {
+  return chooseSplit(await multiBandLevels(bin, file, SPLIT_EDGES, run, span))
 }

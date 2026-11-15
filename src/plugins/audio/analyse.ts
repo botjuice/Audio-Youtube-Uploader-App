@@ -7,7 +7,7 @@
  * no ground truth for where "too noisy" starts. Verdicts are given only where they are certain.
  */
 import type { AudioAnalysis } from './types'
-import { parseEbur, parseMetadataValues, percentile, probe, runFfmpeg } from './ffmpeg'
+import { parseEbur, parseMetadataValues, percentile, probe, runFfmpeg, type RunOptions } from './ffmpeg'
 
 const KEY = 'lavfi.astats.Overall.RMS_level'
 /** RMS of every 100 ms block of one frequency band, printed to stdout. */
@@ -20,15 +20,15 @@ const bandGraph = (band: string) => `${band},asetnsamples=n=4800,astats=metadata
 export const CLIP_HOT_PCT = 0.1
 const HOT = 0.944   // −0.5 dBFS
 
-export async function analyseFile(bin: string, file: string, signal?: AbortSignal): Promise<AudioAnalysis> {
-  const info = await probe(bin, file)
+export async function analyseFile(bin: string, file: string, run: Pick<RunOptions, 'signal' | 'stallMs'> = {}): Promise<AudioAnalysis> {
+  const info = await probe(bin, file, run.signal)
   const input = ['-hide_banner', '-i', file]
   const [main, hf, lf, hot] = await Promise.all([
-    runFfmpeg(bin, [...input, '-af', 'aresample=48000,ebur128=peak=true:framelog=verbose', '-f', 'null', '-'], { signal }),
-    runFfmpeg(bin, ['-v', 'error', '-i', file, '-af', bandGraph('aresample=48000,highpass=f=4000:poles=2,highpass=f=4000:poles=2'), '-f', 'null', '-'], { signal, captureStdout: true }),
-    runFfmpeg(bin, ['-v', 'error', '-i', file, '-af', bandGraph('aresample=48000,lowpass=f=60:poles=2,lowpass=f=60:poles=2'), '-f', 'null', '-'], { signal, captureStdout: true }),
+    runFfmpeg(bin, [...input, '-af', 'aresample=48000,ebur128=peak=true:framelog=verbose', '-f', 'null', '-'], run),
+    runFfmpeg(bin, ['-v', 'error', '-i', file, '-af', bandGraph('aresample=48000,highpass=f=4000:poles=2,highpass=f=4000:poles=2'), '-f', 'null', '-'], { ...run, captureStdout: true }),
+    runFfmpeg(bin, ['-v', 'error', '-i', file, '-af', bandGraph('aresample=48000,lowpass=f=60:poles=2,lowpass=f=60:poles=2'), '-f', 'null', '-'], { ...run, captureStdout: true }),
     // 1 where |sample| > HOT, else 0 → its RMS² is the share of hot samples
-    runFfmpeg(bin, ['-hide_banner', '-i', file, '-af', `aeval='gt(abs(val(0))\\,${HOT})',astats=measure_perchannel=none:measure_overall=RMS_level`, '-f', 'null', '-'], { signal }),
+    runFfmpeg(bin, ['-hide_banner', '-i', file, '-af', `aeval='gt(abs(val(0))\\,${HOT})',astats=measure_perchannel=none:measure_overall=RMS_level`, '-f', 'null', '-'], run),
   ])
   const ebur = parseEbur(main.stderr) ?? { lufs: -Infinity, lra: 0, truePeak: -Infinity }
   const lufs = ebur.lufs
