@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { join } from 'node:path'
 import type { LibraryRecord, Progress, Settings } from '@shared/types'
 import { PLAYLIST_ADD_COST_UNITS, THUMBNAIL_COST_UNITS, UPLOAD_COST_UNITS, addQuota, remainingUploads } from '@core/quota'
+import { prepareUploadAudio } from './audio-stage'
 import { encodeVideo } from './ffmpeg'
 import { addToPlaylist, setThumbnail, uploadVideo } from './google/youtube'
 import { effectiveSurahs, scanLibrary, videoPath, writeMarker } from './library'
@@ -74,16 +75,41 @@ export class Pipeline extends EventEmitter {
           }
         }
 
-        // 1 — encode (also re-encode when the existing mp4 was made from a different frame)
+        // 0b — audio (the reciter's audio rule; off unless switched on in the Audio tab). A failure or a really bad
+        // result holds the upload, unless the user allowed the original audio on this recording.
+        let audioIn = audio, audioKey = 'original'
+        let audioCleanup: () => Promise<void> = async () => {}
+        const audioRules = ctx.store.audioRules.get()
+        if (audioRules.applyToUploads) {
+          this.progress({ recordId: rec.id, stage: 'audio', percent: 0 })
+          const a = await prepareUploadAudio({ library: ctx.library, state: audioRules, recordId: rec.id, reciterKey: rec.reciterKey, rel: `${rec.reciterFolder}/${rec.fileName}`, audioPath: audio, signal,
+            onProgress: (percent, detail) => this.progress({ recordId: rec.id, stage: 'audio', percent, detail }) })
+          if (a.ok) {
+            audioIn = a.audio; audioKey = a.key; audioCleanup = a.cleanup
+            await ctx.store.records.update((d) => { d[rec.id] = { ...d[rec.id], audio: { ok: true, ...(a.via !== 'off' ? { via: a.via } : {}), ...(a.toneAfter !== undefined ? { toneAfter: a.toneAfter } : {}), at: new Date().toISOString() } } })
+          } else if (a.reason === 'CANCELLED') { activity.warn('Run cancelled.'); break }
+          else {
+            await ctx.store.records.update((d) => { d[rec.id] = { ...d[rec.id], audio: { ok: false, reason: a.reason, message: a.message, at: new Date().toISOString() } } })
+            if (!rec.allowOriginalAudio) {
+              await this.fail(ctx, rec, 'audio', new Error(`${a.message} Upload held until you fix this in the Audio tab or allow the original audio on the recording.`))
+              continue
+            }
+            activity.warn(`Audio not processed for ${rec.fileName} (${a.reason}): ${a.message} You allowed the original audio, uploading with it.`, rec.id)
+          }
+        }
+
+        // 1 — encode (also re-encode when the existing mp4 was made from a different frame or different audio)
         const prevKey = ctx.store.records.get()[rec.id]?.videoKey
-        const needsEncode = !rec.hasVideoFile || (ctx.settings.thumbnails.enabled && frameKey !== 'photo' && prevKey !== frameKey)
+        const designed = ctx.settings.thumbnails.enabled && frameKey !== 'photo'
+        const videoKey = audioKey === 'original' ? frameKey : `${frameKey}|${audioKey}`
+        const needsEncode = !rec.hasVideoFile || ((designed || audioKey !== 'original' || !!prevKey?.includes('|')) && prevKey !== videoKey)
         if (needsEncode) {
           this.progress({ recordId: rec.id, stage: 'encode', percent: 0 })
           activity.info(`${rec.hasVideoFile ? 'Re-rendering' : 'Rendering'} video for ${rec.fileName}${frameKey !== 'photo' ? ' (designed frame, 1080p)' : ''}`, rec.id)
           try {
-            await encodeVideo({ audio, image: frame, output: mp4, signal, size: frameKey !== 'photo' ? '1080p' : '720p',
+            await encodeVideo({ audio: audioIn, image: frame, output: mp4, signal, size: frameKey !== 'photo' ? '1080p' : '720p',
               onProgress: (percent) => this.progress({ recordId: rec.id, stage: 'encode', percent }) })
-            await ctx.store.records.update((d) => { d[rec.id] = { ...d[rec.id], videoKey: frameKey } })
+            await ctx.store.records.update((d) => { d[rec.id] = { ...d[rec.id], videoKey } })
           } catch (e) {
             await this.fail(ctx, rec, 'encode', e); continue
           }
@@ -111,6 +137,7 @@ export class Pipeline extends EventEmitter {
         await ctx.store.records.update((d) => { d[rec.id] = { ...d[rec.id], selected: false, lastError: null } })
         done++
         activity.success(`Uploaded → youtu.be/${videoId}`, rec.id)
+        void audioCleanup().catch(() => {})   // the processed audio is inside the mp4 now
         this.emit('changed')
 
         // 4 — custom thumbnail (non-fatal, 50 units)
@@ -153,9 +180,9 @@ export class Pipeline extends EventEmitter {
     }
   }
 
-  private async fail(ctx: PipelineContext, rec: LibraryRecord, stage: 'thumbnail' | 'encode' | 'upload', e: unknown) {
+  private async fail(ctx: PipelineContext, rec: LibraryRecord, stage: 'thumbnail' | 'audio' | 'encode' | 'upload', e: unknown) {
     const message = e instanceof Error ? e.message : String(e)
-    activity.error(`${{ thumbnail: 'Thumbnail', encode: 'Render', upload: 'Upload' }[stage]} failed for ${rec.fileName}: ${message}`, rec.id)
+    activity.error(`${{ thumbnail: 'Thumbnail', audio: 'Audio', encode: 'Render', upload: 'Upload' }[stage]} failed for ${rec.fileName}: ${message}`, rec.id)
     await ctx.store.records.update((d) => { d[rec.id] = { ...d[rec.id], lastError: { stage, message, at: new Date().toISOString() } } })
     this.emit('changed')
   }

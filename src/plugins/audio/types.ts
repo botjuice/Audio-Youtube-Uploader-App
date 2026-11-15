@@ -21,6 +21,9 @@ export interface AudioJob {
   bypass?: boolean
   /** Override the look's levelling for this job: a Level to level to, or null for none. */
   level?: Level | null
+  /** Levelling gain to apply instead of measuring this span: the whole recording's (`levellingGain`). An excerpt levelled
+   *  on its own gets a different gain than the recording will, and a quiet one is pushed into the limiter. dB. */
+  gainDb?: number
 }
 
 export interface AudioHost {
@@ -57,6 +60,67 @@ export interface AudioAnalysis {
   /** Plain-language findings. */
   hints: string[]
 }
+
+/** Bump when `measure()` changes what its numbers mean: stored measurements of an older version are redone. */
+export const MEASURE_VERSION = 1
+/** Third-octave band centres of `Measure.tone` / `Measure.quiet`, Hz. */
+export const MEASURE_BANDS = [50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500]
+
+/** What `measure()` finds: the recording's tone and level behaviour, everything relative to its own voice level
+ *  (a quiet and a loud copy of one recording measure the same). Input for suggesting settings; changes no audio. */
+export interface Measure {
+  v: number
+  durationSec: number
+  /** Level of the voice: power-mean of the 64 ms frames that carry it, dBFS. */
+  voiceDb: number
+  /** Share of the recording that is voice, 0…1. */
+  activeShare: number
+  /** Tone: mean power per band over voiced frames, dB relative to `voiceDb`. One value per MEASURE_BANDS entry. */
+  tone: number[]
+  /** Quiet moments: per band, the level 5 % of frames stay below, dB relative to `voiceDb`. */
+  quiet: number[]
+  /** Broadband level of the quietest moments (2nd percentile of frames), dB relative to `voiceDb`. */
+  floorDb: number
+  /** Frame levels over voiced frames, dB relative to `voiceDb`: 10th, 50th, 90th, 95th, 99th percentile. */
+  levels: { p10: number; p50: number; p90: number; p95: number; p99: number }
+  /** Highest sample, dB relative to `voiceDb` (crest). */
+  peakDb: number
+  /** Sharpness of "s" sounds: the 4–10 kHz share of a frame's power (dB), 95th percentile over voiced frames. */
+  sibilance: number
+}
+
+/** What `ring()` finds: whether the band above `splitHz` keeps ringing after loud bursts in it ("s" sounds). Levels in dBFS / dB. */
+export interface RingMeasure {
+  v: number
+  splitHz: number
+  /** Typical level of the band (median of 10 ms levels). */
+  ambientDb: number
+  /** Bursts found (the band ≥ 12 dB over its typical level for ≥ 40 ms), and per minute. */
+  bursts: number
+  perMin: number
+  /** How long bursts last, ms: median and 90th percentile. 0 when too few bursts were found to say anything (also for the fields below). */
+  burstMs: number
+  burstLongMs: number
+  /** Level of a typical burst (median of the bursts' mean levels). */
+  burstDb: number
+  /** Leftover after a burst ends: mean level over the level just before the burst, dB, at `offsets` ms after its end. */
+  offsets: number[]
+  excessDb: number[]
+  /** The ring: that leftover averaged over 150–400 ms after the burst. About 0 = no ring. */
+  ringDb: number
+  /** How long after the burst until the leftover has halved (in dB), ms. */
+  halfMs: number
+  /** Louder bursts ring more: ring ≈ slope × (burst level − zeroDb). slope 0 = no such relation found. */
+  slope: number
+  zeroDb: number
+  /** When the split was searched for (`ringSplit`): the ring found in each band it looked at. */
+  bands?: RingBand[]
+}
+
+/** One band of a ring search: how far it stays above its level from before, 100–250 ms after an "s" ends, dB. */
+export interface RingBand { fromHz: number; toHz: number | null; excessDb: number }
+/** What `ringSplit()` finds: the frequency above which the ring after "s" sounds lives in this recording. */
+export interface RingSplit { splitHz: number; bands: RingBand[]; bursts: number }
 
 /** Measured on the processed file. */
 export interface AfterMeasure {

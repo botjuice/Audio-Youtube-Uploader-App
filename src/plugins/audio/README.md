@@ -111,6 +111,31 @@ checkLook(look, host, { audioPath?, seconds?, channels? }): Promise<LookCheck>  
 analyse(audioPath, host), discard(file), explain(look) → { graph, files }
 ```
 
+**`measure(audioPath, host): Promise<Measure | null>`** (added for Auto-set; reads only, changes no audio). One
+32 kHz mono decode, streamed, in 64 ms frames: `tone` and `quiet` per third-octave band (`MEASURE_BANDS`),
+`voiceDb`, `floorDb`, frame-level percentiles, `peakDb`, `sibilance`. Everything except `voiceDb` is relative
+to the recording's own voice level. `null` = silent or under two seconds. Bump `MEASURE_VERSION` when the
+meaning of a number changes: the app keeps measurements in `<library>/.yoosyjoosy/audio-measures.json` and
+redoes them on a version change. The suggestion logic itself is not in the plugin (`src/core/audio-suggest.ts`).
+
+**`ring(audioPath, host, splitHz = 4500): Promise<RingMeasure | null>`** (for Auto-set; reads only). Finds the loud
+bursts in the band above `splitHz` ("s" sounds) and how far the band stays above its level from before after each one:
+burst length and level, the leftover at 50…1500 ms, how fast it dies away. `null` = under 30 s; `burstMs: 0` = too few
+bursts to say.
+
+`measure` and `ring` also take a `look` (they then measure what that look's rack makes of the recording, levelling left
+out) and a `span` (`{ start, seconds }`: only that stretch). That is how Auto-set checks its own settings: process,
+measure, correct (`src/main/audio-autoset.ts`).
+
+Audio rules (the app, not the plugin: `src/core/audio-rules.ts`, `src/main/audio-rules.ts`, `src/main/audio-stage.ts`) are built
+on these three calls: a rule's target is captured by measuring its reference recordings through their looks, and at upload
+each recording is steered to that target, rendered with `processAudio`, and the FLAC handed to the video encoder.
+
+**`levellingGain(audioPath, look, host)`** → `{ ok, gainDb, rackLufs, rackPeak }`: the one gain levelling gives the WHOLE recording with this
+look (pass 1 only, nothing rendered; `gainDb: null` without levelling). **`AudioJob.gainDb`** makes `processAudio` use a
+given gain instead of measuring its own span. Together they are how an editor previews levelling honestly: an excerpt
+levelled on its own gets a different gain than the recording will, and a quiet one is pushed into the limiter.
+
 **`AudioJob`** `{ audioPath, look?, preview?: { start, seconds }, bypass?, level?: Level | null }`
 – `bypass`: ignore the rack and the look's levelling (just cut the excerpt).
 – `level`: override the look's levelling for this job (`null` = none). `bypass + level` = a
@@ -265,7 +290,11 @@ npm run audio -- analyse <file|folder> · batch <folder> [--preset …] · sweep
   no warnings**, 14.2 min (v1: 17.7 min). Same numbers as v1.
 - **Presets on a real recording** (Isha Al Imran 0:55–1:25): every preset checks in 10–40 ms and
   renders; reverbs keep the voice level (−17.8 LUFS in → −17.8 out, reverb ~17 dB under); the spring
-  tamer graph is the one tested by ear-free measurement earlier (tail 2–4 dB down, "s" untouched).
+  tamer targets 4.8–5.75 kHz, the band where the tail after "s" sits highest and lasts longest
+  (measured over 62 "s" sounds in Isha Al Imran: +7–8 dB above the singing for 0.5 s, still +4–5 dB
+  at 0.4–0.9 s). Over the whole recording: that band's tail −4.2 dB, the "s" itself −0.2 dB above 4.5 kHz,
+  6–9 kHz −0.3 dB, voice below 4.5 kHz 0.0 dB, normal singing −0.3 dB. The 20th-order crossover matters:
+  at the default 4th order the neighbouring bands leak into such a narrow band and ducking stalls at ~−3 dB.
 
 ## 10. ffmpeg 6.0 gotchas (learned the hard way — keep)
 

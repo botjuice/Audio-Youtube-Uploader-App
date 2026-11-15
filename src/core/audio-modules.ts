@@ -7,7 +7,7 @@
  * anything for the user: a module that is off is a bypassed step with its settings kept.
  *
  * Signal flow (fixed, the order every channel strip uses):
- *   gain → noise reduction → gate → EQ → compressor → de-esser → delay → reverb → limiter → levelling
+ *   gain → noise reduction → gate → spring tamer → EQ → compressor → de-esser → delay → reverb → limiter → levelling
  *
  * Steps carry stable ids so a saved look maps back onto the strip; a look without ids (one converted
  * from v1, or hand-written) is mapped by filter name, first match wins, and anything the strip cannot
@@ -33,18 +33,20 @@ export interface Modules {
   reverb: { on: boolean; decay: number; predelay: number; brightness: number; amount: number }
   limiter: { on: boolean; ceiling: number; inGain: number; outGain: number; attack: number; release: number; asc: boolean }
   level: { on: boolean; lufs: number; ceiling: number }
+  /** Ducks the top band for a moment after each loud burst in it (an "s"), so a reverb that rings on after the burst is softer. */
+  spring: { on: boolean; split: number; threshold: number; ratio: number; delay: number; attack: number; release: number }
 }
 
 export type ModuleKey = keyof Modules
 /** The modules that live in the left column (the EQ has its own editor under the lanes). */
 export type StripKey = Exclude<ModuleKey, 'eq'>
 /** Left-column order: simplest first. (Processing order is fixed separately, see `toLook`.) */
-export const MODULE_ORDER: StripKey[] = ['gain', 'comp', 'gate', 'deess', 'nr', 'echo', 'reverb', 'limiter', 'level']
+export const MODULE_ORDER: StripKey[] = ['gain', 'comp', 'gate', 'deess', 'spring', 'nr', 'echo', 'reverb', 'limiter', 'level']
 export const MODULE_TITLES: Record<ModuleKey, string> = {
   gain: 'Gain', nr: 'Noise reduction', gate: 'Gate', eq: 'Equaliser', comp: 'Compressor', deess: 'De-esser',
-  echo: 'Delay', reverb: 'Reverb', limiter: 'Limiter', level: 'Loudness levelling',
+  echo: 'Delay', reverb: 'Reverb', limiter: 'Limiter', level: 'Loudness levelling', spring: 'Spring tamer',
 }
-export const SIGNAL_FLOW = 'Gain → Noise reduction → Gate → EQ → Compressor → De-esser → Delay → Reverb → Limiter → Loudness levelling'
+export const SIGNAL_FLOW = 'Gain → Noise reduction → Gate → Spring tamer → EQ → Compressor → De-esser → Delay → Reverb → Limiter → Loudness levelling'
 
 export const EQ_BANDS = 4
 export function defaultModules(): Modules {
@@ -64,6 +66,7 @@ export function defaultModules(): Modules {
     reverb: { on: false, decay: 1.2, predelay: 15, brightness: 5500, amount: -16 },
     limiter: { on: false, ceiling: -1, inGain: 0, outGain: 0, attack: 5, release: 50, asc: false },
     level: { on: false, lufs: -14, ceiling: -1.5 },
+    spring: { on: false, split: 4500, threshold: -40, ratio: 2, delay: 250, attack: 40, release: 700 },
   }
 }
 
@@ -141,6 +144,14 @@ export const KNOBS: Record<StripKey, Knob[]> = {
     { key: 'release', label: 'Release', desc: 'How fast gain comes back after a peak. alimiter release.', kind: 'number', unit: 'ms', min: 1, max: 8000, step: 1, log: true },
     { key: 'asc', label: 'Auto release (ASC)', desc: 'Smooths the release depending on how long the signal stays over the ceiling. alimiter asc.', kind: 'toggle' },
   ],
+  spring: [
+    { key: 'split', label: 'From', desc: 'Only the sound above this frequency is ducked; everything below passes untouched. acrossover split (48 dB per octave).', kind: 'number', unit: 'Hz', min: 1000, max: 12000, step: 50, log: true },
+    { key: 'threshold', label: 'Threshold', desc: 'How loud a burst in that top band (an “s” or ص) must be to set the ducking off. Set it under the “s” sounds and over the ringing that follows them. sidechaincompress threshold (stored as a linear value).', kind: 'number', unit: 'dB', min: -70, max: 0, step: 0.5 },
+    { key: 'ratio', label: 'Ratio', desc: 'How far the top band is turned down after a burst: 2:1 brings the ring down to about the room’s normal level; much more leaves an audible hole after every “s”. sidechaincompress ratio.', kind: 'number', unit: ':1', min: 1, max: 20, step: 0.1 },
+    { key: 'delay', label: 'Delay', desc: 'How long after a burst starts the ducking begins. It must be longer than the “s” itself (they last up to about 230 ms), or the end of the “s” is swallowed. adelay on the key.', kind: 'number', unit: 'ms', min: 20, max: 1000, step: 5, log: true },
+    { key: 'attack', label: 'Attack', desc: 'How fast the ducking sets in. Slow (tens of ms) so it is not heard as a step. sidechaincompress attack.', kind: 'number', unit: 'ms', min: 0.01, max: 2000, step: 0.1, log: true },
+    { key: 'release', label: 'Release', desc: 'How long the top band stays down before it comes back. sidechaincompress release.', kind: 'number', unit: 'ms', min: 0.01, max: 9000, step: 1, log: true },
+  ],
   level: [
     { key: 'lufs', label: 'Target loudness', desc: 'Integrated loudness the whole recording is brought to after everything else. YouTube plays back at −14. Plugin stage: measure, one fixed gain, true-peak limiter.', kind: 'number', unit: 'LUFS', min: -70, max: 0, step: 0.1 },
     { key: 'ceiling', label: 'True-peak ceiling', desc: 'Limit applied after the gain, measured on the true (inter-sample) peak at 4× oversampling.', kind: 'number', unit: 'dBTP', min: -20, max: 0, step: 0.1 },
@@ -168,6 +179,16 @@ export function toLook(m: Modules): Look {
   chain.push(bq('gain', 'volume', m.gain.on, { volume: `${r(m.gain.db, 2)}dB` }))
   chain.push(bq('nr', 'afftdn', m.nr.on, { noise_reduction: m.nr.reduction, noise_floor: m.nr.floor, noise_type: m.nr.type, track_noise: m.nr.track, residual_floor: m.nr.residual }))
   chain.push(bq('gate', 'agate', m.gate.on, { threshold: r(lin(m.gate.threshold), 6), range: r(lin(m.gate.range), 6), ratio: m.gate.ratio, attack: m.gate.attack, release: m.gate.release, knee: m.gate.knee, makeup: r(lin(m.gate.makeup), 4), detection: m.gate.detection, link: m.gate.link }))
+  const sp = m.spring
+  chain.push({
+    id: 'spring', filter: 'acrossover', options: { split: String(Math.round(sp.split)), order: '8th' }, ...(sp.on ? {} : { bypass: true }),
+    outputs: [[], [{
+      filter: 'sidechaincompress', options: { threshold: r(lin(sp.threshold), 6), ratio: sp.ratio, attack: sp.attack, release: sp.release, knee: 2.83, detection: 'rms' },
+      // the key is the top band itself, delayed: a burst sets the ducking off only after it has passed
+      inputs: [{ kind: 'signal', chain: [{ filter: 'adelay', options: { delays: String(Math.max(1, Math.round(sp.delay))), all: true } }] }],
+    }]],
+    merge: { filter: 'amix', options: { inputs: 2, normalize: false } },
+  })
   const eqOn = m.eq.on
   chain.push(bq('eq:hp', 'highpass', eqOn && m.eq.hp.on, { frequency: m.eq.hp.freq, poles: 2, width_type: 'q', width: m.eq.hp.q }))
   chain.push(bq('eq:ls', 'lowshelf', eqOn && m.eq.ls.on, { frequency: m.eq.ls.freq, gain: m.eq.ls.gain, width_type: 'q', width: m.eq.ls.q }))
@@ -219,6 +240,14 @@ export function fromLook(look: Look | null | undefined): FromLook {
   if (s) m.nr = { on: on(s), reduction: num(o(s).noise_reduction ?? o(s).nr, 12), floor: num(o(s).noise_floor ?? o(s).nf, -50), type: (['white', 'vinyl', 'shellac'] as const).find((t) => t === str(o(s).noise_type ?? o(s).nt, 'white')) ?? 'white', track: bool(o(s).track_noise ?? o(s).tn, false), residual: num(o(s).residual_floor ?? o(s).rf, -38) }
   s = take('gate', 'agate')
   if (s) m.gate = { on: on(s), threshold: r(dbOf(num(o(s).threshold, 0.125)), 2), range: r(dbOf(num(o(s).range, 0.06125)), 2), ratio: num(o(s).ratio, 2), attack: num(o(s).attack, 20), release: num(o(s).release, 250), knee: num(o(s).knee, 2.82843), makeup: r(dbOf(num(o(s).makeup, 1)), 2), detection: str(o(s).detection, 'rms') === 'peak' ? 'peak' : 'rms', link: str(o(s).link, 'average') === 'maximum' ? 'maximum' : 'average' }
+  s = steps.find((x) => x.id === 'spring')   // only by id: an acrossover from elsewhere is not the strip's tamer
+  if (s) {
+    used.add(s)
+    const sc = s.outputs?.[1]?.find((x) => x.filter === 'sidechaincompress')
+    const dl = sc?.inputs?.[0]?.chain?.find((x) => x.filter === 'adelay')
+    if (sc) m.spring = { on: on(s), split: num(String(o(s).split ?? '4500').split(/[ |]/)[0], 4500), threshold: r(dbOf(num(o(sc).threshold, 0.01)), 2), ratio: num(o(sc).ratio, 2), delay: dl ? num(String(dl.options?.delays ?? '250').split('|')[0], 250) : 250, attack: num(o(sc).attack, 40), release: num(o(sc).release, 700) }
+    else unmapped.push('a crossover that is not the strip’s spring tamer')
+  }
   // EQ: without ids, highpass steps may be doubled (v1 used two for 24 dB/oct) — the extras are noted
   const hp = take('eq:hp', 'highpass'); const ls = take('eq:ls', 'lowshelf'); const hs = take('eq:hs', 'highshelf'); const lp = take('eq:lp', 'lowpass')
   const bands: (Step | undefined)[] = []

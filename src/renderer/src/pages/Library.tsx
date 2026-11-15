@@ -182,7 +182,7 @@ function Row({ r, active, onSelect, onCheck, progress }: { r: LibraryRecord; act
 }
 
 function ProgressStrip({ progress, record, onCancel }: { progress: { stage: string; percent: number; detail?: string }; record?: LibraryRecord; onCancel: () => void }) {
-  const stage = { thumbnail: 'Rendering thumbnail', encode: 'Rendering video', upload: 'Uploading to YouTube', playlist: 'Adding to playlists' }[progress.stage] ?? progress.stage
+  const stage = { thumbnail: 'Rendering thumbnail', audio: 'Processing audio', encode: 'Rendering video', upload: 'Uploading to YouTube', playlist: 'Adding to playlists' }[progress.stage] ?? progress.stage
   return (
     <div className="border-b border-border bg-accent/6 px-4 py-2.5 flex items-center gap-3">
       <Spinner className="text-accent" />

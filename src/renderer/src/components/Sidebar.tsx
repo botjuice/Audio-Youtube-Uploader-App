@@ -13,7 +13,7 @@ const NAV: { id: Page; label: string; icon: typeof LibraryBig }[] = [
   { id: 'playlists', label: 'Playlists', icon: ListMusic },
   { id: 'reciters', label: 'Reciters', icon: Users },
   { id: 'thumbnails', label: 'Thumbnail rules', icon: ImageIcon },
-  { id: 'audio', label: 'Audio', icon: AudioLines },
+  { id: 'audio', label: 'Audio rules', icon: AudioLines },
   { id: 'activity', label: 'Activity', icon: Activity },
   { id: 'settings', label: 'Settings', icon: SettingsIcon },
 ]

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, nativeTheme, shell } from 'electron'
 import { promises as fs } from 'node:fs'
 import { basename, extname, join } from 'node:path'
-import type { AudioAnalysis, AudioLookState, AudioOverview, AudioTileInput, AudioTileResult, CustomFont, Health, ImportedLook, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, RulePhoto, Settings, StylePatch, StyleRenderInput, StyleSchemaInfo, ThumbnailRule, TokenValidation } from '@shared/types'
+import type { AudioAnalysis, AudioLook, AudioLookState, AudioOverview, AudioAutoSet, AudioTileInput, AudioTileResult, CustomFont, Health, ImportedLook, KeywordDef, NewReciter, Playlist, PlaylistRule, Privacy, ReciterPatch, RecordPatch, RulePhoto, Settings, StylePatch, StyleRenderInput, StyleSchemaInfo, ThumbnailRule, TokenValidation } from '@shared/types'
 import type { LibrarySnapshot, SurahEntry, SyncResult } from '@shared/api'
 import { DEFAULT_SURAHS, conditionKey, describeRule, describeThumbRule, nextQuotaReset, normaliseQuota, normaliseThumbRules, reciterKey, remainingUploads, surahKey, validateRule, validateThumbRule, validateToken } from '@core/index'
 import { ffmpegAvailable, ffmpegPath } from './ffmpeg'
@@ -13,7 +13,13 @@ import { Pipeline } from './pipeline'
 import { mergeSettings, openLibraryStore, secrets, settings, type LibraryStore } from './store'
 import { Watcher } from './watcher'
 import { updater } from './updater'
-import { DEFAULT_AUDIO_LOOK, analyseRecording, audioOverview, cancelAudioTiles, renderAudioTile, sweepAudioPreviews } from './audio'
+import { audioSuggestData } from './audio-profile'
+import { autoSet } from './audio-autoset'
+import { BUILT_IN_DEFAULT_KEY, captureRule, defaultTarget, followerSettings, targetFor } from './audio-rules'
+import { EMPTY_AUDIO_RULES, buildRuleFile, normaliseAudioRules, parseRuleFile, withDefaults, type AudioRule } from '@core/audio-rules'
+import type { Modules } from '@core/audio-modules'
+import { builtInTarget, suggest } from '@core/audio-suggest'
+import { DEFAULT_AUDIO_LOOK, analyseRecording, audioLevelGain, audioOverview, rackLevel, ringOf, cancelAudioTiles, renderAudioTile, sweepAudioPreviews } from './audio'
 import { EMPTY_LOOK, describeLook as describeAudioLook, isV1Look, lookFromV1, validateLook } from '../plugins/audio/index'
 import { buildSampleJob, buildThumbnailJob, disposeThumbnails, packLook, pruneDefaultLook, unpackLook, fontPathsInRules, renderJob, resolveRulePhoto, ruleFontsDir, rulePhotoPath, rulePhotosDir, styleForRecord, styleProblems, styleSchema, surahOptions, toPreview } from './thumbnails'
 import { setThumbnail } from './google/youtube'
@@ -110,6 +116,7 @@ class YoosyApp {
         // the thumbnail rules file always carries exactly one default rule; its patch never repeats the plugin's factory values
         await this.store.thumbRules.update((d) => { d.rules = pruneDefaultLook(normaliseThumbRules(d.rules ?? [])) })
         // a look saved by audio plugin v1 (fixed knobs) becomes the same filters in the v2 rack, once
+        await this.store.audioRules.replace(normaliseAudioRules(this.store.audioRules.get()))
         await this.store.audioLook.update((d) => { if (isV1Look(d.look)) { d.look = lookFromV1(d.look); activity.info('Audio look converted to the new editor format') } else if (!d.look || typeof d.look !== 'object' || !('chain' in d.look)) d.look = EMPTY_LOOK })
         await this.rescan()
         void sweepAudioPreviews(path).then((n) => { if (n) activity.info(`Removed ${n} old audio preview file${n === 1 ? '' : 's'}`) }).catch(() => {})
@@ -209,6 +216,8 @@ class YoosyApp {
       thumbnailRules: this.store?.thumbRules.get().rules ?? [],
       playlists: this.store?.playlists.get().items ?? [],
       audioLook: this.store?.audioLook.get() ?? DEFAULT_AUDIO_LOOK,
+      audioRules: this.store?.audioRules.get() ?? EMPTY_AUDIO_RULES,
+      audioBuiltIn: ((t) => (t ? { count: t.count, tone: t.tone, lufs: t.lufs, hp: t.hp } : null))(builtInTarget(BUILT_IN_DEFAULT_KEY)),
     }
   }
 
@@ -431,6 +440,116 @@ class YoosyApp {
   getAudioOverview(recordId: string): Promise<AudioOverview> { return audioOverview(this.req().library, this.recordAudioPath(recordId)) }
 
   analyseAudio(recordId: string): Promise<AudioAnalysis> { return analyseRecording(this.recordAudioPath(recordId)) }
+
+  // ── audio rules ───────────────────────────────────────────────────────────
+  private audioFileOf(recordId: string): { rel: string; path: string } | null {
+    const { library } = this.req()
+    const rec = this.snapshot.records.find((r) => r.id === recordId)
+    return rec ? { rel: `${rec.reciterFolder}/${rec.fileName}`, path: join(library, rec.reciterFolder, rec.fileName) } : null
+  }
+
+  /** Store a rule and capture its target from its references. A rule without references keeps the target it has (an imported one). */
+  async saveAudioRule(input: AudioRule): Promise<void> {
+    const { library, store } = this.req()
+    const rule = normaliseAudioRules({ rules: [input] }).rules[0]
+    if (!rule) throw new Error('That is not a rule.')
+    const stage = (text: string) => this.broadcast('evt:audioMeasure', { done: 0, total: 0, stage: text })
+    if (rule.refs.length) rule.target = await captureRule(library, rule, (id) => this.audioFileOf(id), stage)
+    else if (!rule.target) throw new Error('Add at least one reference recording to the rule.')
+    await store.audioRules.update((d) => {
+      const at = d.rules.findIndex((r) => r.id === rule.id || r.reciterKey === rule.reciterKey)
+      if (at >= 0) d.rules[at] = rule; else d.rules.push(rule)
+    })
+    activity.info(`Audio rule saved: ${rule.reciterKey ?? 'default'} (${rule.refs.length} reference recording${rule.refs.length === 1 ? '' : 's'})`)
+    this.broadcast('evt:library', this.getLibrary())
+  }
+
+  async deleteAudioRule(id: string): Promise<void> {
+    const { store } = this.req()
+    await store.audioRules.update((d) => { d.rules = d.rules.filter((r) => r.id !== id) })
+    this.broadcast('evt:library', this.getLibrary())
+  }
+
+  async setAudioApplyToUploads(on: boolean): Promise<void> {
+    const { store } = this.req()
+    await store.audioRules.update((d) => { d.applyToUploads = !!on })
+    activity.info(on ? 'Audio rules switched on for uploads' : 'Audio rules switched off for uploads: recordings upload with their original audio')
+    this.broadcast('evt:library', this.getLibrary())
+  }
+
+  async followAudioSettings(base: Modules, baseRecordId: string, recordId: string): Promise<AudioAutoSet> {
+    const { library } = this.req()
+    const a = this.audioFileOf(baseRecordId), b = this.audioFileOf(recordId)
+    if (!a || !b) throw new Error('Unknown recording')
+    const r = await followerSettings(library, withDefaults(base), a, b, (text) => this.broadcast('evt:audioMeasure', { done: 0, total: 0, stage: text }))
+    return { how: 'auto-set to sound like reference 1 does after its settings', modules: r.modules, notes: r.notes, report: r.report, findings: r.findings, failed: [] }
+  }
+
+  async exportAudioRule(win: BrowserWindow | null, id: string): Promise<{ path: string } | null> {
+    const { store } = this.req()
+    const rule = store.audioRules.get().rules.find((r) => r.id === id)
+    if (!rule) throw new Error('Save the rule before exporting it.')
+    const file = buildRuleFile(rule, (rid) => this.snapshot.records.find((r) => r.id === rid)?.fileName ?? rid, { appVersion: app.getVersion() })
+    const slug = (rule.label || rule.reciterKey || 'default').replace(/[^\w\u0600-\u06FF.-]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'rule'
+    const r = await dialog.showSaveDialog(win ?? undefined as never, { title: 'Export this audio rule', defaultPath: join(app.getPath('downloads'), `audio-rule-${slug}.json`), filters: [{ name: 'Audio rule', extensions: ['json'] }] })
+    if (r.canceled || !r.filePath) return null
+    await fs.writeFile(r.filePath, JSON.stringify(file, null, 2), 'utf8')
+    activity.info(`Audio rule exported: ${basename(r.filePath)}`)
+    return { path: r.filePath }
+  }
+
+  /** Pick a rule file; it becomes the rule for its reciter (or the default rule), replacing the one there. Usable at once: the target travels in the file. */
+  async importAudioRule(win: BrowserWindow | null): Promise<{ reciterKey: string | null; label?: string } | null> {
+    const { store } = this.req()
+    const r = await dialog.showOpenDialog(win ?? undefined as never, { title: 'Import an audio rule', filters: [{ name: 'Audio rule', extensions: ['json'] }], properties: ['openFile'] })
+    const src = r.filePaths[0]
+    if (!src) return null
+    if ((await fs.stat(src)).size > 8 * 1024 * 1024) throw new Error('That file is larger than 8 MB: not an audio rule.')
+    const f = parseRuleFile(await fs.readFile(src, 'utf8'))
+    // references that exist here (same file name, same reciter when the rule has one) are linked again; the rest are dropped
+    const refs = f.references.map((ref) => ({ ref, rec: this.snapshot.records.find((x) => x.fileName === ref.name && (f.reciterKey === null || x.reciterKey === f.reciterKey)) })).filter((x) => x.rec)
+    const linked = refs.length === f.references.length && refs.length > 0 && refs[0]!.ref.modules
+    const rule: AudioRule = { id: `rule-${Date.now().toString(36)}`, reciterKey: f.reciterKey, ...(f.label ? { label: f.label } : {}), refs: linked ? refs.map((x) => ({ recordId: x.rec!.id, modules: x.ref.modules })) : [], target: f.target }
+    await store.audioRules.update((d) => { d.rules = [...d.rules.filter((x) => x.reciterKey !== rule.reciterKey), rule] })
+    activity.info(`Audio rule imported: ${basename(src)} → ${rule.reciterKey ?? 'default rule'}`)
+    this.broadcast('evt:library', this.getLibrary())
+    return { reciterKey: rule.reciterKey, ...(rule.label ? { label: rule.label } : {}) }
+  }
+
+  getAudioLevelGain(recordId: string, look: AudioLook): Promise<number | null> { return audioLevelGain(this.recordAudioPath(recordId), look) }
+
+  /** Auto-set: the reciter's profile from every recording in their folder, plus this recording's own measurement. */
+  async suggestAudio(recordId: string, current: Modules, aim: 'default' | 'upload' = 'upload'): Promise<AudioAutoSet> {
+    const { library, store } = this.req()
+    const rec = this.snapshot.records.find((r) => r.id === recordId)
+    if (!rec) throw new Error('Unknown recording')
+    if (!rec.reciterFolder) throw new Error('This recording is not inside a reciter folder, so there is nothing to compare it with.')
+    const bin = ffmpegPath()
+    if (!bin) throw new Error('ffmpeg is not available on this computer')
+    const file = (r: { reciterFolder: string; fileName: string }) => ({ rel: `${r.reciterFolder}/${r.fileName}`, path: join(library, r.reciterFolder, r.fileName) })
+    const files = this.snapshot.records.filter((r) => r.reciterFolder === rec.reciterFolder).map(file)
+    const path = file(rec).path
+    const stage = (text: string) => this.broadcast('evt:audioMeasure', { done: 0, total: 0, stage: text })
+    stage('Measuring…')
+    const [data, analysis] = await Promise.all([
+      audioSuggestData(library, rec.reciterFolder, rec.reciterKey ?? reciterKey(rec.reciterFolder), file(rec), files, (done, total) => this.broadcast('evt:audioMeasure', { done, total })),
+      analyseRecording(path),
+    ])
+    stage('Looking for ringing…')
+    const ringing = await ringOf(path, analysis.durationSec)
+    // what to aim at: the default rule (when setting a rule up), or whatever an upload of this recording would get
+    const rules = store.audioRules.get()
+    const pick = aim === 'default' ? defaultTarget(rules) : targetFor(rules, rec.reciterKey ?? reciterKey(rec.reciterFolder))
+    if (pick) {
+      const r = await autoSet(bin, path, current, { measure: data.measure, ring: ringing, analysis, target: pick.target }, stage, undefined, { rackLevel: (look) => rackLevel(path, look) })
+      activity.info(`Auto-set: ${rec.fileName} → ${r.report.map((x) => `${x.what.split(':')[0]} ${x.before} → ${x.after}`).join(', ')} (${r.checks} check${r.checks === 1 ? '' : 's'})`)
+      const which = pick.via === 'reciter' ? `the rule for ${data.reciter}` : pick.via === 'default' ? 'your default rule' : 'the default rule that comes with the app'
+      return { how: `steered to ${which} (how its ${pick.target.count} reference recording${pick.target.count === 1 ? '' : 's'} measure after their settings), then processed and re-measured ${r.checks === 1 ? 'once' : `${r.checks} times`} to check`, modules: r.modules, notes: r.notes, report: r.report, findings: r.findings, failed: data.failed }
+    }
+    // no target for this reciter yet: set from what is typical across their own recordings, unchecked
+    const s = suggest(current, data.measure, data.profile!, analysis.lufs, ringing)
+    return { how: `no target sound for ${data.reciter} yet, so set from what is typical across ${data.profile!.count} recordings${data.source === 'built-in' ? ' (the profile that comes with the app)' : ''}`, modules: s.modules, notes: s.notes, report: null, findings: analysis.clipped ? ['Clipped in places. No module here repairs clipping.'] : [], failed: data.failed }
+  }
 
   /** Save a rule's look as a JSON file the user can keep or send to another machine. */
   async exportThumbnailLook(win: BrowserWindow | null, input: { rule: ThumbnailRule; look: StylePatch }): Promise<{ path: string } | null> {

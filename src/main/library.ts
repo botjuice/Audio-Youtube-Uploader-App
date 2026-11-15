@@ -154,6 +154,7 @@ export async function scanLibrary(library: string, store: LibraryStore, opts: Sc
       lastError: st.lastError ?? null, hasVideoFile,
       thumbnail: st.thumbnail ?? null,
       allowPlainPhoto: st.allowPlainPhoto ?? false,
+      audio: st.audio ?? null, allowOriginalAudio: st.allowOriginalAudio ?? false,
     }
   }
 

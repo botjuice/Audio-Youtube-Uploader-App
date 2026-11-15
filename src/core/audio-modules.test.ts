@@ -8,7 +8,7 @@ describe('audio strip ↔ plugin look', () => {
   it('writes every module as a plugin step in fixed order, off modules bypassed, and validates', () => {
     const m = defaultModules()
     const look = toLook(m)
-    expect(look.chain.map((s) => s.filter)).toEqual(['volume', 'afftdn', 'agate', 'highpass', 'lowshelf', 'equalizer', 'equalizer', 'equalizer', 'equalizer', 'highshelf', 'lowpass', 'acompressor', 'deesser', 'aecho', 'asplit', 'alimiter'])
+    expect(look.chain.map((s) => s.filter)).toEqual(['volume', 'afftdn', 'agate', 'acrossover', 'highpass', 'lowshelf', 'equalizer', 'equalizer', 'equalizer', 'equalizer', 'highshelf', 'lowpass', 'acompressor', 'deesser', 'aecho', 'asplit', 'alimiter'])
     expect(look.chain.every((s) => s.bypass)).toBe(true)
     expect(look.level).toBeNull()
     const v = validateLook(look)
@@ -68,6 +68,25 @@ describe('audio strip ↔ plugin look', () => {
     expect(eqResponseDb({ ...eq, on: false }, 80)).toBe(0)
   })
   it('module order lists every module except the EQ, which lives under the lanes', () => {
-    expect(MODULE_ORDER).not.toContain('eq'); expect(MODULE_ORDER.length).toBe(9)
+    expect(MODULE_ORDER).not.toContain('eq'); expect(MODULE_ORDER.length).toBe(10)
+  })
+})
+
+describe('spring tamer', () => {
+  it('round-trips through the look and validates', () => {
+    const m = defaultModules()
+    m.spring = { on: true, split: 4500, threshold: -38, ratio: 6, delay: 180, attack: 5, release: 500 }
+    m.level = { on: true, lufs: -16.6, ceiling: -1 }
+    const look = toLook(m)
+    const st = look.chain.find((s) => s.id === 'spring')!
+    expect(st.options).toEqual({ split: '4500', order: '8th' })
+    expect(st.outputs![1]![0]!.options!.threshold).toBeCloseTo(0.012589, 5)
+    expect(look.level).toEqual({ lufs: -16.6, ceiling: -1 })
+    const v = validateLook(look)
+    expect(v.ok, v.ok ? '' : JSON.stringify(v.errors)).toBe(true)
+    const back = fromLook(v.ok ? v.look : look)
+    expect(back.unmapped).toEqual([])
+    expect(back.modules.spring).toEqual(m.spring)
+    expect(back.modules.level).toEqual(m.level)
   })
 })

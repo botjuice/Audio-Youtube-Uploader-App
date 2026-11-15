@@ -9,7 +9,7 @@ import { createReadStream, promises as fs } from 'node:fs'
 import { Readable } from 'node:stream'
 import { join, resolve } from 'node:path'
 import type { AudioLookState, AudioOverview, AudioTile, AudioTileInput, AudioTileResult } from '@shared/types'
-import { EMPTY_LOOK, analyse, processAudio, validateLook, type AudioAnalysis, type AudioHost } from '../plugins/audio/index'
+import { EMPTY_LOOK, MAX_GAIN_DB, MIN_GAIN_DB, analyse, levellingGain, processAudio, ring, ringSplit, validateLook, type RingMeasure, type AudioAnalysis, type AudioHost } from '../plugins/audio/index'
 import { ffmpegPath } from './ffmpeg'
 import { activity } from './log'
 import { stateFile } from './paths'
@@ -144,7 +144,14 @@ export async function renderAudioTile(library: string, audioPath: string, input:
     const v = validateLook(input.look ?? EMPTY_LOOK)
     if (!v.ok) return { ok: false, reason: 'INVALID_LOOK', message: v.errors.map((e) => `${e.path}: ${e.message}`).join('\n'), errors: v.errors }
     const pre = Math.min(TILE_PREROLL_S, start)
-    const r = await processAudio({ audioPath, look: input.look, preview: { start: start - pre, seconds: seconds + pre + TILE_POSTROLL_S } }, h)
+    // levelling: every chunk gets the gain the whole recording gets, so the preview is what a full render sounds like
+    // (a chunk levelled on its own is pushed into the limiter whenever it is quieter than the rest)
+    let gainDb: number | null = null
+    if (v.look.level) {
+      try { gainDb = await audioLevelGain(audioPath, v.look) }
+      catch (e) { return ac.signal.aborted || /Cancelled/i.test(String(e)) ? { ok: false, reason: 'CANCELLED', message: 'superseded' } : { ok: false, reason: 'PROCESS_FAILED', message: e instanceof Error ? e.message : String(e) } }
+    }
+    const r = await processAudio({ audioPath, look: v.look, preview: { start: start - pre, seconds: seconds + pre + TILE_POSTROLL_S }, ...(gainDb !== null ? { gainDb } : {}) }, h)
     if (!r.ok) return r.reason === 'CANCELLED' ? { ok: false, reason: 'CANCELLED', message: 'superseded' } : { ok: false, reason: r.reason, message: r.message, ...(r.errors ? { errors: r.errors } : {}) }
     const peaks = await peaksOf(r.file, TILE_PEAK_BUCKETS, ac.signal, pre, seconds)
     const tile: AudioTile = { kind: 'processed', start, seconds, file: r.file, offset: pre, peaks, gainDb: r.gainDb, lufs: r.after.lufs, truePeak: r.after.truePeak, channels: r.after.channels, sampleRate: r.after.sampleRate, warnings: r.warnings }
@@ -185,6 +192,65 @@ export async function analyseRecording(audioPath: string): Promise<AudioAnalysis
     p.catch(() => analyses.delete(key))
   }
   return p
+}
+
+const rings = new Map<string, Promise<RingMeasure | null>>()
+/** The search for where the ring starts runs on this much from the recording's middle: about 35 “s” sounds, enough to tell. */
+const SPLIT_SEARCH_S = 240
+/** Ringing after “s” sounds in a recording, kept per file identity for the session: first where the ring starts (plugin
+ *  `ringSplit`), then how it behaves above that (plugin `ring`). */
+export async function ringOf(audioPath: string, durationSec?: number): Promise<RingMeasure | null> {
+  const st = await fs.stat(audioPath)
+  const key = `${audioPath}|${st.size}|${st.mtimeMs}`
+  let p = rings.get(key)
+  if (!p) {
+    const bin = ffmpegPath()
+    if (!bin) throw new Error('ffmpeg is not available on this computer')
+    p = (async () => {
+      const span = durationSec && durationSec > SPLIT_SEARCH_S + 60 ? { start: Math.floor((durationSec - SPLIT_SEARCH_S) / 2), seconds: SPLIT_SEARCH_S } : undefined
+      const split = await ringSplit(audioPath, { ffmpegPath: bin }, span)
+      const r = await ring(audioPath, { ffmpegPath: bin }, split.splitHz)
+      return r ? { ...r, bands: split.bands } : r
+    })()
+    rings.set(key, p)
+    p.catch(() => rings.delete(key))
+  }
+  return p
+}
+
+const rackLevels = new Map<string, Promise<{ lufs: number; peak: number }>>()
+const rackRuns = new Map<string, { key: string; ac: AbortController }>()
+/** The rack's own loudness and true peak over the whole recording, before any levelling gain. Keyed by the chain alone, so
+ *  the preview and Auto-set share one pass whatever the loudness target is. A request for a newer chain stops the older run. */
+export async function rackLevel(audioPath: string, look: { chain: unknown }): Promise<{ lufs: number; peak: number }> {
+  const bin = ffmpegPath()
+  if (!bin) throw new Error('ffmpeg is not available on this computer')
+  const st = await fs.stat(audioPath)
+  const key = `${audioPath}|${st.size}|${st.mtimeMs}|${JSON.stringify(look.chain)}`
+  let p = rackLevels.get(key)
+  if (!p) {
+    const older = rackRuns.get(audioPath)
+    if (older && older.key !== key) older.ac.abort()
+    const ac = new AbortController()
+    rackRuns.set(audioPath, { key, ac })
+    if (rackLevels.size > 200) rackLevels.clear()
+    p = levellingGain(audioPath, { chain: look.chain, level: { lufs: -16, ceiling: -1 } }, { ffmpegPath: bin, signal: ac.signal }).then((r) => {
+      if (!r.ok) throw new Error(r.message)
+      return { lufs: r.rackLufs!, peak: r.rackPeak! }
+    })
+    rackLevels.set(key, p)
+    p.catch(() => rackLevels.delete(key)).finally(() => { if (rackRuns.get(audioPath)?.ac === ac) rackRuns.delete(audioPath) })
+  }
+  return p
+}
+
+/** The one levelling gain the whole recording gets with this look (null: the look has no levelling). */
+export async function audioLevelGain(audioPath: string, look: unknown): Promise<number | null> {
+  const v = validateLook(look ?? EMPTY_LOOK)
+  if (!v.ok) throw new Error(v.errors.map((e) => `${e.path}: ${e.message}`).join('\n'))
+  if (!v.look.level) return null
+  const rack = await rackLevel(audioPath, v.look)
+  return Math.max(MIN_GAIN_DB, Math.min(MAX_GAIN_DB, v.look.level.lufs - rack.lufs))
 }
 
 /** Only files the plugin wrote may be streamed to the window. */

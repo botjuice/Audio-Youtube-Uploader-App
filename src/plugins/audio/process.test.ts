@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import ffmpegStatic from 'ffmpeg-static'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { analyse, checkLook, discard, LOOK_PRESETS, processAudio, type AudioHost, type Look } from './index'
+import { analyse, checkLook, discard, levellingGain, LOOK_PRESETS, measure, MEASURE_BANDS, processAudio, type AudioHost, type Look } from './index'
 import { FfmpegError, runFfmpeg } from './ffmpeg'
 import { filterText } from './graph'
 
@@ -86,6 +86,40 @@ describe('processAudio', () => {
     const missing = await processAudio({ audioPath: voice, look: { chain: [{ filter: 'afir', inputs: [{ kind: 'file', path: join(tmp, 'gone.wav') }] }] } }, host())
     expect(!missing.ok && missing.reason).toBe('AUDIO_UNREADABLE')
     expect(!missing.ok && missing.errors?.[0]?.path).toBe('chain[0].inputs[0].path')
+  }, 60_000)
+
+  it('levellingGain: the whole-recording gain, the same one a full render applies', async () => {
+    const look: Look = { chain: [{ filter: 'volume', options: { volume: '9dB' } }], level: { lufs: -20, ceiling: -1 } }
+    const g = await levellingGain(voice, look, host())
+    const whole = await processAudio({ audioPath: voice, look }, host())
+    expect(g.ok && whole.ok).toBe(true)
+    if (!g.ok || !whole.ok) return
+    expect(g.gainDb).toBeCloseTo(whole.gainDb, 1)
+    expect(await levellingGain(voice, { chain: [] }, host())).toEqual({ ok: true, gainDb: null })
+    // an excerpt rendered with that gain is the same audio as the same stretch of the whole render: not levelled on its own
+    const part = await processAudio({ audioPath: voice, look, preview: { start: 4, seconds: 4 }, gainDb: g.gainDb! }, host())
+    const own = await processAudio({ audioPath: voice, look, preview: { start: 4, seconds: 4 } }, host())
+    expect(part.ok && own.ok).toBe(true)
+    if (!part.ok || !own.ok) return
+    expect(part.gainDb).toBeCloseTo(g.gainDb!, 2)
+    expect(part.cacheKey).not.toBe(own.cacheKey)
+    expect(part.warnings).toEqual([])
+  }, 60_000)
+
+  it('measure with a look: what the look makes of the recording, whole or over a stretch', async () => {
+    const raw = await measure(voice, host())
+    const lifted = await measure(voice, host(), { chain: [{ filter: 'equalizer', options: { frequency: 660, width_type: 'q', width: 1, gain: 12 } }], level: { lufs: -14, ceiling: -1 } })
+    expect(raw && lifted).toBeTruthy()
+    if (!raw || !lifted) return
+    const b = MEASURE_BANDS.indexOf(630)
+    // +12 dB on a part that is 8.5 dB under the 220 Hz tone: it becomes the loudest part, so relative to the (now louder)
+    // voice it gains a good deal less than 12
+    expect(lifted.tone[b]! - raw.tone[b]!).toBeGreaterThan(3)
+    expect(lifted.tone[b]! - raw.tone[b]!).toBeLessThan(12)
+    const part = await measure(voice, host(), undefined, { start: 2, seconds: 6 })
+    expect(part!.durationSec).toBeCloseTo(6, 0)
+    expect(Math.abs(part!.tone[b]! - raw.tone[b]!)).toBeLessThan(1.5)   // the same steady tone, measured over a stretch
+    await expect(measure(voice, host(), { chain: [{ filter: 'nosuchfilter' }] })).rejects.toThrow()
   }, 60_000)
 
   it('preview + bypass + level gives a level-matched original for A/B', async () => {

@@ -34,7 +34,10 @@ export type ReasonCode =
 
 export type RecordStatus = 'ready' | 'error' | 'skipped' | 'encoded' | 'uploaded'
 
-export type PipelineStage = 'thumbnail' | 'encode' | 'upload' | 'playlist'
+export type PipelineStage = 'thumbnail' | 'audio' | 'encode' | 'upload' | 'playlist'
+
+/** How the audio stage went for a recording the last time it ran. */
+export interface AudioInfo { ok: boolean; via?: 'reciter' | 'default' | 'built-in'; toneAfter?: number; reason?: string; message?: string; at: string }
 
 export interface LastError { stage: PipelineStage; message: string; at: string }
 
@@ -79,6 +82,9 @@ export interface LibraryRecord {
   thumbnail: ThumbnailInfo | null
   /** user allowed this recording to upload with the plain reciter photo when its thumbnail can't render */
   allowPlainPhoto: boolean
+  audio: AudioInfo | null
+  /** user allowed this recording to upload with its original audio when the audio rule fails on it */
+  allowOriginalAudio: boolean
 }
 
 export interface ReciterInfo {
@@ -203,6 +209,38 @@ export interface AudioTile {
 }
 export type AudioTileResult = { ok: true; tile: AudioTile } | { ok: false; reason: string; message: string; errors?: { path: string; message: string }[] }
 /** Peak envelope of a whole recording, for the overview strip. */
+/** What Auto-set hands back: the settings, why, and (for a reciter with a target sound) how the processed result measures. */
+export interface AudioAutoSet {
+  /** One line on what it was aimed at. */
+  how: string
+  modules: import('../core/audio-modules').Modules
+  notes: import('../core/audio-suggest').SuggestNote[]
+  /** The result against the target, measured on the processed recording. null when there is no target to measure against. */
+  report: import('../core/audio-suggest').ReportRow[] | null
+  /** Things found that no module deals with. */
+  findings: string[]
+  /** Recordings that could not be read. */
+  failed: { file: string; message: string }[]
+}
+
+/** What Auto-set works from: the reciter's profile (from all their recordings) and the chosen recording's own measurement. */
+export interface AudioSuggestData {
+  reciter: string
+  measure: import('../plugins/audio/types').Measure
+  /** What is typical across the reciter's recordings. null when the reciter has a target (then it is not needed). */
+  profile: import('../core/audio-suggest').ReciterProfile | null
+  /** The reciter's target sound, when the app ships one. */
+  target: import('../core/audio-suggest').ReciterTarget | null
+  /** Integrated loudness of the recording as it is, LUFS (Auto-set keeps it). */
+  lufs: number
+  /** Ringing found after “s” sounds in this recording (null: too short to tell). */
+  ring: import('../plugins/audio/types').RingMeasure | null
+  /** Where the profile came from: the library's own recordings of the reciter, or the one shipped with the app (too few recordings yet). */
+  source: 'library' | 'built-in' | 'target'
+  /** Recordings of the reciter that could not be read (left out of the profile). */
+  failed: { file: string; message: string }[]
+}
+
 export interface AudioOverview { durationSec: number; lufs: number; peaks: number[] }
 
 /** Result of importing a thumbnail look file: the file (font paths already pointing at restored local copies) and what was adjusted. */
@@ -319,6 +357,7 @@ export interface RecordPatch {
   selected?: boolean
   skipped?: boolean
   allowPlainPhoto?: boolean
+  allowOriginalAudio?: boolean
   titleOverride?: string | null
   playlistOverrides?: PlaylistOverrides
 }

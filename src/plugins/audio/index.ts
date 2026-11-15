@@ -13,13 +13,16 @@
 import { promises as fs } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { analyseFile } from './analyse'
+import { measureFile } from './measure'
+import { findSplitFile, measureRingFile } from './ring'
 import { audioFile, cacheKey, metaFile, nonEmpty, partFile, writeAtomic } from './cache'
 import { FfmpegError, checkFfmpeg, parseEbur, parseOutputStream, probe, runFfmpeg, type Probe } from './ffmpeg'
 import { buildGraph, errorsByStep, n, type BuiltGraph } from './graph'
 import { EMPTY_LOOK, validateLook, type Level, type Look, type LookError } from './look'
-import type { AfterMeasure, AudioAnalysis, AudioHost, AudioJob, AudioReason, AudioResult, LookCheck, PluginManifest } from './types'
+import type { AfterMeasure, AudioAnalysis, AudioHost, AudioJob, AudioReason, AudioResult, LookCheck, Measure, PluginManifest, RingMeasure, RingSplit } from './types'
 
-export type { AfterMeasure, AudioAnalysis, AudioHost, AudioJob, AudioReason, AudioResult, LookCheck, PluginManifest } from './types'
+export type { AfterMeasure, AudioAnalysis, AudioHost, AudioJob, AudioReason, AudioResult, LookCheck, Measure, PluginManifest, RingBand, RingMeasure, RingSplit } from './types'
+export { MEASURE_BANDS, MEASURE_VERSION } from './types'
 export { CATALOG, filterInfo, filtersByCategory, optionInfo, padCount, type Catalog, type CatalogFilter, type CatalogOption, type FilterRole, type OptionType } from './catalog'
 export { EMPTY_LOOK, LEVEL_FIELDS, LIMITS, coerceOption, describeLook, validateLook, walkSteps, type Level, type Look, type LookError, type LookValidation, type NumberField, type OptionValue, type Source, type Step } from './look'
 export { LOOK_PRESETS, type Preset } from './presets'
@@ -79,6 +82,7 @@ export async function processAudio(job: AudioJob, host: AudioHost): Promise<Audi
     if (!(Number.isFinite(start) && start >= 0)) return fail('INVALID_JOB', 'preview.start must be ≥ 0 seconds.')
     if (!(Number.isFinite(seconds) && seconds > 0 && seconds <= PREVIEW_MAX_S)) return fail('INVALID_JOB', `preview.seconds must be between 0 and ${PREVIEW_MAX_S}.`)
   }
+  if (job.gainDb !== undefined && !Number.isFinite(job.gainDb)) return fail('INVALID_JOB', 'gainDb must be a number of dB.')
   const v = validateLook(job.look ?? EMPTY_LOOK)
   if (!v.ok) return fail('INVALID_LOOK', lookErrors(v.errors), v.errors)
   let level: Level | null = job.bypass ? null : v.look.level ?? null
@@ -103,7 +107,7 @@ export async function processAudio(job: AudioJob, host: AudioHost): Promise<Audi
   if (!fileStats.ok) return fail('AUDIO_UNREADABLE', lookErrors(fileStats.errors), fileStats.errors)
 
   // ── 2. cache: the exact graph text is the identity, so ids/labels/bypassed steps never re-render ──
-  const key = cacheKey(job.audioPath, stat, manifest.renderVersion, { graph: rack.graph, files: fileStats.stats, level, preview: job.preview ?? null })
+  const key = cacheKey(job.audioPath, stat, manifest.renderVersion, { graph: rack.graph, files: fileStats.stats, level, preview: job.preview ?? null, ...(job.gainDb !== undefined && level ? { fixedGain: job.gainDb } : {}) })
   const out = audioFile(host.outputDir, key)
   const metaPath = metaFile(host.outputDir, key)
   if ((await nonEmpty(out)) && (await nonEmpty(metaPath))) {
@@ -144,8 +148,9 @@ export async function processAudio(job: AudioJob, host: AudioHost): Promise<Audi
       if (!m) return fail('PROCESS_FAILED', 'Could not read the loudness measurement from ffmpeg.')
       rate = parseOutputStream(r.stderr)?.sampleRate
       if (!rate) return fail('PROCESS_FAILED', 'Could not read the rack\'s output sample rate from ffmpeg.')
-      if (!(m.lufs > SILENT_LUFS)) return fail('SILENT_INPUT', `Nothing to level: the ${job.preview ? 'excerpt' : 'recording'} is silent after the rack (${Number.isFinite(m.lufs) ? `${m.lufs} LUFS` : 'no signal'}).`)
-      gainDb = level.lufs - m.lufs
+      const fixed = job.gainDb !== undefined
+      if (!fixed && !(m.lufs > SILENT_LUFS)) return fail('SILENT_INPUT', `Nothing to level: the ${job.preview ? 'excerpt' : 'recording'} is silent after the rack (${Number.isFinite(m.lufs) ? `${m.lufs} LUFS` : 'no signal'}).`)
+      gainDb = fixed ? job.gainDb! : level.lufs - m.lufs
       if (gainDb > MAX_GAIN_DB || gainDb < MIN_GAIN_DB) {
         const capped = Math.max(MIN_GAIN_DB, Math.min(MAX_GAIN_DB, gainDb))
         warnings.push(`Needed ${gainDb.toFixed(1)} dB to reach ${level.lufs} LUFS; capped at ${capped} dB.`)
@@ -167,7 +172,10 @@ export async function processAudio(job: AudioJob, host: AudioHost): Promise<Audi
     if (!m || !(m.lufs > SILENT_LUFS)) return fail('SILENT_OUTPUT', 'The processed audio is silent — the rack removed the signal.')
     if (got.durationSec >= cap - 0.05) warnings.push(`Output was cut at ${cap.toFixed(0)} s: a step never ends on its own (a source without a duration, an endless loop?).`)
     else if (Math.abs(got.durationSec - inputSec) > DURATION_TOLERANCE_S) warnings.push(`Output is ${got.durationSec.toFixed(2)} s, the input ${inputSec.toFixed(2)} s: a step changes the length, so it no longer lines up with the original.`)
-    if (level) {
+    if (level && job.gainDb !== undefined) {
+      // a given gain: this span lands wherever it lands; only the ceiling is checked
+      if (m.truePeak > level.ceiling + 0.2) warnings.push(`True peak ${m.truePeak} dBTP is above the ${level.ceiling} dBTP ceiling.`)
+    } else if (level) {
       const off = m.lufs - level.lufs
       if (Math.abs(off) > LOUDNESS_FAIL_LU && !warnings.some((w) => w.startsWith('Needed'))) {
         return fail('LOUDNESS_OFF_TARGET', `Levelled loudness is ${m.lufs} LUFS, target ${level.lufs} — ${Math.abs(off).toFixed(1)} LU off (the peak ceiling may be holding it down).`)
@@ -236,6 +244,59 @@ export async function checkLook(lookInput: unknown, host: Pick<AudioHost, 'ffmpe
 export async function analyse(audioPath: string, host: Pick<AudioHost, 'ffmpegPath' | 'signal'>): Promise<AudioAnalysis> {
   await checkFfmpeg(host.ffmpegPath)
   return analyseFile(host.ffmpegPath, audioPath, host.signal)
+}
+
+/**
+ * The one gain levelling applies to the WHOLE recording with this look: pass 1 of processAudio, nothing rendered.
+ * An editor that plays excerpts needs it, because an excerpt levelled on its own gets a different gain than the
+ * recording will. `gainDb` is null when the look has no levelling.
+ */
+export async function levellingGain(audioPath: string, lookInput: unknown, host: Pick<AudioHost, 'ffmpegPath' | 'signal' | 'stallMs'>): Promise<{ ok: true; gainDb: number | null; rackLufs?: number; rackPeak?: number } | { ok: false; reason: AudioReason; message: string }> {
+  const v = validateLook(lookInput ?? EMPTY_LOOK)
+  if (!v.ok) return { ok: false, reason: 'INVALID_LOOK', message: v.errors.map((e) => `${e.path}: ${e.message}`).join('\n') }
+  const level = v.look.level
+  if (!level) return { ok: true, gainDb: null }
+  try {
+    await checkFfmpeg(host.ffmpegPath)
+    const g = buildGraph(v.look, { mode: 'measure' })
+    const r = await runFfmpeg(host.ffmpegPath, ['-hide_banner', '-i', audioPath, ...g.files.flatMap((f) => ['-i', f]), '-filter_complex', g.graph, '-map', '[out]', '-f', 'null', '-'], { signal: host.signal, ...(host.stallMs ? { stallMs: host.stallMs } : {}) })
+    const m = parseEbur(r.stderr)
+    if (!m || !(m.lufs > SILENT_LUFS)) return { ok: false, reason: 'SILENT_INPUT', message: 'Nothing to level: the recording is silent after the rack.' }
+    // rackPeak: the rack's true peak before any gain, so a caller can tell whether a target needs the limiter
+    return { ok: true, gainDb: Math.max(MIN_GAIN_DB, Math.min(MAX_GAIN_DB, level.lufs - m.lufs)), rackLufs: m.lufs, rackPeak: m.truePeak }
+  } catch (e) {
+    if (e instanceof FfmpegError) return { ok: false, reason: e.reason, message: e.message }
+    return { ok: false, reason: 'PROCESS_FAILED', message: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/** The rack of a look as a graph to measure through (levelling left out: one gain changes none of what is measured). */
+function rackOf(lookInput: unknown): { graph: string; files: string[] } | undefined {
+  if (lookInput === undefined || lookInput === null) return undefined
+  const v = validateLook(lookInput)
+  if (!v.ok) throw new Error(lookErrors(v.errors))
+  const g = buildGraph({ chain: v.look.chain }, { mode: 'chain' })
+  return { graph: g.graph, files: g.files }
+}
+
+/** Tone and level behaviour of a recording (see `Measure`), for suggesting settings; with `look`, of what that look makes
+ *  of it (so a suggestion can check its own result); with `span`, of that stretch only. Reads only. null = silent or under two seconds. Throws for
+ *  unreadable files / unusable ffmpeg / an invalid look. */
+export async function measure(audioPath: string, host: Pick<AudioHost, 'ffmpegPath' | 'signal'>, look?: unknown, span?: { start: number; seconds: number }): Promise<Measure | null> {
+  await checkFfmpeg(host.ffmpegPath)
+  return measureFile(host.ffmpegPath, audioPath, host.signal, rackOf(look), span)
+}
+
+/** Does the band above `splitHz` keep ringing after "s" sounds, and how (see `RingMeasure`)? Reads only. null = under 30 s. */
+export async function ring(audioPath: string, host: Pick<AudioHost, 'ffmpegPath' | 'signal'>, splitHz = 4500, look?: unknown, span?: { start: number; seconds: number }): Promise<RingMeasure | null> {
+  await checkFfmpeg(host.ffmpegPath)
+  return measureRingFile(host.ffmpegPath, audioPath, splitHz, host.signal, rackOf(look), span)
+}
+
+/** Above which frequency does the ring after "s" sounds live in this recording (between 3 and 7 kHz)? Reads only. */
+export async function ringSplit(audioPath: string, host: Pick<AudioHost, 'ffmpegPath' | 'signal'>, span?: { start: number; seconds: number }): Promise<RingSplit> {
+  await checkFfmpeg(host.ffmpegPath)
+  return findSplitFile(host.ffmpegPath, audioPath, host.signal, span)
 }
 
 /** Delete a processed file and its sidecar (e.g. after a successful upload). Safe if already gone. */

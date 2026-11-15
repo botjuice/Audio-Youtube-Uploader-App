@@ -1,7 +1,8 @@
 import { safeStorage } from 'electron'
 import { promises as fs } from 'node:fs'
-import type { KeywordDef, LastError, Playlist, PlaylistOverrides, PlaylistRule, Settings, ThumbnailInfo, ThumbnailRule, AudioLookState } from '@shared/types'
+import type { AudioInfo, KeywordDef, LastError, Playlist, PlaylistOverrides, PlaylistRule, Settings, ThumbnailInfo, ThumbnailRule, AudioLookState } from '@shared/types'
 import type { QuotaState } from '@core/quota'
+import type { AudioRulesState } from '@core/audio-rules'
 import { JsonFile, readJson } from './jsonfile'
 import { secretFile, settingsFile, stateFile, tokenFile } from './paths'
 
@@ -30,7 +31,10 @@ export interface RecordState {
   lastError?: LastError | null
   thumbnail?: ThumbnailInfo | null
   allowPlainPhoto?: boolean
-  /** what the rendered mp4 was made from: a thumbnail cache key, or 'photo' */
+  /** user allowed this recording to upload with its original audio when the audio rule fails on it */
+  allowOriginalAudio?: boolean
+  audio?: AudioInfo | null
+  /** what the rendered mp4 was made from: a thumbnail cache key, or 'photo'; with processed audio, "<that>|<audio key>" */
   videoKey?: string
 }
 
@@ -52,6 +56,8 @@ export interface LibraryStore {
   /** thumbnail look rules; always holds one `origin: 'default'` rule (see normaliseThumbRules) */
   thumbRules: JsonFile<{ rules: ThumbnailRule[] }>
   audioLook: JsonFile<AudioLookState>
+  /** audio rules: per-reciter targets every uploaded recording is steered to (see core/audio-rules.ts) */
+  audioRules: JsonFile<AudioRulesState>
   surahs: JsonFile<SurahUserLayer>
   quota: JsonFile<QuotaState>
   playlists: JsonFile<{ items: Playlist[]; fetchedAt: string | null }>
@@ -64,6 +70,7 @@ export async function openLibraryStore(library: string): Promise<LibraryStore> {
     rules: new JsonFile(stateFile(library, 'rules.json'), () => ({ rules: [], keywords: [] })),
     thumbRules: new JsonFile(stateFile(library, 'thumbnail-rules.json'), () => ({ rules: [] })),
     audioLook: new JsonFile(stateFile(library, 'audio-look.json'), () => ({ look: { chain: [] }, sample: null })),
+    audioRules: new JsonFile(stateFile(library, 'audio-rules.json'), () => ({ v: 1 as const, applyToUploads: false, rules: [] })),
     surahs: new JsonFile(stateFile(library, 'surahs.json'), () => ({})),
     quota: new JsonFile(stateFile(library, 'quota.json'), () => ({ day: '', uploads: 0, units: 0 })),
     playlists: new JsonFile(stateFile(library, 'playlists.json'), () => ({ items: [], fetchedAt: null })),
