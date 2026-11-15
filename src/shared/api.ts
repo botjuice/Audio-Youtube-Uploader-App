@@ -1,5 +1,5 @@
 import type {
-  ActivityEntry, AudioAnalysis, AudioAutoSet, AudioLookState, AudioOverview, AudioTileInput, AudioTileResult, Health, KeywordDef, LibraryRecord, NewReciter, Playlist, PlaylistRule, Privacy, Progress,
+  ActivityEntry, AudioAnalysis, AudioAutoSet, AudioOverview, AudioTileInput, AudioTileResult, Health, KeywordDef, LibraryRecord, NewReciter, Playlist, PlaylistRule, Privacy, Progress,
   CustomFont, ImportedLook, ReciterInfo, ReciterPatch, RecordPatch, RulePhoto, Settings, StylePatch, StyleRenderInput, StyleSchemaInfo, SurahOption, ThumbnailPreview, ThumbnailRule, TokenValidation, UpdateState,
 } from './types'
 
@@ -10,7 +10,6 @@ export interface LibrarySnapshot {
   keywords: KeywordDef[]
   thumbnailRules: ThumbnailRule[]   // list order = priority; the last one is the default look
   playlists: Playlist[]          // cached channel playlists (may be stale until refreshed)
-  audioLook: AudioLookState      // (older single look; superseded by audioRules)
   audioRules: import('@core/audio-rules').AudioRulesState   // per-reciter audio rules + whether uploads use them
   audioBuiltIn: { count: number; tone: number[]; lufs: number; hp: number } | null   // the default rule that ships with the app (used until the user makes their own)
 }
@@ -54,7 +53,6 @@ export interface Api {
   createPlaylist(title: string, privacy: Privacy): Promise<Playlist>
   syncWithYouTube(): Promise<SyncResult>
   // audio editor
-  setAudioLook(state: AudioLookState): Promise<void>
   renderAudioTile(input: AudioTileInput): Promise<AudioTileResult>   // one 5 s chunk (processed with warm-up pre-roll, or the raw original), with peaks
   cancelAudioTiles(generation: number, recordId?: string): Promise<void>   // stop rendering processed chunks older than this generation (for one recording, or all)
   getAudioOverview(recordId: string): Promise<AudioOverview>          // whole-recording waveform for the window strip (cached)

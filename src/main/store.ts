@@ -1,6 +1,6 @@
 import { safeStorage } from 'electron'
 import { promises as fs } from 'node:fs'
-import type { AudioInfo, KeywordDef, LastError, Playlist, PlaylistOverrides, PlaylistRule, Settings, ThumbnailInfo, ThumbnailRule, AudioLookState } from '@shared/types'
+import type { AudioInfo, KeywordDef, LastError, Playlist, PlaylistOverrides, PlaylistRule, Settings, ThumbnailInfo , ThumbnailRule } from '@shared/types'
 import type { QuotaState } from '@core/quota'
 import type { AudioRulesState } from '@core/audio-rules'
 import { JsonFile, readJson } from './jsonfile'
@@ -55,7 +55,6 @@ export interface LibraryStore {
   rules: JsonFile<{ rules: PlaylistRule[]; keywords: KeywordDef[] }>
   /** thumbnail look rules; always holds one `origin: 'default'` rule (see normaliseThumbRules) */
   thumbRules: JsonFile<{ rules: ThumbnailRule[] }>
-  audioLook: JsonFile<AudioLookState>
   /** audio rules: per-reciter targets every uploaded recording is steered to (see core/audio-rules.ts) */
   audioRules: JsonFile<AudioRulesState>
   surahs: JsonFile<SurahUserLayer>
@@ -69,7 +68,6 @@ export async function openLibraryStore(library: string): Promise<LibraryStore> {
     reciters: new JsonFile(stateFile(library, 'reciters.json'), () => ({})),
     rules: new JsonFile(stateFile(library, 'rules.json'), () => ({ rules: [], keywords: [] })),
     thumbRules: new JsonFile(stateFile(library, 'thumbnail-rules.json'), () => ({ rules: [] })),
-    audioLook: new JsonFile(stateFile(library, 'audio-look.json'), () => ({ look: { chain: [] }, sample: null })),
     audioRules: new JsonFile(stateFile(library, 'audio-rules.json'), () => ({ v: 1 as const, applyToUploads: false, rules: [] })),
     surahs: new JsonFile(stateFile(library, 'surahs.json'), () => ({})),
     quota: new JsonFile(stateFile(library, 'quota.json'), () => ({ day: '', uploads: 0, units: 0 })),

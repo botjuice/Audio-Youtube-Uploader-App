@@ -10,7 +10,7 @@ import ffmpegStatic from 'ffmpeg-static'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: false }, protocol: { registerSchemesAsPrivileged: () => {}, handle: () => {} }, BrowserWindow: class {}, nativeImage: {} }))
 import { defaultModules, toLook } from '../core/audio-modules'
-import { toneDistance } from '../core/audio-suggest'
+import { toneDistance } from '../core/audio-steer'
 import { eqResponseDb } from '../core/eq-response'
 import { measure } from '../plugins/audio/index'
 import { EMPTY_AUDIO_RULES, type AudioRule, type AudioRulesState } from '../core/audio-rules'

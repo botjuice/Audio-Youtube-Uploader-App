@@ -184,8 +184,6 @@ export interface RulePhoto { file: string; dataUrl: string }
 // ── Audio editor ──────────────────────────────────────────────────────────────
 export type { Look as AudioLook, Step as AudioStep, LookError as AudioLookError } from '../plugins/audio/look'
 export type { AudioAnalysis } from '../plugins/audio/types'
-/** The one audio look (a patch over the plugin's factory defaults) plus the editor's last sample. Editor only for now: uploads still use the original audio. */
-export interface AudioLookState { look: import('../plugins/audio/look').Look; sample: { recordId: string; start: number } | null }
 /** One 5 s chunk of the A/B stream. `processed` chunks are rendered by the plugin with a pre-roll (so filters are warm) that playback skips via `offset`. */
 export interface AudioTileInput {
   recordId: string
@@ -214,30 +212,12 @@ export interface AudioAutoSet {
   /** One line on what it was aimed at. */
   how: string
   modules: import('../core/audio-modules').Modules
-  notes: import('../core/audio-suggest').SuggestNote[]
+  notes: import('../core/audio-steer').SuggestNote[]
   /** The result against the target, measured on the processed recording. null when there is no target to measure against. */
-  report: import('../core/audio-suggest').ReportRow[] | null
+  report: import('../core/audio-steer').ReportRow[] | null
   /** Things found that no module deals with. */
   findings: string[]
   /** Recordings that could not be read. */
-  failed: { file: string; message: string }[]
-}
-
-/** What Auto-set works from: the reciter's profile (from all their recordings) and the chosen recording's own measurement. */
-export interface AudioSuggestData {
-  reciter: string
-  measure: import('../plugins/audio/types').Measure
-  /** What is typical across the reciter's recordings. null when the reciter has a target (then it is not needed). */
-  profile: import('../core/audio-suggest').ReciterProfile | null
-  /** The reciter's target sound, when the app ships one. */
-  target: import('../core/audio-suggest').ReciterTarget | null
-  /** Integrated loudness of the recording as it is, LUFS (Auto-set keeps it). */
-  lufs: number
-  /** Ringing found after “s” sounds in this recording (null: too short to tell). */
-  ring: import('../plugins/audio/types').RingMeasure | null
-  /** Where the profile came from: the library's own recordings of the reciter, or the one shipped with the app (too few recordings yet). */
-  source: 'library' | 'built-in' | 'target'
-  /** Recordings of the reciter that could not be read (left out of the profile). */
   failed: { file: string; message: string }[]
 }
 

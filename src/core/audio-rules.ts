@@ -15,9 +15,10 @@
  *
  * Pure: no files, no ffmpeg. The host measures (src/main/audio-rules.ts).
  */
-import { MEASURE_BANDS, MEASURE_VERSION, type Measure, type RingMeasure } from '../plugins/audio/types'
+import { MEASURE_BANDS, MEASURE_VERSION, type Measure } from '../plugins/audio/types'
 import { defaultModules, type Modules } from './audio-modules'
-import { tamerFor, type ReciterTarget } from './audio-suggest'
+import type { AudioTarget } from './audio-steer'
+import builtInRule from './default-audio-rule.json'
 
 export const MAX_REFERENCES = 5
 export const AUDIO_RULE_FORMAT = 'yoosy-joosy.audio-rule'
@@ -31,16 +32,8 @@ export interface AudioRuleRef {
   modules: Modules | null
 }
 
-/** What a rule aims every recording at, with the settings it came from (for the modules that are taste, not measured). */
-export interface RuleTarget extends ReciterTarget {
-  /** The first reference's settings: delay, reverb, gate, de-esser, limiter and gain are carried over from here. */
-  base: Modules
-  /** Voice level and typical level of the recording `base` was dialled in on, dBFS: level-dependent settings move with them. */
-  baseVoiceDb: number
-  baseTypicalDb: number
-  measureVersion: number
-  capturedAt: string
-}
+/** A rule's target (see AudioTarget). */
+export type RuleTarget = AudioTarget
 
 export interface AudioRule {
   id: string
@@ -105,29 +98,6 @@ export function resolveRule(state: AudioRulesState, reciterKey: string | null | 
   if (own) return { rule: own, via: 'reciter' }
   const def = state.rules.find((r) => r.reciterKey === null && r.target)
   return def ? { rule: def, via: 'default' } : { rule: null, via: 'built-in' }
-}
-
-/**
- * The first reference's settings on another recording: the same EQ and the same character, with everything that
- * depends on level moved to this recording's level, and the spring tamer set from this recording's own ring (when the
- * first reference uses one). This is what a reference "follows the first" with, and what the taste modules of every
- * uploaded recording are taken from.
- */
-export function transferSettings(base: Modules, from: { voiceDb: number; typicalDb: number }, m: Measure, ring?: RingMeasure | null): Modules {
-  const out: Modules = JSON.parse(JSON.stringify(base)) as Modules
-  const dVoice = m.voiceDb - from.voiceDb
-  const dTypical = m.voiceDb + m.levels.p50 - from.typicalDb
-  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
-  const half = (v: number) => Math.round(v * 2) / 2
-  out.comp.threshold = half(clamp(base.comp.threshold + dTypical, -60, 0))
-  out.gate.threshold = half(clamp(base.gate.threshold + dVoice, -90, 0))
-  out.nr.floor = Math.round(clamp(base.nr.floor + dVoice, -80, -20))
-  if (base.spring.on) {
-    const t = tamerFor(ring)
-    // no ring found in this recording: keep the first reference's tamer, moved to this level
-    out.spring = t.spring.on ? t.spring : { ...base.spring, threshold: half(clamp(base.spring.threshold + dVoice, -70, 0)) }
-  }
-  return out
 }
 
 /** One processed reference, as measured. */
@@ -196,4 +166,17 @@ export function parseRuleFile(text: string): { label?: string; reciterKey: strin
     reciterKey: rule['default'] === true ? null : typeof rule['reciterKey'] === 'string' && rule['reciterKey'] ? rule['reciterKey'] : null,
     target: { ...t, base: withDefaults(t.base) }, references,
   }
+}
+
+// ── the default rule that ships with the app ──────────────────────────────────
+
+let shipped: RuleTarget | null | undefined
+/** The default rule's target that comes with the app: used until the user saves a default rule of their own. It is an
+ *  ordinary rule file (src/core/default-audio-rule.json), made by exporting a rule from the app. null when it was made
+ *  with other measurements than this version's. */
+export function builtInDefaultTarget(): RuleTarget | null {
+  if (shipped === undefined) {
+    try { shipped = parseRuleFile(JSON.stringify(builtInRule)).target } catch { shipped = null }
+  }
+  return shipped
 }

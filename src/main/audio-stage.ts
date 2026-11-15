@@ -9,9 +9,9 @@ import { toLook } from '../core/audio-modules'
 import { TERRIBLE_TONE_DB, type AudioRulesState } from '../core/audio-rules'
 import { defaultModules } from '../core/audio-modules'
 import { discard, processAudio, type AudioHost } from '../plugins/audio/index'
-import { analyseRecording, audioDir, rackLevel, ringOf } from './audio'
+import { audioDir, rackLevel } from './audio'
 import { autoSet } from './audio-autoset'
-import { measureOne } from './audio-profile'
+import { recordingFacts } from './audio-facts'
 import { targetFor } from './audio-rules'
 import { ffmpegPath } from './ffmpeg'
 import { activity } from './log'
@@ -32,12 +32,11 @@ export async function prepareUploadAudio(o: {
   if (!aim) return { ok: false, reason: 'AUDIO_FAILED', message: 'There is no audio rule to apply and the built-in one cannot be used with this version’s measurements.' }
   try {
     o.onProgress?.(0, 'Measuring')
-    const [m, analysis] = await Promise.all([measureOne(o.library, { rel: o.rel, path: o.audioPath }), analyseRecording(o.audioPath)])
-    const ringing = await ringOf(o.audioPath, analysis.durationSec)
+    const facts = await recordingFacts(o.library, { rel: o.rel, path: o.audioPath })
     if (o.signal?.aborted) return { ok: false, reason: 'CANCELLED', message: 'Cancelled' }
     o.onProgress?.(15, 'Choosing settings')
     let step = 0
-    const r = await autoSet(bin, o.audioPath, defaultModules(), { measure: m, ring: ringing, analysis, target: aim.target },
+    const r = await autoSet(bin, o.audioPath, defaultModules(), { ...facts, target: aim.target },
       (text) => o.onProgress?.(Math.min(60, 20 + 10 * step++), text.replace(/…$/, '')), o.signal, { rackLevel: (look) => rackLevel(o.audioPath, look) })
     const summary = r.report.map((x) => `${x.what.split(':')[0]} ${x.before} → ${x.after}`).join(', ')
     if (r.toneAfter > TERRIBLE_TONE_DB) {

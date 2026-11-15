@@ -8,14 +8,13 @@ import { createHash } from 'node:crypto'
 import { createReadStream, promises as fs } from 'node:fs'
 import { Readable } from 'node:stream'
 import { join, resolve } from 'node:path'
-import type { AudioLookState, AudioOverview, AudioTile, AudioTileInput, AudioTileResult } from '@shared/types'
-import { EMPTY_LOOK, MAX_GAIN_DB, MIN_GAIN_DB, analyse, levellingGain, processAudio, ring, ringSplit, validateLook, type RingMeasure, type AudioAnalysis, type AudioHost } from '../plugins/audio/index'
+import type { AudioOverview, AudioTile, AudioTileInput, AudioTileResult } from '@shared/types'
+import { EMPTY_LOOK, MAX_GAIN_DB, MIN_GAIN_DB, analyse, levellingGain, processAudio, validateLook, type AudioAnalysis, type AudioHost } from '../plugins/audio/index'
 import { ffmpegPath } from './ffmpeg'
 import { activity } from './log'
 import { stateFile } from './paths'
 
 export const audioDir = (library: string) => stateFile(library, 'audio')
-export const DEFAULT_AUDIO_LOOK: AudioLookState = { look: EMPTY_LOOK, sample: null }
 export const PREVIEW_SECONDS = 45
 const PEAK_BUCKETS = 1200
 
@@ -190,30 +189,6 @@ export async function analyseRecording(audioPath: string): Promise<AudioAnalysis
     p = analyse(audioPath, { ffmpegPath: bin })
     analyses.set(key, p)
     p.catch(() => analyses.delete(key))
-  }
-  return p
-}
-
-const rings = new Map<string, Promise<RingMeasure | null>>()
-/** The search for where the ring starts runs on this much from the recording's middle: about 35 “s” sounds, enough to tell. */
-const SPLIT_SEARCH_S = 240
-/** Ringing after “s” sounds in a recording, kept per file identity for the session: first where the ring starts (plugin
- *  `ringSplit`), then how it behaves above that (plugin `ring`). */
-export async function ringOf(audioPath: string, durationSec?: number): Promise<RingMeasure | null> {
-  const st = await fs.stat(audioPath)
-  const key = `${audioPath}|${st.size}|${st.mtimeMs}`
-  let p = rings.get(key)
-  if (!p) {
-    const bin = ffmpegPath()
-    if (!bin) throw new Error('ffmpeg is not available on this computer')
-    p = (async () => {
-      const span = durationSec && durationSec > SPLIT_SEARCH_S + 60 ? { start: Math.floor((durationSec - SPLIT_SEARCH_S) / 2), seconds: SPLIT_SEARCH_S } : undefined
-      const split = await ringSplit(audioPath, { ffmpegPath: bin }, span)
-      const r = await ring(audioPath, { ffmpegPath: bin }, split.splitHz)
-      return r ? { ...r, bands: split.bands } : r
-    })()
-    rings.set(key, p)
-    p.catch(() => rings.delete(key))
   }
   return p
 }

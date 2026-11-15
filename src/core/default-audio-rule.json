@@ -1,0 +1,233 @@
+{
+  "format": "yoosy-joosy.audio-rule",
+  "version": 1,
+  "app": "YouTube Quran Uploader",
+  "appVersion": "3.3.1",
+  "exportedAt": "2026-11-14T00:00:00.000Z",
+  "rule": {
+    "label": "Built in",
+    "reciterKey": null,
+    "default": true
+  },
+  "references": [
+    {
+      "name": "AbdullahAlMousaIshaTahreem-5.1.2025.m4a",
+      "modules": null
+    },
+    {
+      "name": "AbdullahAlMousaIshaNisaa-26.04.2026.m4a",
+      "modules": null
+    },
+    {
+      "name": "AbdullahAlMousaIshaYunus-7.1.2025.m4a",
+      "modules": null
+    },
+    {
+      "name": "AbdullahAlMousaMaghribAnfal-25.12.2024.m4a",
+      "modules": null
+    },
+    {
+      "name": "AbdullahAlMousaIshaQAF-5.11.2024.m4a",
+      "modules": null
+    }
+  ],
+  "target": {
+    "count": 5,
+    "hp": 80,
+    "tone": [
+      -52.6,
+      -44.5,
+      -40.5,
+      -38,
+      -20.8,
+      -11.2,
+      -4.2,
+      -10.4,
+      -7.1,
+      -12.5,
+      -14.9,
+      -11.1,
+      -16.9,
+      -19,
+      -21.1,
+      -22.6,
+      -30,
+      -26.8,
+      -25,
+      -25.8,
+      -35,
+      -33.3,
+      -41.5,
+      -41.6,
+      -40.6
+    ],
+    "quiet": [
+      -67.8,
+      -63.6,
+      -60.2,
+      -57.6,
+      -45.6,
+      -35.4,
+      -30.2,
+      -35.3,
+      -29.4,
+      -29.4,
+      -30.1,
+      -29.2,
+      -32.4,
+      -35,
+      -38.3,
+      -42.4,
+      -42.6,
+      -39.3,
+      -38.2,
+      -40.6,
+      -54.6,
+      -51.8,
+      -60.6,
+      -68.8,
+      -65.3
+    ],
+    "over": 4.7,
+    "ring": 0.8,
+    "lufs": -16.3,
+    "base": {
+      "gain": {
+        "on": false,
+        "db": 0
+      },
+      "nr": {
+        "on": false,
+        "reduction": 12,
+        "floor": -50,
+        "type": "white",
+        "track": false,
+        "residual": -38
+      },
+      "gate": {
+        "on": false,
+        "threshold": -18,
+        "range": -24,
+        "ratio": 2,
+        "attack": 20,
+        "release": 250,
+        "knee": 2.83,
+        "makeup": 0,
+        "detection": "rms",
+        "link": "average"
+      },
+      "eq": {
+        "on": true,
+        "hp": {
+          "on": true,
+          "freq": 80,
+          "q": 0.707
+        },
+        "lp": {
+          "on": false,
+          "freq": 16000,
+          "q": 0.707
+        },
+        "ls": {
+          "on": false,
+          "freq": 100,
+          "gain": 0,
+          "q": 0.5
+        },
+        "hs": {
+          "on": false,
+          "freq": 3000,
+          "gain": 0,
+          "q": 0.5
+        },
+        "bands": [
+          {
+            "on": false,
+            "freq": 250,
+            "gain": 0,
+            "q": 1
+          },
+          {
+            "on": false,
+            "freq": 1000,
+            "gain": 0,
+            "q": 1
+          },
+          {
+            "on": false,
+            "freq": 3000,
+            "gain": 0,
+            "q": 1
+          },
+          {
+            "on": false,
+            "freq": 8000,
+            "gain": 0,
+            "q": 1
+          }
+        ]
+      },
+      "comp": {
+        "on": false,
+        "threshold": -18,
+        "ratio": 2,
+        "attack": 20,
+        "release": 250,
+        "knee": 2.83,
+        "makeup": 0,
+        "mix": 100,
+        "detection": "rms",
+        "link": "average",
+        "mode": "downward"
+      },
+      "deess": {
+        "on": false,
+        "intensity": 0,
+        "max": 50,
+        "frequency": 50,
+        "mode": "o"
+      },
+      "echo": {
+        "on": false,
+        "inGain": 0.6,
+        "outGain": 0.3,
+        "delay": 1000,
+        "decay": 0.5
+      },
+      "reverb": {
+        "on": false,
+        "decay": 1.2,
+        "predelay": 15,
+        "brightness": 5500,
+        "amount": -16
+      },
+      "limiter": {
+        "on": false,
+        "ceiling": -1,
+        "inGain": 0,
+        "outGain": 0,
+        "attack": 5,
+        "release": 50,
+        "asc": false
+      },
+      "level": {
+        "on": true,
+        "lufs": -16.3,
+        "ceiling": -1
+      },
+      "spring": {
+        "on": false,
+        "split": 4500,
+        "threshold": -40,
+        "ratio": 2,
+        "delay": 250,
+        "attack": 40,
+        "release": 700
+      }
+    },
+    "baseVoiceDb": -15.6,
+    "baseTypicalDb": -16.2,
+    "measureVersion": 1,
+    "capturedAt": "2026-11-14T00:00:00.000Z"
+  }
+}

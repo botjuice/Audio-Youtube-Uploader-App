@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { validateLook } from '../plugins/audio/look'
 import { MEASURE_BANDS, MEASURE_VERSION, type Measure, type RingMeasure } from '../plugins/audio/types'
 import { defaultModules, toLook } from './audio-modules'
-import { AUDIO_RULE_FORMAT, MAX_REFERENCES, buildRuleFile, meanTarget, normaliseAudioRules, parseRuleFile, resolveRule, targetUsable, transferSettings, withDefaults, type AudioRule, type AudioRulesState } from './audio-rules'
-import { noFeedback, refine, report, steer } from './audio-suggest'
+import { AUDIO_RULE_FORMAT, MAX_REFERENCES, buildRuleFile, meanTarget, normaliseAudioRules, parseRuleFile, resolveRule, targetUsable, withDefaults, type AudioRule, type AudioRulesState } from './audio-rules'
+import { noFeedback, refine, report, steer } from './audio-steer'
 import { eqResponseDb } from './eq-response'
 
 const tone = MEASURE_BANDS.map((f) => -8 - (f > 500 ? 5.5 * Math.log2(f / 500) : 0) - (f < 160 ? 20 * Math.log2(160 / f) : 0))
@@ -43,25 +43,6 @@ describe('audio rules: which rule applies', () => {
     expect(s.rules[1]!.target).toBeNull()
     expect(s.applyToUploads).toBe(true)
     expect(normaliseAudioRules(null)).toEqual({ v: 1, applyToUploads: false, rules: [] })
-  })
-})
-
-describe('audio rules: a reference that follows the first', () => {
-  it('keeps the EQ and character, moves level-dependent settings to the recording, and sets the tamer from its own ring', () => {
-    const from = { voiceDb: -18, typicalDb: -18.6 }
-    const quieter = rec({ voiceDb: -26 })
-    const t = transferSettings(base(), from, quieter, ring({ burstDb: -47 }))
-    expect(t.eq).toEqual(base().eq)
-    expect(t.reverb).toEqual(base().reverb)
-    expect(t.comp.threshold).toBe(-27)          // 8 dB quieter recording → threshold 8 dB lower
-    expect(t.gate.threshold).toBe(-58)
-    expect(t.spring).toMatchObject({ on: true, threshold: -53 })   // from this recording's ring, not copied
-    expect(t.level).toEqual(base().level)       // same loudness target for all references
-    // nothing ringing in this one: the first reference's tamer, moved to this level
-    expect(transferSettings(base(), from, quieter, null).spring).toMatchObject({ on: true, threshold: -48 })
-    const noTamer = base(); noTamer.spring.on = false
-    expect(transferSettings(noTamer, from, quieter, ring()).spring.on).toBe(false)
-    expect(validateLook(toLook(t)).ok).toBe(true)
   })
 })
 

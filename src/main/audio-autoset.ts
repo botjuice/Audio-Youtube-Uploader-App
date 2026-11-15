@@ -6,10 +6,10 @@
  * No Electron in here (the ffmpeg path comes in), so the same loop can be run over a library from a script.
  */
 import { toLook, type Modules } from '../core/audio-modules'
-import { noFeedback, refine, report, setLoudness, steer, toneDistance, staticOver, type Feedback, type ReciterTarget, type ReportRow, type Steered, type SuggestNote } from '../core/audio-suggest'
+import { noFeedback, refine, report, ringLeftover, setLoudness, steer, toneDistance, staticOver, type AudioTarget, type Feedback, type ReportRow, type Steered, type SuggestNote } from '../core/audio-steer'
 import { levellingGain, measure, ring, type AudioAnalysis, type Measure, type RingMeasure } from '../plugins/audio/index'
 
-export interface AutoSetInput { measure: Measure; ring: RingMeasure | null; analysis: AudioAnalysis; target: ReciterTarget }
+export interface AutoSetInput { measure: Measure; ring: RingMeasure | null; analysis: AudioAnalysis; target: AudioTarget }
 export interface AutoSetResult {
   modules: Modules
   notes: SuggestNote[]
@@ -43,11 +43,10 @@ function moved(whole: Measure, before: Measure, after: Measure): Measure {
     levels: { p10: whole.levels.p10 + d(after.levels.p10, before.levels.p10), p50: whole.levels.p50 + d(after.levels.p50, before.levels.p50), p90: whole.levels.p90 + d(after.levels.p90, before.levels.p90), p95: whole.levels.p95 + d(after.levels.p95, before.levels.p95), p99: whole.levels.p99 + d(after.levels.p99, before.levels.p99) },
   }
 }
-const ringLeft = (r: RingMeasure | null | undefined) => (r && r.burstMs ? ((r.excessDb[r.offsets.indexOf(100)] ?? 0) + (r.excessDb[r.offsets.indexOf(150)] ?? 0)) / 2 : null)
 
 /** How far a measured result is from the target, all things in one number (dB-ish): used only to keep the best attempt. */
-function badness(s: Steered, after: Measure, ringAfter: RingMeasure | null, target: ReciterTarget): number {
-  const over = after.levels.p99 - after.levels.p50, left = ringLeft(ringAfter)
+function badness(s: Steered, after: Measure, ringAfter: RingMeasure | null, target: AudioTarget): number {
+  const over = after.levels.p99 - after.levels.p50, left = ringLeftover(ringAfter)
   return toneDistance(after, target, s.held) + 0.5 * Math.abs(over - target.over) + 0.5 * Math.max(0, staticOver(after, target)) + 0.5 * Math.max(0, (left ?? target.ring) - target.ring)
 }
 
