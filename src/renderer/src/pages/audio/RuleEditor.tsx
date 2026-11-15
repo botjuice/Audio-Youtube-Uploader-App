@@ -7,7 +7,7 @@ import { KNOBS, MODULE_ORDER, MODULE_TITLES, SIGNAL_FLOW, countOn, defaultModule
 import { MAX_REFERENCES, type AudioRule } from '@core/audio-rules'
 import type { ReportRow, SuggestNote } from '@core/audio-steer'
 import { validateLook } from '../../../../plugins/audio/look'
-import { Badge, Button, Select, Empty } from '@/components/ui'
+import { Badge, Button, Select, Spinner, Empty } from '@/components/ui'
 import { errText, useStore } from '@/store'
 import { DEFAULT_RULE, Reasons, ResultTable, Segmented, Stat, db, fmtTime, newRuleId, shortName } from './shared'
 import { EqEditor } from './EqEditor'
@@ -55,16 +55,22 @@ export function RuleEditor({ initialKey, onBack }: { initialKey: string; onBack:
   // a reference that follows the first one: ask what the first one's settings come to on this recording
   const followKey = mode === 'setup' && ref && !ref.modules && first?.modules ? JSON.stringify([first.recordId, ref.recordId, first.modules]) : null
   const [followed, setFollowed] = useState<{ key: string; modules: Modules; result: { how: string; report: ReportRow[] | null; findings: string[]; notes: SuggestNote[] } } | null>(null)
+  const [followStage, setFollowStage] = useState<string | null>(null)
   useEffect(() => {
     if (!followKey || !first?.modules || !ref) return
     let live = true
+    // show what it is doing on the Auto-set button while this recording is measured and steered (10 to 30 seconds)
+    setFollowStage('Measuring…')
+    const off = window.api.on('audioMeasure', (p) => { if (live && p.stage) setFollowStage(p.stage) })
     window.api.followAudioSettings(first.modules, first.recordId, ref.recordId)
       .then((r) => { if (live) setFollowed({ key: followKey, modules: r.modules, result: { how: r.how, report: r.report, findings: r.findings, notes: r.notes } }) })
       .catch((e) => { if (live) notify('error', errText(e)) })
-    return () => { live = false }
+      .finally(() => { off(); if (live) setFollowStage(null) })
+    return () => { live = false; off(); setFollowStage(null) }
   }, [followKey])  // eslint-disable-line react-hooks/exhaustive-deps
   const following = mode === 'setup' && !!ref && !ref.modules
   const followReady = following && followed?.key === followKey
+  const followBusy = following && !followReady
   const modules: Modules = mode === 'try' ? tryModules : !ref ? defaultModules() : ref.modules ?? (followReady ? followed!.modules : defaultModules())
   const editable = mode === 'try' ? !!tryId : !!ref && (!following || followReady)
   const setModules = (next: Modules | ((m: Modules) => Modules)) => {
@@ -197,7 +203,7 @@ export function RuleEditor({ initialKey, onBack }: { initialKey: string; onBack:
                   {draft.refs.map((r, i) => (
                     <span key={r.recordId} className={clsx('inline-flex max-w-full items-center gap-1 rounded-lg border px-2 py-1', i === refIndex ? 'border-accent bg-accent/10' : 'border-border')}>
                       <button type="button" className="min-w-0 truncate text-left no-drag" onClick={() => setRefIndex(i)} title={name(r.recordId)}>
-                        <span className="font-medium">{i + 1}.</span> {short(r.recordId)} <span className="text-muted">{i === 0 ? '· sets the sound' : r.modules ? '· own settings' : '· follows 1'}</span>
+                        <span className="font-medium">{i + 1}.</span> {short(r.recordId)} <span className="text-muted">{i === 0 ? '· sets the sound' : r.modules ? '· own settings' : i === refIndex && followBusy ? '· analysing…' : '· follows 1'}</span>
                       </button>
                       {i > 0 && r.modules && <button type="button" className="text-muted hover:text-text no-drag" onClick={() => setDraft((d) => ({ ...d, refs: d.refs.map((x, k) => (k === i ? { ...x, modules: null } : x)) }))} title="Drop this reference’s own settings and follow reference 1 again"><Undo2 size={12} /></button>}
                       <button type="button" className="text-muted hover:text-err no-drag" onClick={() => removeRef(i)} title="Remove from the rule"><X size={12} /></button>
@@ -227,7 +233,8 @@ export function RuleEditor({ initialKey, onBack }: { initialKey: string; onBack:
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" disabled={!record || !!autoBusy || !editable || (mode === 'try' && dirty)} onClick={autoSet}
               title={mode === 'try' ? 'Measures this recording and steers it to the rule, exactly as an upload would: tone, evenness, static, ringing after “s” sounds, loudness. Takes 10 to 30 seconds.' : 'A starting point: sets every module on this reference from the default rule. Then adjust by ear. Takes 10 to 30 seconds.'}>
-              <WandSparkles size={13} /> {autoBusy ? (autoBusy.total ? `Measuring ${autoBusy.done}/${autoBusy.total}…` : autoBusy.stage ?? 'Measuring…') : mode === 'try' ? 'Apply the rule' : 'Auto-set'}</Button>
+              {autoBusy || followBusy ? <Spinner /> : <WandSparkles size={13} />} {autoBusy ? (autoBusy.total ? `Measuring ${autoBusy.done}/${autoBusy.total}…` : autoBusy.stage ?? 'Measuring…') : followBusy ? followStage ?? 'Measuring…' : mode === 'try' ? 'Apply the rule' : 'Auto-set'}</Button>
+            {followBusy && <span className="text-[11.5px] text-muted">Auto-setting reference {refIndex + 1} to sound like reference 1. This takes 10 to 30 seconds.</span>}
             <Button size="sm" variant="ghost" disabled={!record || analysing} onClick={analyse} title="Measure the whole recording: loudness, peaks, hiss, rumble, clipping"><Waves size={13} /> {analysing ? 'Analysing…' : analysis ? 'Re-analyse' : 'Analyse recording'}</Button>
           </div>
           {analysis && (
