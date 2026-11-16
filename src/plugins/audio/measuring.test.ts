@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import ffmpegStatic from 'ffmpeg-static'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { AudioError, CATALOG, RING_VERSION, checkLook, discard, levellingGain, measure, processAudio, ring, ringSplit, type AudioHost, type Look } from './index'
+import { AudioError, CATALOG, LOOK_PRESETS, RING_VERSION, checkLook, discard, filtersUsed, levellingGain, measure, processAudio, ring, ringSplit, type AudioHost, type Look } from './index'
 import { generateCatalog } from './catalog-gen'
 import { checkFfmpeg, ffmpegRelease } from './ffmpeg'
 
@@ -57,10 +57,15 @@ describe('the ffmpeg that ships with the app', () => {
     const absent = Object.keys(CATALOG.filters).filter((name) => !here.filters[name])
     const sig = (f: { options: { name: string; type: string }[] }) => f.options.map((o) => `${o.name}:${o.type}`).sort().join(' ')
     const different = Object.keys(CATALOG.filters).filter((name) => here.filters[name] && sig(here.filters[name]!) !== sig(CATALOG.filters[name]!))
-    expect(different, 'filters whose options differ in this build').toEqual([])
-    expect(absent, 'catalog filters this build was made without').toEqual([])
+    expect(different.map((name) => `${name}: ${sig(here.filters[name]!)} ≠ ${sig(CATALOG.filters[name]!)}`.slice(0, 300)), 'filters whose options differ in this build').toEqual([])
+    // a build may leave filters out (they need a library the builder did not include): looks that use one are refused
+    // with a reason. What the plugin runs itself, and its presets, must be there on every system.
+    if (absent.length) console.warn(`This ffmpeg build was made without ${absent.length} of the catalog's filters: ${absent.join(', ')}`)
+    const needed = new Set(['aresample', 'aformat', 'asetpts', 'volume', 'alimiter', 'ebur128', 'astats', 'ametadata', 'asetnsamples', 'aeval', 'highpass', 'lowpass', 'acrossover', 'join', 'anull',
+      ...Object.values(LOOK_PRESETS).flatMap((p) => filtersUsed(p.look as Look).map((u) => u.filter))])
+    expect(absent.filter((name) => needed.has(name)), 'filters the plugin itself needs').toEqual([])
     const build = await checkFfmpeg(bin)
-    for (const name of Object.keys(CATALOG.filters)) expect(build.filters.has(name), name).toBe(true)
+    expect(Object.keys(CATALOG.filters).filter((name) => !build.filters.has(name)).sort()).toEqual([...absent].sort())   // the runtime check sees the same
   }, 120_000)
 
   it('a look that needs a filter the build lacks is refused on that step', async () => {

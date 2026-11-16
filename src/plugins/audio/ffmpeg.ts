@@ -78,7 +78,7 @@ export function runFfmpeg(bin: string, args: string[], o: RunOptions = {}): Prom
       if (cancelled) return reject(new FfmpegError('CANCELLED', 'Cancelled'))
       if (stalled) return reject(new FfmpegError('TIMEOUT', o.maxMs && Date.now() - started > o.maxMs ? `ffmpeg took longer than ${Math.round(o.maxMs / 1000)} s and was stopped.` : `ffmpeg made no progress for ${Math.round(stallMs / 1000)} s and was stopped (at ${lastPos < 0 ? 'the start' : `${lastPos.toFixed(1)} s`}).`, all))
       if (code !== 0) {
-        const tail = stderr.trim().split('\n').filter((l) => l.trim()).slice(-4).join(' · ')
+        const tail = stderr.trim().split(/\r?\n/).filter((l) => l.trim()).slice(-4).join(' · ')
         const how = sig ? `crashed (${sig})` : `exited with code ${code}`
         return reject(new FfmpegError('PROCESS_FAILED', `ffmpeg ${how}${tail ? `: ${tail}` : ''}`, all))
       }
@@ -119,7 +119,7 @@ function quick(bin: string, args: string[], signal?: AbortSignal): Promise<{ std
 export async function probe(bin: string, file: string, signal?: AbortSignal): Promise<Probe> {
   const { stderr } = await quick(bin, ['-hide_banner', '-i', file], signal)
   const p = parseProbe(stderr)
-  if (!p) throw new Error(stderr.trim().split('\n').filter((l) => l.trim()).slice(-2).join(' · ') || 'ffmpeg could not read the file')
+  if (!p) throw new Error(stderr.trim().split(/\r?\n/).filter((l) => l.trim()).slice(-2).join(' · ') || 'ffmpeg could not read the file')
   return p
 }
 

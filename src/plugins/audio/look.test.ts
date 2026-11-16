@@ -198,6 +198,9 @@ describe('graph', () => {
     expect(g.files).toEqual(['/ir/hall.wav'])
     expect(g.filePaths).toEqual(['chain[1].inputs[0]'])
     expect(g.filterPaths).toEqual(['chain[0]', '', 'chain[0].outputs[1][0].inputs[0].chain[0]', 'chain[0].outputs[1][0]', 'chain[0].merge', 'chain[1]', 'chain[2].inputs[0]', 'chain[2]', ''])
+    // Windows prints the address without 0x and ends lines with \r\n
+    expect(errorsByStep("[Parsed_adelay_2 @ 000001E5C0D5B0C0] Delay must be positive\r\n[Parsed_afir_5 @ 000001e5c0d5b0c0] Too short\r\n", g.filterPaths)).toEqual(errorsByStep("[Parsed_adelay_2 @ 0x7f8] Delay must be positive\n[Parsed_afir_5 @ 0x1] Too short", g.filterPaths))
+    expect(errorsByStep("[Parsed_adelay_2 @ 000001E5C0D5B0C0] Delay must be positive\r\n", g.filterPaths)).toHaveLength(1)
     expect(errorsByStep("[Parsed_adelay_2 @ 0x7f8] Delay must be positive\n[Parsed_afir_5 @ 0x1] Too short\nThe filters 'Parsed_afir_5' and 'format_out_0_0' do not have a common format", g.filterPaths)).toEqual([
       { path: 'chain[0].outputs[1][0].inputs[0].chain[0]', message: 'adelay: Delay must be positive' },
       { path: 'chain[1]', message: 'afir: Too short' },

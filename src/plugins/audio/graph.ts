@@ -139,7 +139,8 @@ export function buildGraph(look: Look, o: BuildOptions): BuiltGraph {
   return { graph: segments.join(';'), files, filePaths, filterPaths }
 }
 
-/** Turns ffmpeg's "[Parsed_<name>_<i> @ 0x…] message" lines into look paths. */
+/** Turns ffmpeg's "[Parsed_<name>_<i> @ 0x…] message" lines into look paths. The address is printed as the system
+ *  prints pointers: "0x600001c0c000" on macOS and Linux, "000001e5c0d5b0c0" on Windows, where lines also end in \r. */
 export function errorsByStep(stderr: string, filterPaths: string[]): { path: string; message: string }[] {
   const out: { path: string; message: string }[] = []
   const add = (name: string, index: string, message: string) => {
@@ -147,8 +148,8 @@ export function errorsByStep(stderr: string, filterPaths: string[]): { path: str
     const text = `${name}: ${message.trim()}`
     if (!out.some((x) => x.path === path && x.message === text)) out.push({ path, message: text })
   }
-  for (const line of stderr.split('\n')) {
-    const own = /\[Parsed_(\w+?)_(\d+) @ 0x[0-9a-f]+\] (.+)/.exec(line)          // a filter's own message
+  for (const line of stderr.split(/\r?\n/)) {
+    const own = /\[Parsed_(\w+?)_(\d+) @ (?:0x)?[0-9a-fA-F]+\] (.+)/.exec(line)          // a filter's own message
     if (own) { add(own[1]!, own[2]!, own[3]!); continue }
     const about = /'Parsed_(\w+?)_(\d+)'/.exec(line)                              // ffmpeg talking about a filter
     if (about) add(about[1]!, about[2]!, line.replace(/'Parsed_(\w+?)_\d+'/g, "'$1'"))

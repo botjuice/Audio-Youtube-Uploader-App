@@ -133,15 +133,17 @@ function roleOf(sig: string, inputs: Pad[] | 'dynamic', outputs: Pad[] | 'dynami
 }
 
 export function generateCatalog(ffmpeg: string): Catalog {
-  const version = execFileSync(ffmpeg, ['-hide_banner', '-version'], { encoding: 'utf8' }).split('\n')[0]!.trim()
-  const list = execFileSync(ffmpeg, ['-hide_banner', '-filters'], { encoding: 'utf8' }).split('\n')
+  // ffmpeg ends its lines with \r\n on Windows: read as text with plain line ends, so the same build gives the same catalog everywhere
+  const ask = (...args: string[]) => execFileSync(ffmpeg, ['-hide_banner', ...args], { encoding: 'utf8' }).replace(/\r\n/g, '\n')
+  const version = ask('-version').split('\n')[0]!.trim()
+  const list = ask('-filters').split('\n')
   const filters: Record<string, CatalogFilter> = {}
   for (const line of list) {
     const m = /^ ([.T])([.S])([.C]) (\S+)\s+(\S+->\S+)\s/.exec(line)
     if (!m) continue
     const [, t, s, c, name, sig] = m as unknown as [string, string, string, string, string, string]
     if (!/^[A|N]+->[A|N]+$/.test(sig) || EXCLUDED.has(name)) continue   // audio-only filters
-    const help = execFileSync(ffmpeg, ['-hide_banner', '-h', `filter=${name}`], { encoding: 'utf8' })
+    const help = ask('-h', `filter=${name}`)
     const f = parseFilterHelp(name, help)
     if (f.inputs !== 'dynamic' && f.inputs.some((p) => p.type !== 'audio')) continue
     if (f.outputs !== 'dynamic' && f.outputs.some((p) => p.type !== 'audio')) continue
