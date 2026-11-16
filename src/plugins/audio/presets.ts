@@ -28,18 +28,19 @@ export const LOOK_PRESETS: Record<string, Preset> = {
 
   springTamer: {
     label: 'Spring tamer',
-    desc: 'Ducks everything above 4.5 kHz for a few hundred ms after each "s", where a mixer reverb rings. The key is delayed 120 ms so the "s" itself passes untouched.',
+    desc: 'Ducks only 4.8–5.75 kHz, where the mixer reverb rings longest after each "s" (measured on 62 "s" sounds in Isha Al Imran), by up to ~7 dB for about 0.7 s. The key is that band delayed 200 ms (longer than most "s" sounds) so the "s" itself passes; 120 dB/oct band edges keep 6–9 kHz untouched.',
     look: {
       chain: [{
-        filter: 'acrossover', options: { split: '4500' },
+        filter: 'acrossover', options: { split: '4800 5750', order: '20th' },
         outputs: [
           [],
           [{
-            filter: 'sidechaincompress', options: { threshold: 0.0251, ratio: 4, attack: 5, release: 300, knee: 2, detection: 'rms' },
-            inputs: [{ kind: 'signal', chain: [{ filter: 'adelay', options: { delays: '120', all: true } }] }],
+            filter: 'sidechaincompress', options: { threshold: 0.00794, ratio: 20, attack: 5, release: 700, knee: 2, detection: 'rms' },
+            inputs: [{ kind: 'signal', chain: [{ filter: 'adelay', options: { delays: '200', all: true } }] }],
           }],
+          [],
         ],
-        merge: { filter: 'amix', options: { inputs: 2, normalize: false } },
+        merge: { filter: 'amix', options: { inputs: 3, normalize: false } },
       }],
     },
   },
