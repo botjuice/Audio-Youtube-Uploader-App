@@ -2,13 +2,27 @@ import { describe, expect, it } from 'vitest'
 import { CATALOG, filterInfo, optionInfo, padCount } from './catalog'
 import { parseFilterHelp } from './catalog-gen'
 import { buildGraph, errorsByStep, escapeValue, filterText } from './graph'
-import { describeLook, EMPTY_LOOK, validateLook, walkSteps, type Look } from './look'
+import { describeLook, EMPTY_LOOK, filtersUsed, validateLook, walkSteps, type Look } from './look'
 import { LOOK_PRESETS } from './presets'
 import { isV1Look, lookFromV1 } from './v1'
 import { parseEbur, parseOutputStream, parseProbe, percentile } from './ffmpeg'
 
 const valid = (x: unknown): Look => { const v = validateLook(x); if (!v.ok) throw new Error(JSON.stringify(v.errors)); return v.look }
 const errorsOf = (x: unknown) => { const v = validateLook(x); return v.ok ? [] : v.errors }
+
+describe('filtersUsed', () => {
+  it('lists every filter a look runs with its place: steps, branches, merges and generated sources, not bypassed steps', () => {
+    const look = valid({ chain: [
+      { filter: 'highpass' }, { filter: 'afftdn', bypass: true },
+      { filter: 'amix', inputs: [{ kind: 'generate', filter: 'sine', chain: [{ filter: 'volume', options: { volume: 0.1 } }] }] },
+      { filter: 'acrossover', options: { split: '2000' }, outputs: [[], [{ filter: 'aecho' }]], merge: { filter: 'amix', options: { inputs: 2 } } },
+    ] })
+    expect(filtersUsed(look).map((u) => `${u.path} ${u.filter}`)).toEqual([
+      'chain[0] highpass', 'chain[2] amix', 'chain[2].inputs[0] sine', 'chain[2].inputs[0].chain[0] volume',
+      'chain[3] acrossover', 'chain[3].outputs[1][0] aecho', 'chain[3].merge amix',
+    ])
+  })
+})
 
 describe('catalog (generated from the bundled ffmpeg)', () => {
   it('has every audio filter, with roles that cover all of them', () => {

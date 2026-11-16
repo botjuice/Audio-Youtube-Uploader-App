@@ -4,7 +4,12 @@ on:
   pull_request:
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # every system the app ships on: each bundles its own build of ffmpeg, and the audio tests run against it
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

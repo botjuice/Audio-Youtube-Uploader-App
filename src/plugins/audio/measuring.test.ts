@@ -9,7 +9,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import ffmpegStatic from 'ffmpeg-static'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { AudioError, RING_VERSION, discard, levellingGain, measure, processAudio, ring, ringSplit, type AudioHost, type Look } from './index'
+import { AudioError, CATALOG, RING_VERSION, checkLook, discard, levellingGain, measure, processAudio, ring, ringSplit, type AudioHost, type Look } from './index'
+import { generateCatalog } from './catalog-gen'
+import { checkFfmpeg, ffmpegRelease } from './ffmpeg'
 
 const bin = ffmpegStatic as unknown as string
 const tmp = mkdtempSync(join(tmpdir(), 'yj-measuring-'))
@@ -38,6 +40,42 @@ const failure = async (p: Promise<unknown>): Promise<AudioError> => {
   expect(e).toBeInstanceOf(AudioError)
   return e as AudioError
 }
+
+describe('the ffmpeg that ships with the app', () => {
+  it('is the release the catalog was made from, whoever built it', async () => {
+    expect(ffmpegRelease('ffmpeg version 6.0 Copyright (c) 2000-2023 the FFmpeg developers')).toBe('6.0')
+    expect(ffmpegRelease('ffmpeg version 6.0-essentials_build-www.gyan.dev Copyright (c) 2000-2023 the FFmpeg developers')).toBe('6.0')
+    expect(ffmpegRelease('ffmpeg version 6.1.1-essentials_build-www.gyan.dev Copyright (c) 2000-2023 the FFmpeg developers')).toBe('6.1.1')
+    expect(ffmpegRelease('ffmpeg version n6.0-static https://johnvansickle.com/ffmpeg/')).toBe('6.0')
+    expect(ffmpegRelease('something else')).toBeNull()
+    const here = generateCatalog(bin)
+    expect(ffmpegRelease(here.ffmpeg), here.ffmpeg).toBe(ffmpegRelease(CATALOG.ffmpeg))
+  }, 120_000)
+
+  it('has every filter the catalog lists, with the same options (builds of one release differ only in what was left out)', async () => {
+    const here = generateCatalog(bin)
+    const absent = Object.keys(CATALOG.filters).filter((name) => !here.filters[name])
+    const sig = (f: { options: { name: string; type: string }[] }) => f.options.map((o) => `${o.name}:${o.type}`).sort().join(' ')
+    const different = Object.keys(CATALOG.filters).filter((name) => here.filters[name] && sig(here.filters[name]!) !== sig(CATALOG.filters[name]!))
+    expect(different, 'filters whose options differ in this build').toEqual([])
+    expect(absent, 'catalog filters this build was made without').toEqual([])
+    const build = await checkFfmpeg(bin)
+    for (const name of Object.keys(CATALOG.filters)) expect(build.filters.has(name), name).toBe(true)
+  }, 120_000)
+
+  it('a look that needs a filter the build lacks is refused on that step', async () => {
+    const build = await checkFfmpeg(bin)
+    build.filters.delete('aecho')   // as if this build had been made without it
+    try {
+      const look: Look = { chain: [{ filter: 'highpass' }, { filter: 'aecho' }, { filter: 'aecho', bypass: true }], level: { lufs: -16, ceiling: -1 } }
+      const want = { path: 'chain[1]', message: 'the ffmpeg on this computer was built without the aecho filter' }
+      expect(await processAudio({ audioPath: mono, look }, host())).toMatchObject({ ok: false, reason: 'INVALID_LOOK', errors: [want] })
+      expect(await checkLook(look, host())).toEqual({ ok: false, errors: [want] })
+      expect(await levellingGain(mono, look, host())).toMatchObject({ ok: false, reason: 'INVALID_LOOK', errors: [want] })
+      expect(await failure(measure(mono, host(), look))).toMatchObject({ reason: 'INVALID_LOOK', errors: [want] })
+    } finally { build.filters.add('aecho') }
+  }, 60_000)
+})
 
 describe('ring and ringSplit through the plugin', () => {
   it('find the bursts and where they ring', async () => {

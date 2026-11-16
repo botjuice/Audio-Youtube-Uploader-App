@@ -24,7 +24,11 @@ recording ─▶ [ step ] ─▶ [ step ] ─▶ [ split ─┬─ branch rack �
 - **Catalog** (`catalog.json`, generated from the bundled ffmpeg): every audio filter — 139 of them —
   with every option: type, exact min/max, default, named choices, aliases, description. **This is
   what the UI draws knobs from.** Nothing is hand-written; regenerate with `npm run audio -- catalog`
-  if ffmpeg is ever upgraded (the plugin refuses to run against a different ffmpeg until you do).
+  if ffmpeg is ever upgraded (the plugin refuses to run against another ffmpeg release until you do).
+  The app ships **ffmpeg 6.0 on every system** (`ffmpeg-static` pinned to 5.2.0: its newer releases give
+  Windows 6.1.1 while macOS stays on 6.0). The builds come from different builders, so the plugin compares
+  the release number, not the whole version line, and reads which filters the build at hand has: a look
+  that needs one it was made without is refused on that step (`INVALID_LOOK`).
 - **Look** = `{ chain: Step[], level?: { lufs, ceiling } }`. A step = one ffmpeg filter + the options
   the user changed. Unset options stay at ffmpeg's defaults.
 - **Levelling** (`level`) is the only plugin-owned stage: measure → one fixed gain → true-peak limiter
@@ -46,7 +50,7 @@ recording ─▶ [ step ] ─▶ [ step ] ─▶ [ split ─┬─ branch rack �
 | `ffmpeg.ts` | runner (progress, cancel, stall watchdog, hard time limit, crash detection), parsers, version check | main only |
 | `catalog-gen.ts` | builds `catalog.json` from `ffmpeg -filters` / `-h filter=…` | main only |
 | `analyse.ts`, `cache.ts`, `cli.ts` | measurements; cache keys; command line | main only |
-| `*.test.ts` | 69 tests on synthetic audio with the real bundled ffmpeg (~25 s) | — |
+| `*.test.ts` | 73 tests on synthetic audio with the real bundled ffmpeg (~30 s) | — |
 
 The renderer already compiles `look.ts`; everything it imports (catalog, JSON) comes along. The
 catalog JSON is ~345 KB.
@@ -297,10 +301,10 @@ npm run audio -- gain <file> [--look … | --preset …]                       t
 
 ## 9. What was verified
 
-- **Unit + end-to-end tests:** 69 in the plugin (catalog parsing, validation paths, graph strings,
+- **Unit + end-to-end tests:** 73 in the plugin (catalog parsing, validation paths, graph strings,
   escaping round-trips through ffmpeg, every preset, sidechain/split/file/generate inputs, recording-time
   previews, v1 conversion, levelling, refusals, cancel, both watchdog cases; for the measuring calls: what they
-  refuse, cancel, stall, endless sources, stereo, a given gain and rate). Whole repo: 243 pass.
+  refuse, cancel, stall, endless sources, stereo, a given gain and rate; the bundled build against the catalog). Whole repo: 247 pass.
 - **2.1.0 against 2.0.0 on real recordings** (2026-11-15: a 37 s and a 3.8 min mono recording and a stereo file;
   `measure`, `ring`, `ringSplit`, `analyse`, `levellingGain`, `processAudio`, plain, through a look and over a
   stretch, 33 results): identical, except that `levellingGain` now rounds its gain and `ringSplit` reads both
@@ -327,7 +331,9 @@ npm run audio -- gain <file> [--look … | --preset …]                       t
 ## 10. ffmpeg 6.0 gotchas (learned the hard way — keep)
 
 1. **Unknown filter options crash ffmpeg (SIGSEGV)** instead of erroring → every option is checked
-   against the catalog first, and the catalog must match the binary (checked by version string).
+   against the catalog first, and the catalog must match the binary's release (checked by the release
+   number in its version line; a test on each system checks the build has every catalog filter with the
+   same options).
 2. **After a filter refuses its settings, ffmpeg sometimes crashes while cleaning up.** When it named
    the filter while setting up the graph, the plugin reports `INVALID_LOOK` on that step, not a crash.
 3. **`afir` outputs only the wet signal** — its `dry` option scales what goes *into* the convolution.

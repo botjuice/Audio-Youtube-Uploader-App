@@ -182,14 +182,22 @@ export function percentile(values: number[], q: number): number {
 
 // ── Capability check ─────────────────────────────────────────────────────────
 
-const checked = new Map<string, Promise<void>>()
+/** What is known about a binary once it has been checked: the filters this build of it has. */
+export interface FfmpegBuild { filters: Set<string> }
+const checked = new Map<string, Promise<FfmpegBuild>>()
+
+/** The release a version line names, without the builder's own suffix: "6.0" from
+ *  "ffmpeg version 6.0-essentials_build-www.gyan.dev Copyright …". null when it is not ffmpeg's version line. */
+export const ffmpegRelease = (versionLine: string): string | null => /^ffmpeg version n?(\d+(?:\.\d+)*)/.exec(versionLine)?.[1] ?? null
 
 /**
- * Binary exists and is the ffmpeg the catalog was generated from. A different build can have other
+ * Binary exists and is the ffmpeg release the catalog was generated from. Another release can have other
  * options, and this ffmpeg crashes on an option it doesn't know — so a mismatch is refused until the
- * catalog is regenerated (`npm run audio -- catalog`). Cached per binary path.
+ * catalog is regenerated (`npm run audio -- catalog`). Builds of one release (macOS, Windows, Linux come
+ * from different builders) have the same options but not always the same filters, so the filters this
+ * one has are read too. Cached per binary path.
  */
-export function checkFfmpeg(bin: string): Promise<void> {
+export function checkFfmpeg(bin: string): Promise<FfmpegBuild> {
   let p = checked.get(bin)
   if (!p) {
     p = (async () => {
@@ -197,7 +205,10 @@ export function checkFfmpeg(bin: string): Promise<void> {
       const version = (await quick(bin, ['-hide_banner', '-version']).catch((e: unknown) => {
         throw e instanceof FfmpegError && e.reason === 'TIMEOUT' ? new FfmpegError('FFMPEG_UNUSABLE', `ffmpeg (${bin}) did not answer when asked for its version.`) : e
       })).stdout.split('\n')[0]!.trim()
-      if (version !== CATALOG.ffmpeg) throw new FfmpegError('FFMPEG_UNUSABLE', `The audio filter catalog was made for "${CATALOG.ffmpeg}" but this ffmpeg is "${version}". Regenerate it: npm run audio -- catalog`)
+      const release = ffmpegRelease(version)
+      if (!release || release !== ffmpegRelease(CATALOG.ffmpeg)) throw new FfmpegError('FFMPEG_UNUSABLE', `The audio filter catalog was made for "${CATALOG.ffmpeg}" but this ffmpeg is "${version}". Regenerate it: npm run audio -- catalog`)
+      const list = (await quick(bin, ['-hide_banner', '-filters'])).stdout
+      return { filters: new Set([...list.matchAll(/^ [.T][.S][.C] (\S+)\s/gm)].map((m) => m[1]!)) }
     })()
     p.catch(() => checked.delete(bin))
     checked.set(bin, p)

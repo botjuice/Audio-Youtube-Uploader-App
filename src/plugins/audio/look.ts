@@ -256,6 +256,17 @@ export function validateLook(input: unknown): LookValidation {
   return errors.length ? { ok: false, errors } : { ok: true, look }
 }
 
+/** Every filter a look runs, with where: steps, merges, and the sources that generate audio. */
+export function filtersUsed(look: Look): { filter: string; path: string }[] {
+  const out: { filter: string; path: string }[] = []
+  walkSteps(look, (s, path) => {
+    if (s.bypass) return
+    out.push({ filter: s.filter, path })
+    s.inputs?.forEach((src, j) => { if (src.kind === 'generate') out.push({ filter: src.filter, path: `${path}.inputs[${j}]` }) })
+  })
+  return out
+}
+
 /** Visits every step (main chain, source chains, branches, merges) with its path. */
 export function walkSteps(look: Look, visit: (s: Step, path: string) => void): void {
   const chain = (steps: Step[], path: string) => steps.forEach((s, i) => {

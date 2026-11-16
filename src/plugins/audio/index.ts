@@ -22,15 +22,15 @@ import { analyseFile } from './analyse'
 import { measureFile } from './measure'
 import { DEFAULT_SPLIT, findSplitFile, measureRingFile } from './ring'
 import { audioFile, cacheKey, metaFile, nonEmpty, partFile, writeAtomic } from './cache'
-import { FfmpegError, checkFfmpeg, parseEbur, parseOutputStream, probe, runFfmpeg, type Probe } from './ffmpeg'
+import { FfmpegError, checkFfmpeg, parseEbur, parseOutputStream, probe, runFfmpeg, type FfmpegBuild, type Probe } from './ffmpeg'
 import { buildGraph, errorsByStep, n, type BuiltGraph } from './graph'
-import { EMPTY_LOOK, validateLook, type Level, type Look, type LookError } from './look'
+import { EMPTY_LOOK, filtersUsed, validateLook, type Level, type Look, type LookError } from './look'
 import { AudioError, type AfterMeasure, type AudioAnalysis, type AudioHost, type AudioJob, type AudioReason, type AudioResult, type LookCheck, type Measure, type PluginManifest, type RingMeasure, type RingSplit } from './types'
 
 export type { AfterMeasure, AudioAnalysis, AudioHost, AudioJob, AudioReason, AudioResult, LookCheck, Measure, PluginManifest, RingBand, RingMeasure, RingSplit } from './types'
 export { AudioError, MEASURE_BANDS, MEASURE_VERSION, RING_VERSION } from './types'
 export { CATALOG, filterInfo, filtersByCategory, optionInfo, padCount, type Catalog, type CatalogFilter, type CatalogOption, type FilterRole, type OptionType } from './catalog'
-export { EMPTY_LOOK, LEVEL_FIELDS, LIMITS, coerceOption, describeLook, validateLook, walkSteps, type Level, type Look, type LookError, type LookValidation, type NumberField, type OptionValue, type Source, type Step } from './look'
+export { EMPTY_LOOK, LEVEL_FIELDS, LIMITS, coerceOption, describeLook, filtersUsed, validateLook, walkSteps, type Level, type Look, type LookError, type LookValidation, type NumberField, type OptionValue, type Source, type Step } from './look'
 export { LOOK_PRESETS, type Preset } from './presets'
 export { isV1Look, lookFromV1 } from './v1'
 
@@ -95,6 +95,11 @@ function ffmpegFailure(e: FfmpegError, g: BuiltGraph): Fail {
   return fail('PROCESS_FAILED', e.message, errors)
 }
 
+/** Steps whose filter this build of ffmpeg was made without (the catalog lists what the release has; a build can leave some out). */
+function notInBuild(look: Look, build: FfmpegBuild): LookError[] {
+  return filtersUsed(look).filter((u) => !build.filters.has(u.filter)).map((u) => ({ path: u.path, message: `the ffmpeg on this computer was built without the ${u.filter} filter` }))
+}
+
 async function statFiles(g: BuiltGraph): Promise<{ ok: true; stats: [string, number, number][] } | { ok: false; errors: LookError[] }> {
   const stats: [string, number, number][] = [], errors: LookError[] = []
   for (const [i, f] of g.files.entries()) {
@@ -151,7 +156,8 @@ export async function processAudio(job: AudioJob, host: AudioHost): Promise<Audi
   let part: string | null = null
   let current: BuiltGraph = rack
   try {
-    await checkFfmpeg(bin)
+    const absent = notInBuild(look, await checkFfmpeg(bin))
+    if (absent.length) return fail('INVALID_LOOK', lookErrors(absent), absent)
     await fs.mkdir(host.outputDir, { recursive: true })
     host.onProgress?.(0)
 
@@ -257,7 +263,8 @@ export async function checkLook(lookInput: unknown, host: Pick<AudioHost, 'ffmpe
   const files = await statFiles(g)
   if (!files.ok) return { ok: false, errors: files.errors }
   try {
-    await checkFfmpeg(host.ffmpegPath)
+    const absent = notInBuild(v.look, await checkFfmpeg(host.ffmpegPath))
+    if (absent.length) return { ok: false, errors: absent }
     const tone = opts.channels === 2 ? "aevalsrc=exprs=0.3*sin(2*PI*440*t)|0.3*sin(2*PI*554*t):sample_rate=48000:channel_layout=stereo" : 'sine=frequency=440:sample_rate=48000'
     const input = opts.audioPath ? ['-t', n(seconds), '-i', opts.audioPath] : ['-f', 'lavfi', '-t', n(seconds), '-i', tone]
     const r = await runFfmpeg(host.ffmpegPath, ['-hide_banner', ...input, ...g.files.flatMap((f) => ['-i', f]), '-filter_complex', g.graph, '-map', '[out]', '-t', n(seconds + 5), '-f', 'null', '-'], { signal: host.signal, stallMs: 10_000, maxMs: 30_000 })
@@ -295,16 +302,19 @@ async function measuringInput(audioPath: string, host: MeasureHost, look: unknow
   if (!file.ok) throw thrown(file)
   const bad = spanProblem(span, 'span')
   if (bad) throw new AudioError('INVALID_JOB', bad)
-  let rack: BuiltGraph | undefined
+  let rack: BuiltGraph | undefined, valid: Look | undefined
   if (look !== undefined && look !== null) {
     const v = validateLook(look)
     if (!v.ok) throw new AudioError('INVALID_LOOK', lookErrors(v.errors), v.errors)
+    valid = v.look
     // levelling left out: one gain changes none of what is measured
     rack = buildGraph({ chain: v.look.chain }, { mode: 'chain', ...(span?.start ? { offset: span.start } : {}) })
     const files = await statFiles(rack)
     if (!files.ok) throw new AudioError('AUDIO_UNREADABLE', lookErrors(files.errors), files.errors)
   }
-  await checkFfmpeg(host.ffmpegPath)
+  const build = await checkFfmpeg(host.ffmpegPath)
+  const absent = valid ? notInBuild(valid, build) : []
+  if (absent.length) throw new AudioError('INVALID_LOOK', lookErrors(absent), absent)
   let src: Probe
   try { src = await probe(host.ffmpegPath, audioPath, host.signal) } catch (e) { throw e instanceof FfmpegError ? e : new AudioError('AUDIO_UNREADABLE', `ffmpeg cannot read ${audioPath}: ${errMsg(e)}`) }
   if (span && span.start >= src.durationSec) throw new AudioError('INVALID_JOB', `span.start (${span.start} s) is beyond the recording's end (${src.durationSec.toFixed(1)} s).`)
@@ -341,7 +351,8 @@ export async function levellingGain(audioPath: string, lookInput: unknown, host:
   const files = await statFiles(g)
   if (!files.ok) return fail('AUDIO_UNREADABLE', lookErrors(files.errors), files.errors)
   try {
-    await checkFfmpeg(host.ffmpegPath)
+    const absent = notInBuild(v.look, await checkFfmpeg(host.ffmpegPath))
+    if (absent.length) return fail('INVALID_LOOK', lookErrors(absent), absent)
     let src: Probe
     try { src = await probe(host.ffmpegPath, audioPath, host.signal) } catch (e) { if (e instanceof FfmpegError) throw e; return fail('AUDIO_UNREADABLE', `ffmpeg cannot read ${audioPath}: ${errMsg(e)}`) }
     const r = await runFfmpeg(host.ffmpegPath, ['-hide_banner', '-i', audioPath, ...g.files.flatMap((f) => ['-i', f]), '-filter_complex', g.graph, '-map', '[out]', '-t', n(outputCap(src.durationSec)), '-f', 'null', '-'], runOf(host))
