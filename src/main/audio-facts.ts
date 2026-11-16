@@ -4,7 +4,7 @@
  * rule's references and the upload stage all read the same facts and no file is measured twice, even across restarts.
  */
 import { promises as fs } from 'node:fs'
-import { MEASURE_VERSION, analyse, measure, ring, ringSplit, type AudioAnalysis, type Measure, type RingMeasure } from '../plugins/audio/index'
+import { MEASURE_VERSION, RING_VERSION, analyse, measure, ring, ringSplit, type AudioAnalysis, type Measure, type RingMeasure } from '../plugins/audio/index'
 import { ffmpegPath } from './ffmpeg'
 import { readJson, writeJson } from './jsonfile'
 import { stateFile } from './paths'
@@ -12,14 +12,14 @@ import { stateFile } from './paths'
 export interface AudioFile { /** path relative to the library: the key the facts are stored under */ rel: string; path: string }
 export interface Facts { measure: Measure; analysis: AudioAnalysis; ring: RingMeasure | null }
 
-/** Bump when what is stored changes shape or meaning (the plugin's own MEASURE_VERSION is part of the key too). */
+/** Bump when what is stored changes shape or meaning (the plugin's own MEASURE_VERSION and RING_VERSION are part of the key too). */
 const FACTS_VERSION = 1
 /** The search for where the ring starts runs on this much from the recording's middle: about 35 “s” sounds, enough to tell. */
 const SPLIT_SEARCH_S = 240
 
 interface Entry extends Facts { size: number; mtimeMs: number }
 interface Stored { v: string; files: Record<string, Entry> }
-export const FACTS_STORE_VERSION = `${FACTS_VERSION}.${MEASURE_VERSION}`
+export const FACTS_STORE_VERSION = `${FACTS_VERSION}.${MEASURE_VERSION}.${RING_VERSION}`
 const version = FACTS_STORE_VERSION
 const storeFile = (library: string) => stateFile(library, 'audio-facts.json')
 

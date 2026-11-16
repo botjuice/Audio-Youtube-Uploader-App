@@ -1,12 +1,10 @@
 # Audio plugin v2 — handover for the app designer
 
-**Status 2026-11-08:** plugin **v2.0.0** built and tested in `src/plugins/audio/` (uncommitted). It is
-now a **generic audio editor over ffmpeg**: a look is a rack of any ffmpeg audio filters with any of
-their options, at ffmpeg's own limits. v1's fixed knobs (cleanup / tone / dynamics / reverb / …) are
-gone; `lookFromV1` converts a saved v1 look into the same filters.
-
-**The app does not build until it is migrated** (section 7): `src/renderer/src/pages/Audio.tsx` and
-`src/shared/types.ts` still import v1 names (`DEFAULT_LOOK`, `LOOK_FIELDS`, `LookPatch`, …).
+**Status 2026-11-16:** plugin **v2.1.0** in `src/plugins/audio/`. It is a **generic audio editor over
+ffmpeg**: a look is a rack of any ffmpeg audio filters with any of their options, at ffmpeg's own
+limits. v1's fixed knobs (cleanup / tone / dynamics / reverb / …) are gone; `lookFromV1` converts a
+saved v1 look into the same filters. 2.1.0 adds the calls the app's audio rules are built on
+(`measure`, `ring`, `ringSplit`, `levellingGain`, `AudioJob.gainDb` / `rate`).
 
 Same rules as before: **data in → one file or a reason out**, imports nothing from `src/main` or
 `src/core`, never touches the original recording. Don't edit the plugin from the app side; hand
@@ -40,13 +38,15 @@ recording ─▶ [ step ] ─▶ [ step ] ─▶ [ split ─┬─ branch rack �
 | `look.ts` | `Look`/`Step`/`Source` types, `validateLook`, `describeLook`, `walkSteps`, `coerceOption`, `LEVEL_FIELDS`, `LIMITS` | **yes** |
 | `presets.ts` | `LOOK_PRESETS` (plain looks) | **yes** |
 | `v1.ts` | `isV1Look`, `lookFromV1` | **yes** |
-| `types.ts` | the contract: `AudioJob`, `AudioHost`, `AudioResult`, `LookCheck`, reasons | yes (types) |
-| `index.ts` | public surface: `processAudio`, `checkLook`, `analyse`, `discard`, `explain`, `manifest`, re-exports | main only |
+| `types.ts` | the contract: `AudioJob`, `AudioHost`, `AudioResult`, `LookCheck`, reasons, `Measure`, `RingMeasure`, `RingSplit`, `AudioError`, `MEASURE_BANDS`, `MEASURE_VERSION`, `RING_VERSION` | yes (types and constants) |
+| `index.ts` | public surface: `processAudio`, `checkLook`, `levellingGain`, `analyse`, `measure`, `ring`, `ringSplit`, `discard`, `explain`, `manifest`, re-exports | main only |
+| `measure.ts` | tone and level behaviour of a recording from one streamed decode (`Measurer`) | main only |
+| `ring.ts` | ringing after "s" sounds: bursts, what is left after them, where it starts | main only |
 | `graph.ts` | look → one `-filter_complex` graph; value escaping; ffmpeg errors → step paths | main only |
 | `ffmpeg.ts` | runner (progress, cancel, stall watchdog, hard time limit, crash detection), parsers, version check | main only |
 | `catalog-gen.ts` | builds `catalog.json` from `ffmpeg -filters` / `-h filter=…` | main only |
 | `analyse.ts`, `cache.ts`, `cli.ts` | measurements; cache keys; command line | main only |
-| `*.test.ts` | 44 tests on synthetic audio with the real bundled ffmpeg (~8 s) | — |
+| `*.test.ts` | 69 tests on synthetic audio with the real bundled ffmpeg (~25 s) | — |
 
 The renderer already compiles `look.ts`; everything it imports (catalog, JSON) comes along. The
 catalog JSON is ~345 KB.
@@ -108,35 +108,56 @@ isV1Look(x), lookFromV1(x)
 // main only
 processAudio(job, host): Promise<AudioResult>     // never throws
 checkLook(look, host, { audioPath?, seconds?, channels? }): Promise<LookCheck>   // ffmpeg's verdict, ~10–200 ms
-analyse(audioPath, host), discard(file), explain(look) → { graph, files }
+levellingGain(audioPath, look, host)              // never throws: { ok, gainDb, rackLufs, rackPeak, rate } | { ok: false, reason, message, errors? }
+analyse(audioPath, host): Promise<AudioAnalysis>                              // these four hand back numbers
+measure(audioPath, host, look?, span?): Promise<Measure | null>               // and throw AudioError { reason, message, errors? }
+ring(audioPath, host, splitHz = 4500, look?, span?): Promise<RingMeasure | null>
+ringSplit(audioPath, host, span?): Promise<RingSplit>
+discard(file), explain(look) → { graph, files }
 ```
 
-**`measure(audioPath, host): Promise<Measure | null>`** (added for Auto-set; reads only, changes no audio). One
-32 kHz mono decode, streamed, in 64 ms frames: `tone` and `quiet` per third-octave band (`MEASURE_BANDS`),
-`voiceDb`, `floorDb`, frame-level percentiles, `peakDb`, `sibilance`. Everything except `voiceDb` is relative
-to the recording's own voice level. `null` = silent or under two seconds. Bump `MEASURE_VERSION` when the
-meaning of a number changes: the app keeps measurements in `<library>/.yoosyjoosy/audio-measures.json` and
-redoes them on a version change. The suggestion logic itself is not in the plugin (`src/core/audio-suggest.ts`).
+**One contract for failures.** `processAudio`, `checkLook` and `levellingGain` return the reason. The four
+measuring calls throw an `AudioError` carrying the same reasons (`INVALID_JOB` for a bad path, `span` or `splitHz`;
+`AUDIO_UNREADABLE`; `INVALID_LOOK` with `errors[]` on the steps; `TIMEOUT`; `CANCELLED`, message "Cancelled";
+`FFMPEG_UNUSABLE`; `PROCESS_FAILED`). Every one of them takes `host.signal` and `host.stallMs`, runs through the same
+runner as a render, and is cut at max(2 × input, input + 60 s) when a look never ends. `discard` only removes files
+named as `processAudio` names its outputs.
 
-**`ring(audioPath, host, splitHz = 4500): Promise<RingMeasure | null>`** (for Auto-set; reads only). Finds the loud
-bursts in the band above `splitHz` ("s" sounds) and how far the band stays above its level from before after each one:
-burst length and level, the leftover at 50…1500 ms, how fast it dies away. `null` = under 30 s; `burstMs: 0` = too few
-bursts to say.
+**`measure(audioPath, host, look?, span?)`** (reads only, changes no audio). One 32 kHz mono decode, streamed, in
+64 ms frames: `tone` and `quiet` per third-octave band (`MEASURE_BANDS`), `voiceDb`, `floorDb`, frame-level
+percentiles, `peakDb`, `sibilance`. Everything except `voiceDb` is relative to the recording's own voice level.
+`null` = nothing to measure: silent (also when the look removes the signal) or under two seconds. Bump
+`MEASURE_VERSION` when the meaning of a number changes: the app keeps what it measured in
+`<library>/.yoosyjoosy/audio-facts.json` and in its rules' targets, and redoes both on a version change.
+
+**`ring(audioPath, host, splitHz = 4500, look?, span?)`** (reads only). Finds the loud bursts in the band above
+`splitHz` (100…20000 Hz; "s" sounds) and how far the band stays above its level from before after each one: burst
+length and level, the leftover at 50…1500 ms, how fast it dies away. `null` = under 30 s; `burstMs: 0` = too few bursts
+to say. **`ringSplit(audioPath, host, span?)`** says where that ring starts: it reads the bands between 3, 3.75, 4.5,
+5.5 and 7 kHz after each burst and returns the lower edge of the lowest one that rings (`splitHz`), what it found in
+each (`bands`) and how many bursts it could use (`bursts`; under 6 there is nothing to go on and `splitHz` is 4500).
+All three read the mono downmix. Bump `RING_VERSION` when `ring` / `ringSplit` change what their numbers mean.
 
 `measure` and `ring` also take a `look` (they then measure what that look's rack makes of the recording, levelling left
-out) and a `span` (`{ start, seconds }`: only that stretch). That is how Auto-set checks its own settings: process,
-measure, correct (`src/main/audio-autoset.ts`).
+out) and a `span` (`{ start, seconds }`: only that stretch). With both, the rack runs in recording time, exactly as a
+render of that stretch does (6.3). That is how the app's Auto-set checks its own settings: process, measure, correct
+(`src/main/audio-autoset.ts`; the decisions are in `src/core/audio-steer/`).
 
 Audio rules (the app, not the plugin: `src/core/audio-rules.ts`, `src/main/audio-rules.ts`, `src/main/audio-stage.ts`) are built
-on these three calls: a rule's target is captured by measuring its reference recordings through their looks, and at upload
+on these calls: a rule's target is captured by measuring its reference recordings through their looks, and at upload
 each recording is steered to that target, rendered with `processAudio`, and the FLAC handed to the video encoder.
 
-**`levellingGain(audioPath, look, host)`** → `{ ok, gainDb, rackLufs, rackPeak }`: the one gain levelling gives the WHOLE recording with this
-look (pass 1 only, nothing rendered; `gainDb: null` without levelling). **`AudioJob.gainDb`** makes `processAudio` use a
-given gain instead of measuring its own span. Together they are how an editor previews levelling honestly: an excerpt
-levelled on its own gets a different gain than the recording will, and a quiet one is pushed into the limiter.
+**`levellingGain(audioPath, look, host)`** → `{ ok, gainDb, rackLufs, rackPeak, rate }`: the one gain levelling gives
+the WHOLE recording with this look (pass 1 only, nothing rendered; `gainDb: null` without levelling). `gainDb` is to
+0.01 dB and within −30…+24 dB, as a render applies it; `rackPeak` is the rack's highest sample before any gain (the true
+peak can be a little higher); `rate` is the rack's output sample rate.
+**`AudioJob.gainDb`** makes `processAudio` use a given gain instead of measuring its own span; with **`AudioJob.rate`**
+(8000…384000 Hz, the rate `levellingGain` reported) it skips the measuring pass altogether. Together they are how an
+editor previews levelling honestly: an excerpt levelled on its own gets a different gain than the recording will, and a
+quiet one is pushed into the limiter. An excerpt rendered this way lands wherever that gain puts it (only the ceiling
+is checked); a whole recording rendered this way is still checked against the loudness target, like any other.
 
-**`AudioJob`** `{ audioPath, look?, preview?: { start, seconds }, bypass?, level?: Level | null }`
+**`AudioJob`** `{ audioPath, look?, preview?: { start, seconds }, bypass?, level?: Level | null, gainDb?, rate? }`
 – `bypass`: ignore the rack and the look's levelling (just cut the excerpt).
 – `level`: override the look's levelling for this job (`null` = none). `bypass + level` = a
   level-matched original for A/B.
@@ -160,7 +181,7 @@ truePeak, samplePeak }, inputSec, gainDb, warnings }`. Failure → `{ reason, me
 - *"Output was cut at N s"* — a step never ends (a `sine` without `duration`, `aloop=-1`); outputs are
   capped at max(2× input, input + 60 s).
 - *"Peaks reach full scale: the processed copy is clipped"* — no levelling and the rack is too hot.
-- levelling: gain capped / landed off target / true peak over ceiling.
+- levelling: gain capped (also a given gain outside −30…+24 dB) / landed off target / true peak over ceiling.
 
 ## 5. Building the editor UI from the catalog
 
@@ -229,7 +250,8 @@ can change everything in them.
    stereo, 96 kHz if the user resamples, …). Anything ≥ 0 dBFS is clipped in the file unless
    levelling is on.
 2. **Cache key** = recording identity + **the exact ffmpeg graph** + extra files' size/mtime +
-   levelling + preview window. So ids, labels and bypassed steps never re-render; any audible change does.
+   levelling + preview window + a given gain (to 0.01 dB) and rate. So ids, labels and bypassed steps never
+   re-render; any audible change does.
 3. **Previews run in recording time.** For `preview: { start }` the rack sees `t` = time in the
    recording (the plugin shifts timestamps in and back out). A fade-in at `t=0`, an
    `enable='between(t,60,90)'` or an `atrim` acts at the same moment in a 5 s chunk as in the whole
@@ -237,30 +259,28 @@ can change everything in them.
    for EQ/dynamics/denoise; long reverbs, `dynaudnorm`, `loudnorm`, `afftdn` noise learning want more).
 4. **Whole-file filters** behave differently per chunk no matter what: `areverse`, `silenceremove`,
    `loudnorm`, `dynaudnorm`, `aloop`, `apad`. Fine for uploads; in the A/B player they're approximate.
-5. **Levelling per chunk:** each chunk with `level` is levelled on its own and returns its `gainDb`;
-   the existing "all chunks at one gain" compensation (`refGain − gainDb`) keeps working. Without
-   `level`, `gainDb` is 0 and the compensation is a no-op.
+5. **Levelling per chunk:** a chunk with `level` and no `gainDb` is levelled on its own and returns its
+   `gainDb`. Give every chunk the whole recording's gain (`levellingGain` → `AudioJob.gainDb` + `rate`) and
+   the preview is what a full render sounds like; the app does this.
 6. **Fade-out** needs the recording's length (`afade type=out start_time=<len − d>`), which a look
    shared by all recordings doesn't know — leave it to a future "smart setting" in the app.
-7. Progress: 0–40 measure (only with levelling), →90 render, →100 verify. `host.stallMs` (default
-   30 s) kills ffmpeg when audio stops moving; `checkLook` also has a 30 s hard limit.
+7. Progress: 0–40 measure (only with levelling, and not when `gainDb` + `rate` are given), →90 render,
+   →100 verify. `host.stallMs` (default 30 s) kills ffmpeg when audio stops moving, in renders and in the
+   measuring calls alike; `checkLook` also has a 30 s hard limit; reading a file's header or ffmpeg's
+   version is stopped after 20 s. A cancelled ffmpeg that does not stop within 2 s is killed.
 
-## 7. Migrating the app (every touchpoint)
+## 7. How the app uses it
 
-| file | v1 | v2 |
-|---|---|---|
-| `src/shared/types.ts` | `AudioLookPatch`, `AudioFieldInfo` re-exports | `export type { Look as AudioLook, Step as AudioStep, LookError as AudioLookError, LookCheck } …`; `AudioLookState.look: Look`; `AudioTileInput.look?: Look`; remove `AudioFieldInfo` |
-| `src/main/app.ts` `setAudioLook` | `validateLook(state.look ?? {})`, `e.key` | `validateLook(state.look ?? EMPTY_LOOK)`, **`e.path`** |
-| store load (audio look) | v1 patch saved on disk | `if (isV1Look(saved.look)) saved.look = lookFromV1(saved.look)` once, then save |
-| `src/main/audio.ts` `renderAudioTile` | `e.key`; `processAudio({ audioPath, look, preview })` | `e.path`; same call; read `r.after.sampleRate`, `r.warnings`, `r.inputSec`; on failure forward `r.errors` |
-| `DEFAULT_AUDIO_LOOK` | `{ look: {} }` | `{ look: EMPTY_LOOK }` or `LOOK_PRESETS.cleanup.look` (= v1 default minus fade-out) |
-| new IPC | — | `checkAudioLook(look, recordId?) → LookCheck` (main calls `checkLook` with the recording path) |
-| `src/renderer/src/pages/Audio.tsx` | `LOOK_FIELDS`, `controllingToggle`, `REVERB_PRESETS`, `merge(DEFAULT_LOOK, look)` | rack editor from section 5; read `look.level` instead of `loudness.target` |
-| uploads | untouched (editor only) | still untouched — wiring the look into the pipeline is a separate step |
+| app file | what it calls |
+|---|---|
+| `src/main/audio.ts` | `processAudio` for the A/B player's chunks (with the whole recording's gain and rate), `levellingGain` (kept per chain), `analyse` |
+| `src/main/audio-facts.ts` | `measure`, `analyse`, `ringSplit`, `ring` once per recording, kept in `audio-facts.json` under `MEASURE_VERSION` and `RING_VERSION` |
+| `src/main/audio-autoset.ts` | `measure` and `ring` through a look (over a stretch for long recordings), `levellingGain` |
+| `src/main/audio-rules.ts` | the same, to capture a rule's target from its reference recordings |
+| `src/main/audio-stage.ts` | `processAudio` on the whole recording for an upload, `discard` once the video is uploaded |
+| `src/core/audio-modules.ts` | the editor's fixed channel strip as a look (`toLook`), read back with `fromLook` |
 
-`npm run audio` needs `npm run build`, which only works after the renderer is migrated. Until
-then the CLI can be bundled on its own: `node_modules/.bin/esbuild src/plugins/audio/cli.ts --bundle
---platform=node --format=esm --external:ffmpeg-static --outfile=node_modules/.cache/audio-cli.mjs`.
+`npm run audio` runs the CLI from the built app (`npm run build` first).
 
 ## 8. Command line
 
@@ -270,13 +290,21 @@ npm run audio -- filters [category|filter]     browse; `filters afftdn` lists ev
 npm run audio -- process <file> [--look look.json | --preset cleanup] [--preview 60:30] [--bypass] [--level -14:-1.5 | --no-level]
 npm run audio -- explain | check [--file f]    the exact graph | ffmpeg's verdict per step
 npm run audio -- analyse <file|folder> · batch <folder> [--preset …] · sweep [--filter name] [--report out.json]
+npm run audio -- measure <file> [--look … | --preset …] [--span 60:30]     tone and level behaviour, as JSON
+npm run audio -- ring <file> [--split 4500] [--look …] [--span 60:240]    ringing after "s"; without --split it is searched for first
+npm run audio -- gain <file> [--look … | --preset …]                       the whole recording's levelling gain
 ```
 
 ## 9. What was verified
 
-- **Unit + end-to-end tests:** 44 in the plugin (catalog parsing, validation paths, graph strings,
+- **Unit + end-to-end tests:** 69 in the plugin (catalog parsing, validation paths, graph strings,
   escaping round-trips through ffmpeg, every preset, sidechain/split/file/generate inputs, recording-time
-  previews, v1 conversion, levelling, refusals, cancel, both watchdog cases). Whole repo: 178 pass.
+  previews, v1 conversion, levelling, refusals, cancel, both watchdog cases; for the measuring calls: what they
+  refuse, cancel, stall, endless sources, stereo, a given gain and rate). Whole repo: 243 pass.
+- **2.1.0 against 2.0.0 on real recordings** (2026-11-15: a 37 s and a 3.8 min mono recording and a stereo file;
+  `measure`, `ring`, `ringSplit`, `analyse`, `levellingGain`, `processAudio`, plain, through a look and over a
+  stretch, 33 results): identical, except that `levellingGain` now rounds its gain and `ringSplit` reads both
+  channels of the stereo file. `MEASURE_VERSION` stayed 1.
 - **Sweep of everything ffmpeg offers** (`npm run audio -- sweep`, 12 s): all 139 filters at their
   defaults, then every option at its min, its max (capped at ±1e6 for the test only — 50 values) and
   every named choice → **2 015 runs: 1 992 ok, 23 refused by ffmpeg with its own reason, 0 crashes.**

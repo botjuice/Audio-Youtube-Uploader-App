@@ -9,6 +9,10 @@
  *   npm run audio -- explain [--look … | --preset …]      the exact ffmpeg graph
  *   npm run audio -- check [--look … | --preset …] [--file f]   ffmpeg's verdict, errors per step
  *   npm run audio -- analyse <file|folder>…             measurements + hints as a table
+ *   npm run audio -- measure <file> [--look … | --preset …] [--span start:seconds]   tone and level behaviour, as JSON
+ *   npm run audio -- ring <file> [--split hz] [--look … | --preset …] [--span start:seconds]   ringing after "s" sounds;
+ *                                   without --split the split is searched for first (ringSplit) and printed too
+ *   npm run audio -- gain <file> [--look … | --preset …]   the one levelling gain the whole recording gets
  *   npm run audio -- batch <folder> [--look … | --preset …] [--out dir]   every recording; exit 1 on any failure
  *   npm run audio -- sweep [--filter name] [--report out.json]   every filter, every option at its limits
  *
@@ -18,7 +22,7 @@ import { promises as fs } from 'node:fs'
 import { extname, join, resolve } from 'node:path'
 import ffmpegStatic from 'ffmpeg-static'
 import { generateCatalog } from './catalog-gen'
-import { analyse, CATALOG, checkLook, LIMITS, explain, filterInfo, filtersByCategory, LOOK_PRESETS, padCount, processAudio, type AudioHost, type CatalogOption, type Look, type OptionValue, type Step } from './index'
+import { analyse, AudioError, CATALOG, checkLook, LIMITS, explain, filterInfo, filtersByCategory, levellingGain, LOOK_PRESETS, measure, padCount, processAudio, ring, ringSplit, type AudioHost, type CatalogOption, type Look, type OptionValue, type Step } from './index'
 
 const AUDIO_EXTS = new Set(['.mp3', '.m4a', '.wav', '.aac', '.ogg', '.flac', '.opus', '.wma'])
 const bin = (ffmpegStatic as unknown as string | null) ?? 'ffmpeg'
@@ -164,6 +168,33 @@ async function main(): Promise<number> {
     return 0
   }
 
+  if (cmd === 'measure' || cmd === 'ring' || cmd === 'gain') {
+    if (!positional[0]) { console.error(`usage: audio ${cmd} <file> …`); return 2 }
+    const file = resolve(positional[0])
+    const given = flag(args, 'look') || flag(args, 'preset') ? await lookFrom(args) : undefined
+    const sp = flag(args, 'span')?.split(':').map(Number)
+    const span = sp ? { start: sp[0]!, seconds: sp[1]! } : undefined
+    try {
+      if (cmd === 'measure') console.log(JSON.stringify(await measure(file, { ffmpegPath: bin }, given, span), null, 2))
+      else if (cmd === 'ring') {
+        const asked = flag(args, 'split')
+        const found = asked ? null : await ringSplit(file, { ffmpegPath: bin }, span)
+        const r = await ring(file, { ffmpegPath: bin }, asked ? Number(asked) : found!.splitHz, given, span)
+        console.log(JSON.stringify(found ? { split: found, ring: r } : r, null, 2))
+      } else {
+        const g = await levellingGain(file, given ?? { chain: [] }, { ffmpegPath: bin })
+        console.log(JSON.stringify(g, null, 2))
+        return g.ok ? 0 : 1
+      }
+      return 0
+    } catch (e) {
+      if (!(e instanceof AudioError)) throw e
+      console.error(`${e.reason}: ${e.message}`)
+      for (const x of e.errors ?? []) console.error(`  ${x.path || '(look)'}: ${x.message}`)
+      return 1
+    }
+  }
+
   if (cmd === 'batch') {
     const look = await lookFrom(args)
     let failed = 0
@@ -231,7 +262,7 @@ async function main(): Promise<number> {
     return crashes.length ? 1 : 0
   }
 
-  console.error('usage: audio catalog|filters|process|explain|check|analyse|batch|sweep … (see the header of src/plugins/audio/cli.ts)')
+  console.error('usage: audio catalog|filters|process|explain|check|analyse|measure|ring|gain|batch|sweep … (see the header of src/plugins/audio/cli.ts)')
   return 2
 }
 
