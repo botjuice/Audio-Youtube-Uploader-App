@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import path, { join } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: false }, protocol: { registerSchemesAsPrivileged: () => {}, handle: () => {} }, BrowserWindow: class {}, nativeImage: {} }))
-import { audioDir, bucketPeaks, sweepAudioPreviews } from './audio'
+import { audioDir, bucketPeaks, isInside, previewFilePath, sweepAudioPreviews } from './audio'
 
 describe('bucketPeaks', () => {
   it('returns one [min, max] pair per bucket in −1…1, and zeros for no samples', () => {
@@ -48,5 +48,31 @@ describe('the preview folder is a cache with a size limit', () => {
   })
   it('a folder that is not there is not an error', async () => {
     expect(await sweepAudioPreviews(join(library, 'nowhere'))).toEqual({ removed: 0, bytes: 0 })
+  })
+})
+
+describe('only preview files may be streamed to the window', () => {
+  it('accepts a preview file on Windows, where paths use backslashes', () => {
+    const dir = 'G:\\My Drive\\Quran Recordings for YT\\.yoosyjoosy\\audio'
+    expect(isInside(dir, `${dir}\\cc10a38c28b06af8e510.flac`, path.win32)).toBe(true)
+    expect(isInside(dir, 'g:\\my drive\\Quran Recordings for YT\\.yoosyjoosy\\audio\\x.flac', path.win32)).toBe(true) // same folder, other case
+    expect(isInside(dir, 'G:\\My Drive\\Quran Recordings for YT\\.yoosyjoosy\\audio-other\\x.flac', path.win32)).toBe(false)
+    expect(isInside(dir, 'G:\\My Drive\\Quran Recordings for YT\\secret.txt', path.win32)).toBe(false)
+    expect(isInside(dir, 'C:\\Windows\\win.ini', path.win32)).toBe(false) // another drive
+    expect(isInside(dir, dir, path.win32)).toBe(false)
+  })
+  it('accepts a preview file on macOS and Linux', () => {
+    const dir = '/Users/x/Library/.yoosyjoosy/audio'
+    expect(isInside(dir, `${dir}/cc10a38c28b06af8e510.flac`, path.posix)).toBe(true)
+    expect(isInside(dir, '/Users/x/Library/.yoosyjoosy/audio-other/x.flac', path.posix)).toBe(false)
+    expect(isInside(dir, '/Users/x/Library/.yoosyjoosy/audio/../../a.m4a', path.posix)).toBe(false)
+    expect(isInside(dir, '/etc/passwd', path.posix)).toBe(false)
+  })
+  it('on this machine: a file in the library\'s preview folder passes, anything else is refused', () => {
+    const library = join(tmpdir(), 'yj-preview-check')
+    const file = join(audioDir(library), 'cc10a38c28b06af8e510.flac')
+    expect(previewFilePath(library, file)).toBe(file)
+    expect(() => previewFilePath(library, join(library, 'recording.m4a'))).toThrow('Not a preview file')
+    expect(() => previewFilePath(library, join(audioDir(library), '..', '..', 'recording.m4a'))).toThrow('Not a preview file')
   })
 })

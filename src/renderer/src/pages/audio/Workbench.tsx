@@ -303,7 +303,7 @@ function kPower(buf: AudioBuffer, offset: number, seconds: number): number {
 function decode(ctx: AudioContext, file: string): Promise<AudioBuffer> {
   let p = decoded.get(file)
   if (!p) {
-    p = fetch(audioUrl(file)).then((r) => { if (!r.ok) throw new Error(`Could not load ${file.split('/').pop()} (${r.status})`); return r.arrayBuffer() }).then((ab) => ctx.decodeAudioData(ab))
+    p = fetch(audioUrl(file)).then(async (r) => { if (!r.ok) throw new Error(`Could not load ${file.split(/[\\/]/).pop()}: ${(await r.text().catch(() => '')) || 'no reason given'} (${r.status})`); return r.arrayBuffer() }).then((ab) => ctx.decodeAudioData(ab))
     decoded.set(file, p)
     p.catch(() => decoded.delete(file))
     if (decoded.size > 64) decoded.delete(decoded.keys().next().value!)

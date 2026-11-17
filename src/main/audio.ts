@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream, promises as fs } from 'node:fs'
 import { Readable } from 'node:stream'
-import { join, resolve } from 'node:path'
+import path, { join, resolve } from 'node:path'
 import type { AudioOverview, AudioTile, AudioTileInput, AudioTileResult } from '@shared/types'
 import { EMPTY_LOOK, MAX_GAIN_DB, MIN_GAIN_DB, analyse, levellingGain, processAudio, validateLook, type AudioAnalysis, type AudioHost } from '../plugins/audio/index'
 import { ffmpegPath } from './ffmpeg'
@@ -229,11 +229,17 @@ export async function audioLevelGain(audioPath: string, look: unknown): Promise<
   return Math.max(MIN_GAIN_DB, Math.min(MAX_GAIN_DB, v.look.level.lufs - rack.lufs))
 }
 
+/** True when `target` is a file somewhere under `dir`. `p` is the path flavour (Windows paths use `\`, and compare
+ *  without regard to case), so this can be checked for Windows on any machine. */
+export function isInside(dir: string, target: string, p: Pick<typeof path, 'relative' | 'isAbsolute' | 'sep'> = path): boolean {
+  const rel = p.relative(dir, target)
+  return rel !== '' && rel !== '..' && !rel.startsWith('..' + p.sep) && !p.isAbsolute(rel)
+}
+
 /** Only files the plugin wrote may be streamed to the window. */
 export function previewFilePath(library: string, file: string): string {
-  const dir = resolve(audioDir(library)) + '/'
   const target = resolve(file)
-  if (!target.startsWith(dir)) throw new Error('Not a preview file')
+  if (!isInside(resolve(audioDir(library)), target)) throw new Error('Not a preview file')
   return target
 }
 
@@ -274,7 +280,8 @@ export function installAudioProtocol(getLibrary: () => string | null | undefined
       if (status === 206) headers['Content-Range'] = `bytes ${start}-${end}/${size}`
       return new Response(body, { status, headers })
     } catch (e) {
-      return new Response(e instanceof Error ? e.message : String(e), { status: 403, headers: { 'Access-Control-Allow-Origin': '*' } })
+      const gone = (e as NodeJS.ErrnoException).code === 'ENOENT'
+      return new Response(gone ? 'The preview file is no longer there' : e instanceof Error ? e.message : String(e), { status: gone ? 404 : 403, headers: { 'Access-Control-Allow-Origin': '*' } })
     }
   })
 }
