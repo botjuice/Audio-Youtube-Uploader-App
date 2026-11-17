@@ -1,6 +1,7 @@
 import { OAuth2Client } from 'google-auth-library'
 import { createServer } from 'node:http'
 import { shell } from 'electron'
+import { netFetch } from '../net'
 import { secrets, type ClientSecret } from '../store'
 
 export const SCOPES = [
@@ -9,6 +10,9 @@ export const SCOPES = [
 ]
 
 let cached: OAuth2Client | null = null
+
+/** Google's library makes its own requests (token refresh, exchange, revoke): send them the app's way too. */
+const transporterOptions = { fetchImplementation: netFetch as typeof fetch }
 
 /** Parse a downloaded client_secret_*.json (installed or web type). */
 export function parseClientSecretJson(text: string): ClientSecret {
@@ -26,7 +30,7 @@ export async function getClient(): Promise<OAuth2Client | null> {
   const c = await secrets.getClient()
   const tokens = await secrets.getTokens()
   if (!c || !tokens?.refresh_token) return null
-  const client = new OAuth2Client({ clientId: c.clientId, clientSecret: c.clientSecret })
+  const client = new OAuth2Client({ clientId: c.clientId, clientSecret: c.clientSecret, transporterOptions })
   client.setCredentials(tokens)
   client.on('tokens', (t) => {
     void secrets.getTokens().then((prev) =>
@@ -42,8 +46,22 @@ export async function requireClient(): Promise<OAuth2Client> {
   return c
 }
 
+/** Say what a failed Google sign-in request means for the person at the computer. */
+export function explainGoogleError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e)
+  if (/(oauth2\.googleapis\.com|accounts\.google\.com)/.test(msg) && /^Can't reach/.test(msg)) {
+    if (/offline/.test(msg) || /Uploads need Google sign-in/.test(msg)) return msg // nothing to add, or already said
+    return `${msg} Uploads need Google sign-in (accounts.google.com / oauth2.googleapis.com) to refresh. If a content filter, Screen Time profile or firewall on this computer or network blocks it, ask whoever manages it to allow those two hosts.`
+  }
+  if (/invalid_grant/i.test(msg)) return 'Google sign-in expired or was revoked — reconnect in Settings. (OAuth apps left in "Testing" expire every 7 days; publish the consent screen to stop that.)'
+  if (/unauthorized_client/i.test(msg)) return 'Google refused the saved sign-in (unauthorized_client). This usually means it was made with a different Google client file than the one now in Settings — reconnect Google in Settings.'
+  return msg
+}
+
 export async function accessToken(): Promise<string> {
-  const { token } = await (await requireClient()).getAccessToken()
+  const client = await requireClient()
+  let token: string | null | undefined
+  try { ({ token } = await client.getAccessToken()) } catch (e) { throw new Error(explainGoogleError(e), { cause: e }) }
   if (!token) throw new Error('Could not obtain an access token — reconnect Google')
   return token
 }
@@ -83,7 +101,7 @@ export async function connect(): Promise<void> {
   if (!c) throw new Error('Add your Google OAuth client first')
   const { port, code } = await listenForCode()
   const redirectUri = `http://127.0.0.1:${port}`
-  const oauth = new OAuth2Client({ clientId: c.clientId, clientSecret: c.clientSecret, redirectUri })
+  const oauth = new OAuth2Client({ clientId: c.clientId, clientSecret: c.clientSecret, redirectUri, transporterOptions })
   const url = oauth.generateAuthUrl({ access_type: 'offline', prompt: 'consent', scope: SCOPES })
   await shell.openExternal(url)
   const { tokens } = await oauth.getToken(await code)

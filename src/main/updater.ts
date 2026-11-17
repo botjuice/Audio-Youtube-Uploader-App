@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import type { UpdateState } from '@shared/types'
 import { assetApiUrl, compareVersions, describeHttpFailure, feedFileName, fetchWithRetry, parseLatestYml, pickUpdateFile, type ReleaseInfo } from '@core/update'
 import { activity } from './log'
+import { netFetch } from './net'
 
 const execFileP = promisify(execFile)
 
@@ -41,7 +42,7 @@ export class Updater extends EventEmitter {
 
   private async fetchRelease(): Promise<ReleaseInfo | null> {
     try {
-      const r = await fetchWithRetry(fetch, API_LATEST, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'yoosy-joosy' } })
+      const r = await fetchWithRetry(netFetch, API_LATEST, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'yoosy-joosy' } })
       return r.ok ? ((await r.json()) as ReleaseInfo) : null
     } catch { return null }
   }
@@ -55,7 +56,7 @@ export class Updater extends EventEmitter {
     const headers: Record<string, string> = cacheBust ? { 'Cache-Control': 'no-cache' } : {}
     let primary: Error
     try {
-      const res = await fetchWithRetry(fetch, FEED_BASE + name, { headers, redirect: 'follow' })
+      const res = await fetchWithRetry(netFetch, FEED_BASE + name, { headers, redirect: 'follow' })
       if (res.ok) return res
       primary = new Error(describeHttpFailure(what, res.status, res.url))
     } catch (e) { primary = e instanceof Error ? e : new Error(String(e)) }
@@ -63,7 +64,7 @@ export class Updater extends EventEmitter {
     const api = assetApiUrl(this.release, name)
     if (!api) throw primary
     activity.warn(`${primary.message} Trying GitHub's API path instead.`)
-    const res = await fetchWithRetry(fetch, api, { headers: { ...headers, Accept: 'application/octet-stream', 'User-Agent': 'yoosy-joosy' }, redirect: 'follow' })
+    const res = await fetchWithRetry(netFetch, api, { headers: { ...headers, Accept: 'application/octet-stream', 'User-Agent': 'yoosy-joosy' }, redirect: 'follow' })
     if (!res.ok) throw new Error(describeHttpFailure(what, res.status, res.url))
     return res
   }

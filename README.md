@@ -53,6 +53,15 @@ It bumps the version, runs typecheck + tests, commits, tags `vX.Y.Z`, pushes, an
 GitHub Actions publishes the Windows/macOS installers plus the update feed
 (`latest.yml`, `latest-mac.yml`). Users pick it up within 6 hours.
 
+## Internet connections
+
+The app goes online for three things: YouTube (uploads, thumbnails, playlists), refreshing the Google
+sign-in, and update checks and downloads from GitHub. All of them look their hosts up through Cloudflare's
+resolver (1.1.1.1, over HTTPS) for every user, whatever DNS the computer is set to. Where a network blocks
+Cloudflare the app uses the computer's DNS instead, says so in the activity log, and returns to Cloudflare
+when it answers again. The first Google sign-in opens in your own browser, which uses its own DNS.
+(`src/core/dns.ts`, `src/main/net.ts`; every request in the main process goes through `netFetch`.)
+
 ## Video description
 
 Every upload's description is the title again, then the lines the thumbnail shows (reciter with

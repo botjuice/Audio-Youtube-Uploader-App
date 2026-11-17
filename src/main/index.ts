@@ -6,6 +6,7 @@ import { yoosy } from './app'
 import { registerIpc } from './ipc'
 import { installAudioProtocol, registerAudioScheme } from './audio'
 import { activity } from './log'
+import { startDns } from './net'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
 /** Tray / dock images: shipped as extraResources (`icons/`) in packaged builds, read from `resources/` in dev. */
@@ -103,6 +104,7 @@ function buildTray(): void {
 registerAudioScheme()
 
 void app.whenReady().then(async () => {
+  startDns()
   installMenu()
   installAudioProtocol(() => yoosy.settings.libraryPath)
   if (isMac && !app.isPackaged) app.dock?.setIcon(nativeImage.createFromPath(join(iconsDir, 'icon.png')))

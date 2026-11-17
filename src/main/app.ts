@@ -5,7 +5,7 @@ import type { AudioAnalysis, AudioLook, AudioOverview, AudioAutoSet, AudioRuleIm
 import type { LibrarySnapshot, SurahEntry, SyncResult } from '@shared/api'
 import { DEFAULT_SURAHS, conditionKey, describeRule, describeThumbRule, nextQuotaReset, normaliseQuota, normaliseThumbRules, reciterKey, remainingUploads, surahKey, validateRule, validateThumbRule, validateToken } from '@core/index'
 import { ffmpegAvailable, ffmpegPath } from './ffmpeg'
-import { connect, disconnect, getClient, parseClientSecretJson, resetClient } from './google/oauth'
+import { connect, disconnect, explainGoogleError, getClient, parseClientSecretJson, resetClient } from './google/oauth'
 import { createPlaylist, getChannel, listPlaylists, listUploads } from './google/youtube'
 import { currentVocabulary, effectiveSurahs, removeMarker, renameRecordFiles, scanLibrary, writeMarker, type ScanResult } from './library'
 import { activity } from './log'
@@ -862,16 +862,6 @@ class YoosyApp {
 
   openExternal(url: string) { return shell.openExternal(url) }
   showInFolder(p: string) { shell.showItemInFolder(p) }
-}
-
-/** Turn the common "request to … failed, reason:" into something a person can act on. */
-export function explainGoogleError(e: unknown): string {
-  const msg = e instanceof Error ? e.message : String(e)
-  if (/(oauth2\.googleapis\.com|accounts\.google\.com)/.test(msg) && /(failed|ETIMEDOUT|ENOTFOUND|ECONNREFUSED|EAI_AGAIN)/i.test(msg)) {
-    return 'Can\'t reach Google sign-in (accounts.google.com / oauth2.googleapis.com). A content filter, Screen Time profile or DNS on this computer or network is blocking it — ask whoever manages it to allow those two hosts. Uploads need this to refresh your sign-in.'
-  }
-  if (/invalid_grant/i.test(msg)) return 'Google sign-in expired or was revoked — reconnect in Settings. (OAuth apps left in "Testing" expire every 7 days; publish the consent screen to stop that.)'
-  return msg
 }
 
 export const yoosy = new YoosyApp()

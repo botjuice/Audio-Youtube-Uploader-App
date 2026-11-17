@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs'
 import type { Playlist, Privacy } from '@shared/types'
+import { netFetch } from '../net'
 import { accessToken } from './oauth'
 
 const API = 'https://www.googleapis.com/youtube/v3'
@@ -33,7 +34,7 @@ export async function friendlyError(res: Response): Promise<Error> {
 async function api<T>(path: string, params: Record<string, string>, init: RequestInit = {}): Promise<T> {
   const url = new URL(`${API}/${path}`)
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
-  const res = await fetch(url, {
+  const res = await netFetch(url, {
     ...init,
     headers: { Authorization: `Bearer ${await accessToken()}`, 'Content-Type': 'application/json', ...(init.headers ?? {}) },
   })
@@ -94,9 +95,9 @@ export async function listUploads(max = 5000): Promise<{ videoId: string; title:
 /** Custom thumbnail (JPEG/PNG ≤ 2 MB). 50 quota units. Needs a phone-verified channel. */
 export async function setThumbnail(videoId: string, file: string): Promise<void> {
   const body = await fs.readFile(file)
-  const res = await fetch(`https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(videoId)}&uploadType=media`, {
+  const res = await netFetch(`https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(videoId)}&uploadType=media`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${await accessToken()}`, 'Content-Type': 'image/jpeg', 'Content-Length': String(body.length) },
+    headers: { Authorization: `Bearer ${await accessToken()}`, 'Content-Type': 'image/jpeg' }, // the length is set from the body
     body,
   })
   if (res.status === 403) {
@@ -127,7 +128,7 @@ export async function uploadVideo(
     snippet: { title: meta.title, description: meta.description, tags: meta.tags, categoryId: meta.categoryId },
     status: { privacyStatus: meta.privacy, selfDeclaredMadeForKids: meta.madeForKids },
   }
-  const init = await fetch(`${UPLOAD}?uploadType=resumable&part=snippet,status`, {
+  const init = await netFetch(`${UPLOAD}?uploadType=resumable&part=snippet,status`, {
     method: 'POST', signal: opts.signal,
     headers: {
       Authorization: `Bearer ${await accessToken()}`,
@@ -151,7 +152,7 @@ export async function uploadVideo(
       await fh.read(buf, 0, len, offset)
       let res: Response
       try {
-        res = await fetch(location, {
+        res = await netFetch(location, {
           method: 'PUT', signal: opts.signal,
           headers: { Authorization: `Bearer ${await accessToken()}`, 'Content-Range': `bytes ${offset}-${offset + len - 1}/${size}` },
           body: buf,
@@ -192,7 +193,7 @@ export async function uploadVideo(
 const backoff = (n: number) => new Promise((r) => setTimeout(r, Math.min(30_000, 1000 * 2 ** n)))
 
 async function queryOffset(location: string, size: number): Promise<number> {
-  const res = await fetch(location, {
+  const res = await netFetch(location, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${await accessToken()}`, 'Content-Range': `bytes */${size}` },
   })
